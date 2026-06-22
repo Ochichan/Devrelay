@@ -47,6 +47,7 @@ devrelay snapshot export <snapshot-id> --project <project-id> --out <snapshot.js
 devrelay recover list [--project <project-id>] [--json]
 devrelay recover show <snapshot-id> [--project <project-id>] [--json]
 devrelay recover open <snapshot-id> --path <new-workspace> [--register] [--name <name>] [--json]
+devrelay continue --source <source> --target <target> [--dirty-policy <policy>] [--dry-run] [--json]
 devrelay apply --repo <target> --source <source> --snapshot <snapshot.json> [--dirty-policy <policy>] [--dry-run] [--json]
 ```
 
@@ -61,6 +62,8 @@ snapshot from the local store, and can register the recovered workspace.
 `apply --dirty-policy block` is the default. `snapshot-and-fork` captures a
 pinned dirty-target backup before applying, while `new-workspace` leaves the
 dirty target unchanged and applies into a sibling workspace.
+`continue` uses the same dirty policies for a local source-to-target handoff and
+updates local workspace state placeholders when the workspaces are registered.
 `apply --dry-run` validates that the target is clean and the source snapshot refs
 are available without mutating the target.
 

@@ -449,19 +449,19 @@ Conventions:
 
 ### M1.10 Local Handoff Simulator
 
-- [ ] Add `devrelay continue --source <path> --target <path>`.
-- [ ] Resolve source workspace.
-- [ ] Resolve target workspace.
-- [ ] Create final source checkpoint.
-- [ ] Backup dirty target if policy allows.
-- [ ] Apply source snapshot to target.
-- [ ] Verify target.
-- [ ] Mark source inactive in local metadata placeholder.
-- [ ] Mark target active in local metadata placeholder.
-- [ ] Add `--dry-run`.
-- [ ] Add JSON output.
-- [ ] Add integration test for clean target.
-- [ ] Add integration test for dirty target backup.
+- [x] Add `devrelay continue --source <path> --target <path>`.
+- [x] Resolve source workspace.
+- [x] Resolve target workspace.
+- [x] Create final source checkpoint.
+- [x] Backup dirty target if policy allows.
+- [x] Apply source snapshot to target.
+- [x] Verify target.
+- [x] Mark source inactive in local metadata placeholder.
+- [x] Mark target active in local metadata placeholder.
+- [x] Add `--dry-run`.
+- [x] Add JSON output.
+- [x] Add integration test for clean target.
+- [x] Add integration test for dirty target backup.
 
 ### M1 Exit Gate
 

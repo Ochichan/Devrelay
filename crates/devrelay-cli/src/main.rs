@@ -38,6 +38,22 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    Continue {
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        target: PathBuf,
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long, value_enum, default_value = "block")]
+        dirty_policy: DirtyPolicy,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
     Manifest {
         #[command(subcommand)]
         command: ManifestCommand,
@@ -268,6 +284,93 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
+        Command::Continue {
+            source,
+            target,
+            manifest,
+            config,
+            dirty_policy,
+            dry_run,
+            json,
+        } => {
+            let (config_path, mut local_config) = load_or_default_config(config)?;
+            let source_root = resolve_git_root(&source)?;
+            let target_root = resolve_git_root(&target)?;
+            let manifest_path = manifest.unwrap_or_else(|| source_root.join("devrelay.toml"));
+            let manifest = Manifest::load(&manifest_path)
+                .with_context(|| format!("failed to load {}", manifest_path.display()))?;
+            let source_repo = GitRepo::new(&source_root);
+            let target_repo = GitRepo::new(&target_root);
+            let target_status = target_repo.status()?;
+
+            if dry_run {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "dry_run": true,
+                            "source": source_root,
+                            "target": target_root,
+                            "project_id": manifest.project_id,
+                            "target_status": target_status.summary(),
+                            "dirty_policy": dirty_policy.label(),
+                        }))?
+                    );
+                } else {
+                    println!("continue dry-run: {}", manifest.project_id);
+                    println!("  source: {}", source_root.display());
+                    println!("  target: {}", target_root.display());
+                    println!("  target: {}", target_status.short_summary());
+                }
+                return Ok(());
+            }
+
+            let home = DevRelayHome::resolve()?;
+            home.create_base_dirs()?;
+            let mut store = SnapshotStore::open(&home, &manifest.project_id)?;
+            let source_snapshot = store.checkpoint(
+                &source_repo,
+                &manifest,
+                false,
+                Some("continue handoff source".to_string()),
+            )?;
+            let prepared =
+                prepare_apply_target(&target_repo, &source_snapshot.metadata, dirty_policy)?;
+            let snapshot_source = GitRepo::new(store.snapshot_repo_path());
+            let verification =
+                apply_snapshot(&prepared.repo, &snapshot_source, &source_snapshot.metadata)?;
+            let changed_states = mark_handoff_workspace_states(
+                &mut local_config,
+                &source_root,
+                prepared.repo.path(),
+            );
+            if changed_states {
+                local_config.save(&config_path)?;
+            }
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "continued": source_snapshot,
+                        "source": source_root,
+                        "target": prepared.repo.path(),
+                        "dirty_policy": dirty_policy.label(),
+                        "backup": prepared.backup,
+                        "safe_actions": prepared.safe_actions,
+                        "workspace_states_updated": changed_states,
+                        "verification": verification,
+                    }))?
+                );
+            } else {
+                println!("continued: {}", source_snapshot.snapshot_id);
+                println!("  source: {}", source_root.display());
+                println!("  target: {}", prepared.repo.path().display());
+                for action in prepared.safe_actions {
+                    println!("  {action}");
+                }
+            }
+        }
         Command::Config { command } => match command {
             ConfigCommand::Load { path, json } => {
                 let path = config_path(path, false)?;
@@ -931,7 +1034,10 @@ fn refresh_workspace_states(config: &mut LocalConfig) -> bool {
     for project in config.project_registry.projects.values_mut() {
         for workspace in project.workspaces.values_mut() {
             let next_state = if workspace.local_path.exists() {
-                WorkspaceState::Active
+                match workspace.state {
+                    WorkspaceState::Stale => WorkspaceState::Active,
+                    current => current,
+                }
             } else {
                 WorkspaceState::Stale
             };
@@ -1130,6 +1236,32 @@ fn register_recovery_workspace(
     Ok(workspace)
 }
 
+fn mark_handoff_workspace_states(
+    config: &mut LocalConfig,
+    source_path: &Path,
+    target_path: &Path,
+) -> bool {
+    let mut changed = false;
+    for project in config.project_registry.projects.values_mut() {
+        for workspace in project.workspaces.values_mut() {
+            let next = if workspace.local_path == source_path {
+                Some(WorkspaceState::Inactive)
+            } else if workspace.local_path == target_path {
+                Some(WorkspaceState::Active)
+            } else {
+                None
+            };
+            if let Some(next) = next
+                && workspace.state != next
+            {
+                workspace.state = next;
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 struct PreparedApplyTarget {
     repo: GitRepo,
     backup: Option<StoredSnapshot>,
@@ -1310,6 +1442,7 @@ fn current_platform_profile() -> String {
 fn workspace_state_label(state: WorkspaceState) -> &'static str {
     match state {
         WorkspaceState::Active => "active",
+        WorkspaceState::Inactive => "inactive",
         WorkspaceState::Stale => "stale",
     }
 }

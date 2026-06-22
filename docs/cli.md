@@ -13,6 +13,7 @@ devrelay snapshot export <snapshot-id> --project <project-id> --out snapshot.jso
 devrelay recover list --json
 devrelay recover show <snapshot-id> --json
 devrelay recover open <snapshot-id> --path ../recovery --register --name review --json
+devrelay continue --source ../source --target ../target --config devrelay.local.toml --json
 devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --dry-run
 devrelay apply --repo ../target --source . --snapshot snapshot.json --dirty-policy snapshot-and-fork --json
 devrelay apply --repo ../target --source . --snapshot snapshot.json --dirty-policy new-workspace --json
@@ -35,6 +36,12 @@ to write a portable metadata JSON file.
 `apply` defaults to `--dirty-policy block`. `snapshot-and-fork` stores a pinned
 backup snapshot of the dirty target before cleaning and applying. `new-workspace`
 leaves the dirty target unchanged and applies into a sibling recovery workspace.
+
+## Local Continue
+
+`continue` is a local handoff simulator. It checkpoints the source workspace,
+applies that snapshot to the target, and marks registered source/target
+workspace states as inactive/active placeholders in local config.
 
 ## Exit Codes
 

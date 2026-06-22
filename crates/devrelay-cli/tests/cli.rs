@@ -46,6 +46,17 @@ portable_paths = "strict"
     .unwrap();
 }
 
+fn workspace_state_for(project: &serde_json::Value, path: &Path) -> Option<String> {
+    let canonical = path.canonicalize().unwrap();
+    project["workspaces"]
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|workspace| workspace["local_path"].as_str() == canonical.to_str())
+        .and_then(|workspace| workspace["state"].as_str())
+        .map(str::to_string)
+}
+
 #[test]
 fn prints_version() {
     let output = devrelay().arg("--version").output().unwrap();
@@ -1058,6 +1069,250 @@ fn apply_dirty_policy_snapshots_backup_and_can_use_new_workspace() {
     let _ = std::fs::remove_dir_all(home);
     let _ = std::fs::remove_file(config);
     let _ = std::fs::remove_file(snapshot_file);
+}
+
+#[test]
+fn continue_dry_run_and_clean_target_handoff_updates_workspace_states() {
+    let source = std::env::temp_dir().join(format!(
+        "devrelay-continue-clean-test-{}-{}",
+        std::process::id(),
+        "source"
+    ));
+    let target = std::env::temp_dir().join(format!(
+        "devrelay-continue-clean-test-{}-{}",
+        std::process::id(),
+        "target"
+    ));
+    let home = std::env::temp_dir().join(format!(
+        "devrelay-continue-clean-test-{}-{}",
+        std::process::id(),
+        "home"
+    ));
+    let config = std::env::temp_dir().join(format!(
+        "devrelay-continue-clean-test-{}-{}.toml",
+        std::process::id(),
+        "config"
+    ));
+    let _ = std::fs::remove_dir_all(&source);
+    let _ = std::fs::remove_dir_all(&target);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_file(&config);
+    std::fs::create_dir(&source).unwrap();
+    init_git_repo(&source);
+    write_manifest(&source, "continue-clean-project", "Continue Clean Project");
+    assert!(
+        Command::new("git")
+            .arg("clone")
+            .arg(&source)
+            .arg(&target)
+            .status()
+            .unwrap()
+            .success()
+    );
+    for path in [&source, &target] {
+        let mut command = devrelay();
+        command.args([
+            "project",
+            "add",
+            path.to_str().unwrap(),
+            "--manifest",
+            source.join("devrelay.toml").to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ]);
+        assert!(command.output().unwrap().status.success());
+    }
+
+    std::fs::write(source.join("README.md"), "handoff clean\n").unwrap();
+    let dry_run = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "continue",
+            "--source",
+            source.to_str().unwrap(),
+            "--target",
+            target.to_str().unwrap(),
+            "--manifest",
+            source.join("devrelay.toml").to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(dry_run.status.success());
+    let dry_json: serde_json::Value = serde_json::from_slice(&dry_run.stdout).unwrap();
+    assert_eq!(dry_json["dry_run"].as_bool(), Some(true));
+    assert_eq!(
+        std::fs::read_to_string(target.join("README.md")).unwrap(),
+        "demo\n"
+    );
+
+    let continued = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "continue",
+            "--source",
+            source.to_str().unwrap(),
+            "--target",
+            target.to_str().unwrap(),
+            "--manifest",
+            source.join("devrelay.toml").to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(continued.status.success());
+    assert_eq!(
+        std::fs::read_to_string(target.join("README.md")).unwrap(),
+        "handoff clean\n"
+    );
+
+    let project = devrelay()
+        .args([
+            "project",
+            "show",
+            "continue-clean-project",
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(project.status.success());
+    let project_json: serde_json::Value = serde_json::from_slice(&project.stdout).unwrap();
+    assert_eq!(
+        workspace_state_for(&project_json, &source).as_deref(),
+        Some("inactive")
+    );
+    assert_eq!(
+        workspace_state_for(&project_json, &target).as_deref(),
+        Some("active")
+    );
+
+    let _ = std::fs::remove_dir_all(source);
+    let _ = std::fs::remove_dir_all(target);
+    let _ = std::fs::remove_dir_all(home);
+    let _ = std::fs::remove_file(config);
+}
+
+#[test]
+fn continue_dirty_target_uses_backup_policy() {
+    let source = std::env::temp_dir().join(format!(
+        "devrelay-continue-dirty-test-{}-{}",
+        std::process::id(),
+        "source"
+    ));
+    let target = std::env::temp_dir().join(format!(
+        "devrelay-continue-dirty-test-{}-{}",
+        std::process::id(),
+        "target"
+    ));
+    let backup_recover = std::env::temp_dir().join(format!(
+        "devrelay-continue-dirty-test-{}-{}",
+        std::process::id(),
+        "backup-recover"
+    ));
+    let home = std::env::temp_dir().join(format!(
+        "devrelay-continue-dirty-test-{}-{}",
+        std::process::id(),
+        "home"
+    ));
+    let config = std::env::temp_dir().join(format!(
+        "devrelay-continue-dirty-test-{}-{}.toml",
+        std::process::id(),
+        "config"
+    ));
+    let _ = std::fs::remove_dir_all(&source);
+    let _ = std::fs::remove_dir_all(&target);
+    let _ = std::fs::remove_dir_all(&backup_recover);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_file(&config);
+    std::fs::create_dir(&source).unwrap();
+    init_git_repo(&source);
+    write_manifest(&source, "continue-dirty-project", "Continue Dirty Project");
+    assert!(
+        Command::new("git")
+            .arg("clone")
+            .arg(&source)
+            .arg(&target)
+            .status()
+            .unwrap()
+            .success()
+    );
+    for path in [&source, &target] {
+        let mut command = devrelay();
+        command.args([
+            "project",
+            "add",
+            path.to_str().unwrap(),
+            "--manifest",
+            source.join("devrelay.toml").to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ]);
+        assert!(command.output().unwrap().status.success());
+    }
+
+    std::fs::write(source.join("README.md"), "handoff dirty\n").unwrap();
+    std::fs::write(target.join("target-only.txt"), "dirty target\n").unwrap();
+    let continued = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "continue",
+            "--source",
+            source.to_str().unwrap(),
+            "--target",
+            target.to_str().unwrap(),
+            "--manifest",
+            source.join("devrelay.toml").to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--dirty-policy",
+            "snapshot-and-fork",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(continued.status.success());
+    let continued_json: serde_json::Value = serde_json::from_slice(&continued.stdout).unwrap();
+    assert_eq!(continued_json["backup"]["pinned"].as_bool(), Some(true));
+    let backup_snapshot_id = continued_json["backup"]["snapshot_id"].as_str().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(target.join("README.md")).unwrap(),
+        "handoff dirty\n"
+    );
+
+    let backup = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "recover",
+            "open",
+            backup_snapshot_id,
+            "--project",
+            "continue-dirty-project",
+            "--path",
+            backup_recover.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(backup.status.success());
+    assert_eq!(
+        std::fs::read_to_string(backup_recover.join("target-only.txt")).unwrap(),
+        "dirty target\n"
+    );
+
+    let _ = std::fs::remove_dir_all(source);
+    let _ = std::fs::remove_dir_all(target);
+    let _ = std::fs::remove_dir_all(backup_recover);
+    let _ = std::fs::remove_dir_all(home);
+    let _ = std::fs::remove_file(config);
 }
 
 #[test]

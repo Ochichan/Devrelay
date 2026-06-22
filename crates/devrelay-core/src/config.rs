@@ -91,6 +91,7 @@ pub struct WorkspaceRegistryEntry {
 #[serde(rename_all = "kebab-case")]
 pub enum WorkspaceState {
     Active,
+    Inactive,
     Stale,
 }
 
