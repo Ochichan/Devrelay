@@ -1,8 +1,12 @@
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
-#[cfg(unix)]
-use devrelay_core::UnixIpcListener;
 use devrelay_core::{DevRelayHome, LocalConfig, MetadataDb};
+#[cfg(unix)]
+use devrelay_core::{
+    IpcConnection, IpcLimits, IpcTransport, METHOD_AGENT_HEALTH, METHOD_RPC_NEGOTIATE,
+    RPC_PROTOCOL_VERSION, RpcError, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
+    RpcVersionNegotiationResult, UnixIpcConnection, UnixIpcListener,
+};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::{
@@ -49,6 +53,37 @@ struct AgentHealth {
     shutdown_requested: bool,
 }
 
+#[derive(Clone)]
+struct AgentState {
+    foreground: bool,
+    config_path: PathBuf,
+    socket_path: PathBuf,
+    project_count: usize,
+    database_path: PathBuf,
+    shutdown: Arc<AtomicBool>,
+}
+
+impl AgentState {
+    fn health(&self) -> AgentHealth {
+        AgentHealth {
+            status: "ok",
+            foreground: self.foreground,
+            config_path: self.config_path.clone(),
+            socket_path: self.socket_path.clone(),
+            project_count: self.project_count,
+            database_path: self.database_path.clone(),
+            shutdown_requested: self.shutdown.load(Ordering::SeqCst),
+        }
+    }
+
+    fn supported_methods() -> Vec<String> {
+        vec![
+            METHOD_RPC_NEGOTIATE.to_string(),
+            METHOD_AGENT_HEALTH.to_string(),
+        ]
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let shutdown = install_shutdown_handler()?;
@@ -71,23 +106,26 @@ fn main() -> anyhow::Result<()> {
         socket_path.display()
     );
 
+    let state = AgentState {
+        foreground: cli.foreground,
+        config_path,
+        socket_path,
+        project_count: config.project_registry.projects.len(),
+        database_path,
+        shutdown: Arc::clone(&shutdown),
+    };
+
     if cli.health {
-        let health = AgentHealth {
-            status: "ok",
-            foreground: cli.foreground,
-            config_path,
-            socket_path,
-            project_count: config.project_registry.projects.len(),
-            database_path,
-            shutdown_requested: shutdown.load(Ordering::SeqCst),
-        };
-        println!("{}", serde_json::to_string_pretty(&health)?);
+        println!("{}", serde_json::to_string_pretty(&state.health())?);
         return Ok(());
     }
 
     #[cfg(unix)]
-    let _ipc_listener = UnixIpcListener::bind(&socket_path)
-        .with_context(|| format!("failed to bind IPC socket {}", socket_path.display()))?;
+    let _ipc_thread = if cli.foreground {
+        Some(spawn_ipc_server(state.clone())?)
+    } else {
+        None
+    };
 
     if cli.foreground {
         while !shutdown.load(Ordering::SeqCst) {
@@ -96,6 +134,96 @@ fn main() -> anyhow::Result<()> {
         eprintln!("devrelay-agent shutdown requested");
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn spawn_ipc_server(state: AgentState) -> anyhow::Result<thread::JoinHandle<()>> {
+    let listener = UnixIpcListener::bind(&state.socket_path)
+        .with_context(|| format!("failed to bind IPC socket {}", state.socket_path.display()))?;
+    thread::Builder::new()
+        .name("devrelay-agent-ipc".to_string())
+        .spawn(move || run_ipc_server(listener, state))
+        .context("failed to spawn IPC server thread")
+}
+
+#[cfg(unix)]
+fn run_ipc_server(listener: UnixIpcListener, state: AgentState) {
+    while !state.shutdown.load(Ordering::SeqCst) {
+        match listener.accept() {
+            Ok(connection) => {
+                let connection_state = state.clone();
+                let _ = thread::Builder::new()
+                    .name("devrelay-agent-rpc".to_string())
+                    .spawn(move || handle_rpc_connection(connection, connection_state));
+            }
+            Err(err) => eprintln!("devrelay-agent IPC accept error: {err}"),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn handle_rpc_connection(mut connection: UnixIpcConnection, state: AgentState) {
+    let response = match connection.read_message(IpcLimits::default()) {
+        Ok(bytes) => match RpcRequest::parse(&bytes) {
+            Ok(request) => handle_rpc_request(request, &state),
+            Err(error) => RpcResponse::error(None, error),
+        },
+        Err(err) => {
+            eprintln!("devrelay-agent IPC read error: {err}");
+            return;
+        }
+    };
+
+    let bytes = match serde_json::to_vec(&response) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            eprintln!("devrelay-agent RPC response serialization error: {err}");
+            return;
+        }
+    };
+    if let Err(err) = connection.write_message(&bytes, IpcLimits::default()) {
+        eprintln!("devrelay-agent IPC write error: {err}");
+    }
+}
+
+#[cfg(unix)]
+fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
+    let id = match request.required_id() {
+        Ok(id) => id,
+        Err(error) => return RpcResponse::error(None, error),
+    };
+
+    match request.method.as_str() {
+        METHOD_RPC_NEGOTIATE => handle_rpc_negotiate(id, request.params),
+        METHOD_AGENT_HEALTH => match serde_json::to_value(state.health()) {
+            Ok(result) => RpcResponse::success(id, result),
+            Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        },
+        method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
+    }
+}
+
+#[cfg(unix)]
+fn handle_rpc_negotiate(id: devrelay_core::RpcId, params: serde_json::Value) -> RpcResponse {
+    let params: RpcVersionNegotiationParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    if params.client_protocol_version != RPC_PROTOCOL_VERSION {
+        return RpcResponse::error(
+            Some(id),
+            RpcError::version_mismatch(params.client_protocol_version),
+        );
+    }
+
+    RpcResponse::success(
+        id,
+        serde_json::json!(RpcVersionNegotiationResult {
+            protocol_version: RPC_PROTOCOL_VERSION,
+            server_name: "devrelay-agent".to_string(),
+            methods: AgentState::supported_methods(),
+        }),
+    )
 }
 
 fn install_shutdown_handler() -> anyhow::Result<Arc<AtomicBool>> {

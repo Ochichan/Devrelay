@@ -509,11 +509,11 @@ Conventions:
 
 ### M2.3 JSON-RPC API
 
-- [ ] Define RPC envelope.
-- [ ] Define request ID behavior.
-- [ ] Define error envelope.
-- [ ] Define version negotiation method.
-- [ ] Add `agent.health`.
+- [x] Define RPC envelope.
+- [x] Define request ID behavior.
+- [x] Define error envelope.
+- [x] Define version negotiation method.
+- [x] Add `agent.health`.
 - [ ] Add `status.get`.
 - [ ] Add `projects.add`.
 - [ ] Add `projects.list`.
@@ -523,8 +523,8 @@ Conventions:
 - [ ] Add `recover.open`.
 - [ ] Add `apply.snapshot`.
 - [ ] Add `diagnostics.export`.
-- [ ] Add RPC schema tests.
-- [ ] Add backwards compatibility policy.
+- [x] Add RPC schema tests.
+- [x] Add backwards compatibility policy.
 
 ### M2.4 CLI Through Agent
 

@@ -1,0 +1,230 @@
+//! JSON-RPC envelope types for local agent IPC.
+//!
+//! DevRelay supports request/response JSON-RPC 2.0 over the local IPC
+//! transport. Notifications are intentionally unsupported for M2 so every
+//! request has a stable ID that can be echoed in success and error responses.
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+pub const RPC_JSONRPC_VERSION: &str = "2.0";
+pub const RPC_PROTOCOL_VERSION: u32 = 1;
+pub const METHOD_RPC_NEGOTIATE: &str = "rpc.negotiate";
+pub const METHOD_AGENT_HEALTH: &str = "agent.health";
+
+pub const RPC_PARSE_ERROR: i64 = -32700;
+pub const RPC_INVALID_REQUEST: i64 = -32600;
+pub const RPC_METHOD_NOT_FOUND: i64 = -32601;
+pub const RPC_INVALID_PARAMS: i64 = -32602;
+pub const RPC_INTERNAL_ERROR: i64 = -32603;
+pub const RPC_VERSION_MISMATCH: i64 = -32001;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RpcId {
+    String(String),
+    Number(u64),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RpcRequest {
+    pub jsonrpc: String,
+    #[serde(default)]
+    pub id: Option<RpcId>,
+    pub method: String,
+    #[serde(default)]
+    pub params: Value,
+}
+
+impl RpcRequest {
+    pub fn parse(bytes: &[u8]) -> std::result::Result<Self, RpcError> {
+        let request: Self =
+            serde_json::from_slice(bytes).map_err(|err| RpcError::parse_error(err.to_string()))?;
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn required_id(&self) -> std::result::Result<RpcId, RpcError> {
+        self.id
+            .clone()
+            .ok_or_else(|| RpcError::invalid_request("request id is required"))
+    }
+
+    fn validate(&self) -> std::result::Result<(), RpcError> {
+        if self.jsonrpc != RPC_JSONRPC_VERSION {
+            return Err(RpcError::invalid_request(format!(
+                "jsonrpc must be {RPC_JSONRPC_VERSION}"
+            )));
+        }
+        if self.id.is_none() {
+            return Err(RpcError::invalid_request(
+                "request id is required; notifications are not supported",
+            ));
+        }
+        if self.method.trim().is_empty() {
+            return Err(RpcError::invalid_request("method must not be empty"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RpcResponse {
+    pub jsonrpc: String,
+    pub id: Option<RpcId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<RpcError>,
+}
+
+impl RpcResponse {
+    pub fn success(id: RpcId, result: Value) -> Self {
+        Self {
+            jsonrpc: RPC_JSONRPC_VERSION.to_string(),
+            id: Some(id),
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    pub fn error(id: Option<RpcId>, error: RpcError) -> Self {
+        Self {
+            jsonrpc: RPC_JSONRPC_VERSION.to_string(),
+            id,
+            result: None,
+            error: Some(error),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RpcError {
+    pub code: i64,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
+}
+
+impl RpcError {
+    pub fn parse_error(detail: impl Into<String>) -> Self {
+        Self::with_detail(RPC_PARSE_ERROR, "Parse error", detail)
+    }
+
+    pub fn invalid_request(detail: impl Into<String>) -> Self {
+        Self::with_detail(RPC_INVALID_REQUEST, "Invalid request", detail)
+    }
+
+    pub fn method_not_found(method: impl Into<String>) -> Self {
+        Self::with_detail(
+            RPC_METHOD_NOT_FOUND,
+            "Method not found",
+            format!("unknown RPC method {}", method.into()),
+        )
+    }
+
+    pub fn invalid_params(detail: impl Into<String>) -> Self {
+        Self::with_detail(RPC_INVALID_PARAMS, "Invalid params", detail)
+    }
+
+    pub fn internal(detail: impl Into<String>) -> Self {
+        Self::with_detail(RPC_INTERNAL_ERROR, "Internal error", detail)
+    }
+
+    pub fn version_mismatch(client_protocol_version: u32) -> Self {
+        Self {
+            code: RPC_VERSION_MISMATCH,
+            message: "Protocol version mismatch".to_string(),
+            data: Some(json!({
+                "client_protocol_version": client_protocol_version,
+                "server_protocol_version": RPC_PROTOCOL_VERSION,
+            })),
+        }
+    }
+
+    fn with_detail(code: i64, message: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.to_string(),
+            data: Some(json!({ "detail": detail.into() })),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RpcVersionNegotiationParams {
+    pub client_protocol_version: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RpcVersionNegotiationResult {
+    pub protocol_version: u32,
+    pub server_name: String,
+    pub methods: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_request_and_requires_stable_id() {
+        let request = RpcRequest::parse(
+            br#"{"jsonrpc":"2.0","id":"abc","method":"agent.health","params":{}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(request.required_id().unwrap(), RpcId::String("abc".into()));
+        assert_eq!(request.method, METHOD_AGENT_HEALTH);
+
+        let err = RpcRequest::parse(br#"{"jsonrpc":"2.0","method":"agent.health"}"#).unwrap_err();
+        assert_eq!(err.code, RPC_INVALID_REQUEST);
+    }
+
+    #[test]
+    fn accepts_numeric_request_ids_and_echoes_them() {
+        let request =
+            RpcRequest::parse(br#"{"jsonrpc":"2.0","id":42,"method":"agent.health"}"#).unwrap();
+        let response = RpcResponse::success(request.required_id().unwrap(), json!({"status":"ok"}));
+        let encoded = serde_json::to_value(response).unwrap();
+
+        assert_eq!(encoded["id"], 42);
+        assert_eq!(encoded["result"]["status"], "ok");
+        assert!(encoded.get("error").is_none());
+    }
+
+    #[test]
+    fn serializes_error_envelope_with_null_id_for_invalid_request() {
+        let response = RpcResponse::error(None, RpcError::invalid_request("bad envelope"));
+        let encoded = serde_json::to_value(response).unwrap();
+
+        assert_eq!(encoded["jsonrpc"], RPC_JSONRPC_VERSION);
+        assert!(encoded["id"].is_null());
+        assert_eq!(encoded["error"]["code"], RPC_INVALID_REQUEST);
+        assert!(encoded.get("result").is_none());
+    }
+
+    #[test]
+    fn rejects_wrong_jsonrpc_version_and_empty_method() {
+        let wrong_version =
+            RpcRequest::parse(br#"{"jsonrpc":"1.0","id":"a","method":"agent.health"}"#)
+                .unwrap_err();
+        assert_eq!(wrong_version.code, RPC_INVALID_REQUEST);
+
+        let empty_method =
+            RpcRequest::parse(br#"{"jsonrpc":"2.0","id":"a","method":"  "}"#).unwrap_err();
+        assert_eq!(empty_method.code, RPC_INVALID_REQUEST);
+    }
+
+    #[test]
+    fn version_mismatch_error_carries_client_and_server_versions() {
+        let error = RpcError::version_mismatch(999);
+
+        assert_eq!(error.code, RPC_VERSION_MISMATCH);
+        assert_eq!(error.data.as_ref().unwrap()["client_protocol_version"], 999);
+        assert_eq!(
+            error.data.as_ref().unwrap()["server_protocol_version"],
+            RPC_PROTOCOL_VERSION
+        );
+    }
+}

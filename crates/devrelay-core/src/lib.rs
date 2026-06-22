@@ -42,6 +42,7 @@ mod home;
 mod ipc;
 pub mod manifest;
 mod policy;
+mod rpc;
 mod snapshot;
 mod snapshot_schema;
 mod snapshot_store;
@@ -64,6 +65,10 @@ pub use manifest::{
     SyncConfig, SyncMode, TaskCacheMode, TaskConfig, TaskSandbox, UntrackedPolicy, WorkspaceConfig,
 };
 pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
+pub use rpc::{
+    METHOD_AGENT_HEALTH, METHOD_RPC_NEGOTIATE, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcError,
+    RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
+};
 pub use snapshot::{
     ApplyPlan, VerificationDetails, apply_snapshot, create_snapshot, plan_apply_snapshot,
     read_snapshot_file, verify_snapshot, write_snapshot_file,
