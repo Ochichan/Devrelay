@@ -47,7 +47,7 @@ devrelay snapshot export <snapshot-id> --project <project-id> --out <snapshot.js
 devrelay recover list [--project <project-id>] [--json]
 devrelay recover show <snapshot-id> [--project <project-id>] [--json]
 devrelay recover open <snapshot-id> --path <new-workspace> [--register] [--name <name>] [--json]
-devrelay apply --repo <target> --source <source> --snapshot <snapshot.json> [--dry-run] [--json]
+devrelay apply --repo <target> --source <source> --snapshot <snapshot.json> [--dirty-policy <policy>] [--dry-run] [--json]
 ```
 
 `apply` refuses dirty targets by default. That matches the product promise that
@@ -58,6 +58,9 @@ DevRelay never quietly overwrites local work.
 `snapshot export` when a standalone snapshot metadata JSON file is needed.
 `recover open` creates or reuses a clean recovery workspace, applies the selected
 snapshot from the local store, and can register the recovered workspace.
+`apply --dirty-policy block` is the default. `snapshot-and-fork` captures a
+pinned dirty-target backup before applying, while `new-workspace` leaves the
+dirty target unchanged and applies into a sibling workspace.
 `apply --dry-run` validates that the target is clean and the source snapshot refs
 are available without mutating the target.
 

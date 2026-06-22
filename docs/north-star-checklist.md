@@ -418,17 +418,17 @@ Conventions:
 
 ### M1.8 Dirty Target Backup
 
-- [ ] Detect target dirty status before apply.
-- [ ] Add `--dirty-policy block`.
-- [ ] Add `--dirty-policy snapshot-and-fork`.
-- [ ] Add `--dirty-policy new-workspace`.
-- [ ] Implement local target backup snapshot.
-- [ ] Persist backup snapshot as fork session.
-- [ ] Pin backup snapshot by default.
-- [ ] Add CLI output explaining backup.
-- [ ] Add JSON output for safe actions.
-- [ ] Add test proving local dirty file is preserved.
-- [ ] Add test proving source snapshot still applies after backup.
+- [x] Detect target dirty status before apply.
+- [x] Add `--dirty-policy block`.
+- [x] Add `--dirty-policy snapshot-and-fork`.
+- [x] Add `--dirty-policy new-workspace`.
+- [x] Implement local target backup snapshot.
+- [x] Persist backup snapshot as fork session.
+- [x] Pin backup snapshot by default.
+- [x] Add CLI output explaining backup.
+- [x] Add JSON output for safe actions.
+- [x] Add test proving local dirty file is preserved.
+- [x] Add test proving source snapshot still applies after backup.
 
 ### M1.9 Stable Error Schema
 

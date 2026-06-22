@@ -5,11 +5,12 @@
 //! local commands.
 
 use anyhow::{Context, Error};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use devrelay_core::{
-    DevRelayError, DevRelayHome, GitRepo, LocalConfig, Manifest, PathDecision,
-    ProjectRegistryEntry, SnapshotStore, StoredSnapshot, WorkspaceRegistryEntry, WorkspaceState,
-    apply_snapshot, classify_untracked_paths, plan_apply_snapshot, read_snapshot_file,
+    DevRelayError, DevRelayHome, GitRepo, LocalConfig, Manifest, PathDecision, PatternConfig,
+    PortablePathsPolicy, ProjectRegistryEntry, SnapshotMetadata, SnapshotStore, StoredSnapshot,
+    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
+    classify_untracked_paths, create_snapshot, plan_apply_snapshot, read_snapshot_file,
     workspace_id_for, write_snapshot_file,
 };
 use std::collections::BTreeMap;
@@ -92,9 +93,28 @@ enum Command {
         snapshot: PathBuf,
         #[arg(long)]
         dry_run: bool,
+        #[arg(long, value_enum, default_value = "block")]
+        dirty_policy: DirtyPolicy,
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DirtyPolicy {
+    Block,
+    SnapshotAndFork,
+    NewWorkspace,
+}
+
+impl DirtyPolicy {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Block => "block",
+            Self::SnapshotAndFork => "snapshot-and-fork",
+            Self::NewWorkspace => "new-workspace",
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -727,6 +747,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             source,
             snapshot,
             dry_run,
+            dirty_policy,
             json,
         } => {
             let snapshot = read_snapshot_file(&snapshot)
@@ -752,17 +773,26 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     );
                 }
             } else {
-                let verification = apply_snapshot(&target, &source, &snapshot)?;
+                let prepared = prepare_apply_target(&target, &snapshot, dirty_policy)?;
+                let verification = apply_snapshot(&prepared.repo, &source, &snapshot)?;
                 if json {
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "applied": snapshot.snapshot_id,
+                            "applied_repo": prepared.repo.path(),
+                            "dirty_policy": dirty_policy.label(),
+                            "backup": prepared.backup,
+                            "safe_actions": prepared.safe_actions,
                             "verification": verification,
                         }))?
                     );
                 } else {
                     println!("applied: {}", snapshot.snapshot_id);
+                    println!("  repo: {}", prepared.repo.path().display());
+                    for action in prepared.safe_actions {
+                        println!("  {action}");
+                    }
                 }
             }
         }
@@ -1098,6 +1128,137 @@ fn register_recovery_workspace(
         .ok_or_else(|| DevRelayError::Config(format!("unknown project {project_id}")))?;
     project.workspaces.insert(workspace_id, workspace.clone());
     Ok(workspace)
+}
+
+struct PreparedApplyTarget {
+    repo: GitRepo,
+    backup: Option<StoredSnapshot>,
+    safe_actions: Vec<String>,
+}
+
+fn prepare_apply_target(
+    target: &GitRepo,
+    snapshot: &SnapshotMetadata,
+    dirty_policy: DirtyPolicy,
+) -> anyhow::Result<PreparedApplyTarget> {
+    let status = target.status()?;
+    if status.is_clean() {
+        return Ok(PreparedApplyTarget {
+            repo: target.clone(),
+            backup: None,
+            safe_actions: Vec::new(),
+        });
+    }
+
+    match dirty_policy {
+        DirtyPolicy::Block => Err(DevRelayError::TargetDirty(status.short_summary()).into()),
+        DirtyPolicy::SnapshotAndFork => {
+            let backup = backup_dirty_target(target, snapshot)?;
+            reset_to_clean_worktree(target)?;
+            Ok(PreparedApplyTarget {
+                repo: target.clone(),
+                safe_actions: vec![format!(
+                    "dirty target preserved as pinned backup snapshot {}",
+                    backup.snapshot_id
+                )],
+                backup: Some(backup),
+            })
+        }
+        DirtyPolicy::NewWorkspace => {
+            let recovery_path = next_new_workspace_path(target.path(), &snapshot.snapshot_id);
+            clone_repository(target.path(), &recovery_path)?;
+            Ok(PreparedApplyTarget {
+                repo: GitRepo::new(&recovery_path),
+                backup: None,
+                safe_actions: vec![format!(
+                    "dirty target left unchanged; applying in {}",
+                    recovery_path.display()
+                )],
+            })
+        }
+    }
+}
+
+fn backup_dirty_target(
+    target: &GitRepo,
+    source_snapshot: &SnapshotMetadata,
+) -> anyhow::Result<StoredSnapshot> {
+    let backup_manifest = backup_manifest_from_snapshot(source_snapshot);
+    let mut backup = create_snapshot(target, &backup_manifest)?;
+    backup.session_id = Some(format!(
+        "fork_{}",
+        hash_text(&format!(
+            "{}:{}:{}",
+            source_snapshot.snapshot_id,
+            backup.snapshot_id,
+            target.path().display()
+        ))
+    ));
+    let home = DevRelayHome::resolve()?;
+    home.create_base_dirs()?;
+    let mut store = SnapshotStore::open(&home, &source_snapshot.project_id)?;
+    let label = Some(format!(
+        "dirty target backup before {}",
+        source_snapshot.snapshot_id
+    ));
+    Ok(store.store_snapshot(target, backup, true, label)?)
+}
+
+fn backup_manifest_from_snapshot(snapshot: &SnapshotMetadata) -> Manifest {
+    Manifest {
+        schema: 1,
+        project_id: snapshot.project_id.clone(),
+        name: snapshot.project_name.clone(),
+        workspace: WorkspaceConfig {
+            untracked: UntrackedPolicy::AllNonignored,
+            portable_paths: PortablePathsPolicy::Strict,
+            large_file_threshold_mib: 32,
+            preserve_editor_context: true,
+            preserve_unsaved_buffers: true,
+            exclude: PatternConfig::default(),
+            include: PatternConfig::default(),
+        },
+        environment: None,
+        secrets: BTreeMap::new(),
+        tasks: BTreeMap::new(),
+        sync: None,
+        handoff: None,
+    }
+}
+
+fn reset_to_clean_worktree(target: &GitRepo) -> anyhow::Result<()> {
+    target.run(&["reset", "--hard"])?;
+    target.run(&["clean", "-fd"])?;
+    let status = target.status()?;
+    if !status.is_clean() {
+        return Err(DevRelayError::TargetDirty(status.short_summary()).into());
+    }
+    Ok(())
+}
+
+fn next_new_workspace_path(target_path: &Path, snapshot_id: &str) -> PathBuf {
+    let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
+    let base = target_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "workspace".to_string());
+    let short_id = snapshot_id
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .take(10)
+        .collect::<String>();
+    for index in 0..100 {
+        let suffix = if index == 0 {
+            String::new()
+        } else {
+            format!("-{index}")
+        };
+        let candidate = parent.join(format!("{base}-devrelay-{short_id}{suffix}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    parent.join(format!("{base}-devrelay-{}", hash_text(snapshot_id)))
 }
 
 fn find_project<'a>(

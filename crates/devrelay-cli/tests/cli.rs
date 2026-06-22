@@ -867,6 +867,196 @@ fn recover_open_refuses_dirty_target() {
 }
 
 #[test]
+fn apply_dirty_policy_snapshots_backup_and_can_use_new_workspace() {
+    let source = std::env::temp_dir().join(format!(
+        "devrelay-dirty-policy-test-{}-{}",
+        std::process::id(),
+        "source"
+    ));
+    let target = std::env::temp_dir().join(format!(
+        "devrelay-dirty-policy-test-{}-{}",
+        std::process::id(),
+        "target"
+    ));
+    let target_new = std::env::temp_dir().join(format!(
+        "devrelay-dirty-policy-test-{}-{}",
+        std::process::id(),
+        "target-new"
+    ));
+    let backup_recover = std::env::temp_dir().join(format!(
+        "devrelay-dirty-policy-test-{}-{}",
+        std::process::id(),
+        "backup-recover"
+    ));
+    let home = std::env::temp_dir().join(format!(
+        "devrelay-dirty-policy-test-{}-{}",
+        std::process::id(),
+        "home"
+    ));
+    let config = std::env::temp_dir().join(format!(
+        "devrelay-dirty-policy-test-{}-{}.toml",
+        std::process::id(),
+        "config"
+    ));
+    let snapshot_file = std::env::temp_dir().join(format!(
+        "devrelay-dirty-policy-test-{}-{}.json",
+        std::process::id(),
+        "snapshot"
+    ));
+    let _ = std::fs::remove_dir_all(&source);
+    let _ = std::fs::remove_dir_all(&target);
+    let _ = std::fs::remove_dir_all(&target_new);
+    let _ = std::fs::remove_dir_all(&backup_recover);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_file(&config);
+    let _ = std::fs::remove_file(&snapshot_file);
+    std::fs::create_dir(&source).unwrap();
+    init_git_repo(&source);
+    write_manifest(&source, "dirty-policy-project", "Dirty Policy Project");
+
+    let add = devrelay()
+        .args([
+            "project",
+            "add",
+            source.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(add.status.success());
+    assert!(
+        Command::new("git")
+            .arg("clone")
+            .arg(&source)
+            .arg(&target)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new("git")
+            .arg("clone")
+            .arg(&source)
+            .arg(&target_new)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    std::fs::write(source.join("README.md"), "source snapshot\n").unwrap();
+    let checkpoint = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "checkpoint",
+            "--repo",
+            source.to_str().unwrap(),
+            "--manifest",
+            source.join("devrelay.toml").to_str().unwrap(),
+            "--out",
+            snapshot_file.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(checkpoint.status.success());
+    let checkpoint_json: serde_json::Value = serde_json::from_slice(&checkpoint.stdout).unwrap();
+    let snapshot_repo = checkpoint_json["snapshot_repo"].as_str().unwrap();
+
+    std::fs::write(target.join("target-only.txt"), "preserve me\n").unwrap();
+    let apply = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "apply",
+            "--repo",
+            target.to_str().unwrap(),
+            "--source",
+            snapshot_repo,
+            "--snapshot",
+            snapshot_file.to_str().unwrap(),
+            "--dirty-policy",
+            "snapshot-and-fork",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(apply.status.success());
+    let apply_json: serde_json::Value = serde_json::from_slice(&apply.stdout).unwrap();
+    assert_eq!(
+        apply_json["dirty_policy"].as_str(),
+        Some("snapshot-and-fork")
+    );
+    assert_eq!(apply_json["backup"]["pinned"].as_bool(), Some(true));
+    assert!(
+        apply_json["backup"]["session_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("fork_"))
+    );
+    let backup_snapshot_id = apply_json["backup"]["snapshot_id"].as_str().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(target.join("README.md")).unwrap(),
+        "source snapshot\n"
+    );
+
+    let recover_backup = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "recover",
+            "open",
+            backup_snapshot_id,
+            "--project",
+            "dirty-policy-project",
+            "--path",
+            backup_recover.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(recover_backup.status.success());
+    assert_eq!(
+        std::fs::read_to_string(backup_recover.join("target-only.txt")).unwrap(),
+        "preserve me\n"
+    );
+
+    std::fs::write(target_new.join("new-workspace-only.txt"), "stay here\n").unwrap();
+    let apply_new = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "apply",
+            "--repo",
+            target_new.to_str().unwrap(),
+            "--source",
+            snapshot_repo,
+            "--snapshot",
+            snapshot_file.to_str().unwrap(),
+            "--dirty-policy",
+            "new-workspace",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(apply_new.status.success());
+    let apply_new_json: serde_json::Value = serde_json::from_slice(&apply_new.stdout).unwrap();
+    let applied_repo = std::path::PathBuf::from(apply_new_json["applied_repo"].as_str().unwrap());
+    assert!(target_new.join("new-workspace-only.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(applied_repo.join("README.md")).unwrap(),
+        "source snapshot\n"
+    );
+
+    let _ = std::fs::remove_dir_all(source);
+    let _ = std::fs::remove_dir_all(target);
+    let _ = std::fs::remove_dir_all(target_new);
+    let _ = std::fs::remove_dir_all(backup_recover);
+    let _ = std::fs::remove_dir_all(applied_repo);
+    let _ = std::fs::remove_dir_all(home);
+    let _ = std::fs::remove_file(config);
+    let _ = std::fs::remove_file(snapshot_file);
+}
+
+#[test]
 fn project_add_rejects_non_git_path() {
     let root = std::env::temp_dir().join(format!("devrelay-not-git-test-{}", std::process::id()));
     let config =

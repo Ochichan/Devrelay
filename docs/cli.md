@@ -14,7 +14,8 @@ devrelay recover list --json
 devrelay recover show <snapshot-id> --json
 devrelay recover open <snapshot-id> --path ../recovery --register --name review --json
 devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --dry-run
-devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --json
+devrelay apply --repo ../target --source . --snapshot snapshot.json --dirty-policy snapshot-and-fork --json
+devrelay apply --repo ../target --source . --snapshot snapshot.json --dirty-policy new-workspace --json
 ```
 
 ## Snapshot Store
@@ -28,6 +29,12 @@ $DEVRELAY_HOME/projects/<project-id>/snapshots.git
 Snapshot metadata is persisted in the per-project SQLite database under the same
 project data directory. Use `--out <path>` on `checkpoint`, or `snapshot export`,
 to write a portable metadata JSON file.
+
+## Dirty Apply Policies
+
+`apply` defaults to `--dirty-policy block`. `snapshot-and-fork` stores a pinned
+backup snapshot of the dirty target before cleaning and applying. `new-workspace`
+leaves the dirty target unchanged and applies into a sibling recovery workspace.
 
 ## Exit Codes
 

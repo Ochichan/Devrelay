@@ -200,6 +200,15 @@ WHERE project_id = ?1 AND snapshot_id = ?2
                 "UPDATE projects SET display_name = ?1 WHERE project_id = ?2",
                 (metadata.project_name.as_str(), metadata.project_id.as_str()),
             )?;
+            if let Some(session_id) = metadata.session_id.as_deref() {
+                tx.execute(
+                    r#"
+INSERT OR IGNORE INTO sessions (session_id, project_id, state)
+VALUES (?1, ?2, ?3)
+"#,
+                    (session_id, metadata.project_id.as_str(), "fork"),
+                )?;
+            }
             let sequence_number: i64 = tx.query_row(
                 "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM snapshots WHERE project_id = ?1",
                 [metadata.project_id.as_str()],
