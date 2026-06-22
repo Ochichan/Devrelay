@@ -37,6 +37,7 @@
 
 mod error;
 mod git;
+mod home;
 pub mod manifest;
 mod policy;
 mod snapshot;
@@ -44,6 +45,7 @@ mod snapshot_schema;
 
 pub use error::{DevRelayError, Result};
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind};
+pub use home::DevRelayHome;
 pub use manifest::{
     DirtyTargetPolicy, EnvironmentConfig, EnvironmentKind, EnvironmentProfile, HandoffConfig,
     Manifest, PatternConfig, PortablePathsPolicy, RestoreTerminals, SecretConfig, SecretMode,

@@ -291,21 +291,21 @@ Conventions:
 
 ### M1.1 Local Data Directory
 
-- [ ] Define `$DEVRELAY_HOME` resolution.
-- [ ] Add default path for macOS.
-- [ ] Add default path for Linux.
-- [ ] Add default path for Windows.
-- [ ] Add `DEVRELAY_HOME` env override.
-- [ ] Add config file path helper.
-- [ ] Add project data path helper.
-- [ ] Add snapshot bare repo path helper.
-- [ ] Add CAS path helper.
-- [ ] Add log path helper.
-- [ ] Add diagnostics path helper.
-- [ ] Create directories atomically.
-- [ ] Add permissions check for data directory.
-- [ ] Add test for data directory creation.
-- [ ] Add test for custom `DEVRELAY_HOME`.
+- [x] Define `$DEVRELAY_HOME` resolution.
+- [x] Add default path for macOS.
+- [x] Add default path for Linux.
+- [x] Add default path for Windows.
+- [x] Add `DEVRELAY_HOME` env override.
+- [x] Add config file path helper.
+- [x] Add project data path helper.
+- [x] Add snapshot bare repo path helper.
+- [x] Add CAS path helper.
+- [x] Add log path helper.
+- [x] Add diagnostics path helper.
+- [x] Create directories atomically.
+- [x] Add permissions check for data directory.
+- [x] Add test for data directory creation.
+- [x] Add test for custom `DEVRELAY_HOME`.
 
 ### M1.2 Local Config
 

@@ -20,6 +20,9 @@ pub enum DevRelayError {
     #[error("glob pattern error: {0}")]
     Glob(#[from] globset::Error),
 
+    #[error("configuration error: {0}")]
+    Config(String),
+
     #[error("manifest validation failed: {0}")]
     Manifest(String),
 
@@ -53,6 +56,7 @@ impl DevRelayError {
             Self::Toml(_) | Self::Manifest(_) => "DR-MANIFEST-INVALID",
             Self::Json(_) => "DR-JSON",
             Self::Glob(_) => "DR-GLOB",
+            Self::Config(_) => "DR-CONFIG",
             Self::GitCommand { .. } => "DR-GIT-COMMAND",
             Self::TargetDirty(_) => "DR-APPLY-DIRTY-TARGET",
             Self::MissingSourceObject(_) => "DR-APPLY-MISSING-SOURCE-OBJECT",
