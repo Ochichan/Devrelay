@@ -3,9 +3,10 @@ use clap::{Parser, ValueEnum};
 use devrelay_core::{DevRelayHome, LocalConfig, MetadataDb};
 #[cfg(unix)]
 use devrelay_core::{
-    IpcConnection, IpcLimits, IpcTransport, METHOD_AGENT_HEALTH, METHOD_RPC_NEGOTIATE,
-    RPC_PROTOCOL_VERSION, RpcError, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
-    RpcVersionNegotiationResult, UnixIpcConnection, UnixIpcListener,
+    GitRepo, IpcConnection, IpcLimits, IpcTransport, METHOD_AGENT_HEALTH, METHOD_RPC_NEGOTIATE,
+    METHOD_STATUS_GET, Manifest, RPC_PROTOCOL_VERSION, RpcError, RpcRequest, RpcResponse,
+    RpcVersionNegotiationParams, RpcVersionNegotiationResult, StatusGetParams, StatusGetResult,
+    UnixIpcConnection, UnixIpcListener, classify_untracked_paths,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -80,6 +81,7 @@ impl AgentState {
         vec![
             METHOD_RPC_NEGOTIATE.to_string(),
             METHOD_AGENT_HEALTH.to_string(),
+            METHOD_STATUS_GET.to_string(),
         ]
     }
 }
@@ -199,6 +201,7 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
             Ok(result) => RpcResponse::success(id, result),
             Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
         },
+        METHOD_STATUS_GET => handle_status_get(id, request.params),
         method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
     }
 }
@@ -224,6 +227,41 @@ fn handle_rpc_negotiate(id: devrelay_core::RpcId, params: serde_json::Value) -> 
             methods: AgentState::supported_methods(),
         }),
     )
+}
+
+#[cfg(unix)]
+fn handle_status_get(id: devrelay_core::RpcId, params: serde_json::Value) -> RpcResponse {
+    let params: StatusGetParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let repo = GitRepo::new(params.repo);
+    let manifest_path = params
+        .manifest
+        .unwrap_or_else(|| repo.path().join("devrelay.toml"));
+    let manifest = match Manifest::load(&manifest_path) {
+        Ok(manifest) => manifest,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let status = match repo.status() {
+        Ok(status) => status,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let untracked = match classify_untracked_paths(repo.path(), &manifest, status.untracked_paths())
+    {
+        Ok(untracked) => untracked,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let result = StatusGetResult {
+        status: status.summary(),
+        entries: status.entries,
+        untracked,
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
 }
 
 fn install_shutdown_handler() -> anyhow::Result<Arc<AtomicBool>> {

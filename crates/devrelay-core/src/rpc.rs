@@ -6,11 +6,15 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::path::PathBuf;
+
+use crate::{ClassifiedPath, StatusEntry, StatusSummary};
 
 pub const RPC_JSONRPC_VERSION: &str = "2.0";
 pub const RPC_PROTOCOL_VERSION: u32 = 1;
 pub const METHOD_RPC_NEGOTIATE: &str = "rpc.negotiate";
 pub const METHOD_AGENT_HEALTH: &str = "agent.health";
+pub const METHOD_STATUS_GET: &str = "status.get";
 
 pub const RPC_PARSE_ERROR: i64 = -32700;
 pub const RPC_INVALID_REQUEST: i64 = -32600;
@@ -163,6 +167,19 @@ pub struct RpcVersionNegotiationResult {
     pub methods: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusGetParams {
+    pub repo: PathBuf,
+    pub manifest: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusGetResult {
+    pub status: StatusSummary,
+    pub entries: Vec<StatusEntry>,
+    pub untracked: Vec<ClassifiedPath>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +242,21 @@ mod tests {
         assert_eq!(
             error.data.as_ref().unwrap()["server_protocol_version"],
             RPC_PROTOCOL_VERSION
+        );
+    }
+
+    #[test]
+    fn status_get_params_use_path_strings() {
+        let params: StatusGetParams = serde_json::from_value(json!({
+            "repo": "/tmp/repo",
+            "manifest": "/tmp/repo/devrelay.toml"
+        }))
+        .unwrap();
+
+        assert_eq!(params.repo, PathBuf::from("/tmp/repo"));
+        assert_eq!(
+            params.manifest.as_deref(),
+            Some(std::path::Path::new("/tmp/repo/devrelay.toml"))
         );
     }
 }

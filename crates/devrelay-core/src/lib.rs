@@ -54,7 +54,7 @@ pub use config::{
     WorkspaceState, migrate_local_config, workspace_id_for,
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
-pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind};
+pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
 pub use home::DevRelayHome;
 pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 #[cfg(unix)]
@@ -66,8 +66,9 @@ pub use manifest::{
 };
 pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
 pub use rpc::{
-    METHOD_AGENT_HEALTH, METHOD_RPC_NEGOTIATE, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcError,
-    RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
+    METHOD_AGENT_HEALTH, METHOD_RPC_NEGOTIATE, METHOD_STATUS_GET, RPC_JSONRPC_VERSION,
+    RPC_PROTOCOL_VERSION, RpcError, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
+    RpcVersionNegotiationResult, StatusGetParams, StatusGetResult,
 };
 pub use snapshot::{
     ApplyPlan, VerificationDetails, apply_snapshot, create_snapshot, plan_apply_snapshot,

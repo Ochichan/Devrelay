@@ -98,6 +98,73 @@ fn foreground_serves_rpc_negotiate_and_agent_health() {
 }
 
 #[cfg(unix)]
+#[test]
+fn foreground_serves_status_get_rpc() {
+    use devrelay_core::{IpcLimits, UnixIpcConnection};
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-status-rpc-test");
+    let repo = running.root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    run_git(&repo, &["init", "-b", "main"]);
+    run_git(&repo, &["config", "user.email", "devrelay@example.test"]);
+    run_git(&repo, &["config", "user.name", "DevRelay Test"]);
+    std::fs::write(repo.join("README.md"), "base\n").unwrap();
+    run_git(&repo, &["add", "README.md"]);
+    run_git(&repo, &["commit", "-m", "base"]);
+    std::fs::write(
+        repo.join("devrelay.toml"),
+        r#"
+schema = 1
+project_id = "12345678"
+name = "demo"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#,
+    )
+    .unwrap();
+    run_git(&repo, &["add", "devrelay.toml"]);
+    run_git(&repo, &["commit", "-m", "add manifest"]);
+    std::fs::write(repo.join("notes.md"), "untracked\n").unwrap();
+
+    let status = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "status-1",
+            "method": "status.get",
+            "params": {
+                "repo": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+
+    assert_eq!(status["id"], "status-1");
+    assert_eq!(status["result"]["status"]["branch"], "main");
+    assert_eq!(status["result"]["status"]["counts"]["untracked"], 1);
+    assert!(
+        status["result"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "notes.md")
+    );
+    assert!(
+        status["result"]["untracked"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "notes.md" && entry["decision"] == "include")
+    );
+    assert!(status.get("error").is_none());
+
+    running.stop();
+}
+
+#[cfg(unix)]
 fn rpc_call(
     connection: &mut devrelay_core::UnixIpcConnection,
     request: serde_json::Value,
@@ -110,6 +177,17 @@ fn rpc_call(
         .unwrap();
     let response = connection.read_message(IpcLimits::default()).unwrap();
     serde_json::from_slice(&response).unwrap()
+}
+
+#[cfg(unix)]
+fn run_git(repo: &std::path::Path, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?} failed");
 }
 
 #[cfg(unix)]

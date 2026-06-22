@@ -514,7 +514,7 @@ Conventions:
 - [x] Define error envelope.
 - [x] Define version negotiation method.
 - [x] Add `agent.health`.
-- [ ] Add `status.get`.
+- [x] Add `status.get`.
 - [ ] Add `projects.add`.
 - [ ] Add `projects.list`.
 - [ ] Add `projects.show`.
