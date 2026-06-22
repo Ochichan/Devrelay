@@ -9,10 +9,31 @@ use crate::error::{DevRelayError, Result};
 use crate::policy::classify_untracked_paths;
 use crate::snapshot_schema::{SNAPSHOT_ID_PREFIX, SNAPSHOT_SCHEMA_VERSION, calculate_state_hash};
 use crate::{GitRepo, GitStatus, Manifest, PathDecision, SnapshotMetadata};
+use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApplyPlan {
+    pub snapshot_id: String,
+    pub branch: Option<String>,
+    pub detached: bool,
+    pub head_oid: String,
+    pub index_ref: String,
+    pub work_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationDetails {
+    pub head_oid: String,
+    pub index_tree_oid: String,
+    pub work_tree_oid: String,
+    pub state_hash: String,
+    pub included_untracked: Vec<String>,
+    pub excluded_paths: Vec<String>,
+}
 
 pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMetadata> {
     let status = repo.status()?;
@@ -112,12 +133,8 @@ pub fn apply_snapshot(
     target: &GitRepo,
     source: &GitRepo,
     snapshot: &SnapshotMetadata,
-) -> Result<()> {
-    let target_status = target.status()?;
-    if !target_status.is_clean() {
-        return Err(DevRelayError::TargetDirty(target_status.short_summary()));
-    }
-
+) -> Result<VerificationDetails> {
+    plan_apply_snapshot(target, source, snapshot)?;
     fetch_snapshot_refs(target, source, snapshot)?;
 
     if let Some(branch) = &snapshot.branch {
@@ -131,7 +148,29 @@ pub fn apply_snapshot(
     verify_snapshot(target, snapshot)
 }
 
-pub fn verify_snapshot(repo: &GitRepo, snapshot: &SnapshotMetadata) -> Result<()> {
+pub fn plan_apply_snapshot(
+    target: &GitRepo,
+    source: &GitRepo,
+    snapshot: &SnapshotMetadata,
+) -> Result<ApplyPlan> {
+    let target_status = target.status()?;
+    if !target_status.is_clean() {
+        return Err(DevRelayError::TargetDirty(target_status.short_summary()));
+    }
+
+    ensure_source_snapshot_refs(source, snapshot)?;
+
+    Ok(ApplyPlan {
+        snapshot_id: snapshot.snapshot_id.clone(),
+        branch: snapshot.branch.clone(),
+        detached: snapshot.branch.is_none(),
+        head_oid: snapshot.head_oid.clone(),
+        index_ref: snapshot.index_ref(),
+        work_ref: snapshot.work_ref(),
+    })
+}
+
+pub fn verify_snapshot(repo: &GitRepo, snapshot: &SnapshotMetadata) -> Result<VerificationDetails> {
     let head = repo.run(&["rev-parse", "HEAD"])?;
     if head != snapshot.head_oid {
         return Err(DevRelayError::Verification(format!(
@@ -164,7 +203,21 @@ pub fn verify_snapshot(repo: &GitRepo, snapshot: &SnapshotMetadata) -> Result<()
         )));
     }
 
-    Ok(())
+    verify_included_untracked_paths(repo, snapshot)?;
+    verify_excluded_paths_absent(repo, snapshot)?;
+
+    Ok(VerificationDetails {
+        head_oid: head,
+        index_tree_oid: index_tree,
+        work_tree_oid: work_tree,
+        state_hash: calculated,
+        included_untracked: snapshot.included_untracked.clone(),
+        excluded_paths: snapshot
+            .excluded
+            .iter()
+            .map(|item| item.path.clone())
+            .collect(),
+    })
 }
 
 fn fetch_snapshot_refs(
@@ -173,15 +226,51 @@ fn fetch_snapshot_refs(
     snapshot: &SnapshotMetadata,
 ) -> Result<()> {
     let source_path = source.path().as_os_str().to_os_string();
-    target.run_with_env(
-        [
-            OsString::from("fetch"),
-            source_path,
-            OsString::from(format!("{}:{}", snapshot.index_ref(), snapshot.index_ref())),
-            OsString::from(format!("{}:{}", snapshot.work_ref(), snapshot.work_ref())),
-        ],
-        &[],
-    )?;
+    target
+        .run_with_env(
+            [
+                OsString::from("fetch"),
+                source_path,
+                OsString::from(format!("{}:{}", snapshot.index_ref(), snapshot.index_ref())),
+                OsString::from(format!("{}:{}", snapshot.work_ref(), snapshot.work_ref())),
+            ],
+            &[],
+        )
+        .map_err(|err| DevRelayError::MissingSourceObject(err.to_string()))?;
+    Ok(())
+}
+
+fn ensure_source_snapshot_refs(source: &GitRepo, snapshot: &SnapshotMetadata) -> Result<()> {
+    for git_ref in [snapshot.index_ref(), snapshot.work_ref()] {
+        source
+            .run(&["rev-parse", "--verify", &git_ref])
+            .map_err(|err| {
+                DevRelayError::MissingSourceObject(format!("missing source ref {git_ref}: {err}"))
+            })?;
+    }
+    Ok(())
+}
+
+fn verify_included_untracked_paths(repo: &GitRepo, snapshot: &SnapshotMetadata) -> Result<()> {
+    for path in &snapshot.included_untracked {
+        if !repo.path().join(PathBuf::from(path)).exists() {
+            return Err(DevRelayError::Verification(format!(
+                "included untracked path missing after apply: {path}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn verify_excluded_paths_absent(repo: &GitRepo, snapshot: &SnapshotMetadata) -> Result<()> {
+    for item in &snapshot.excluded {
+        if repo.path().join(PathBuf::from(&item.path)).exists() {
+            return Err(DevRelayError::Verification(format!(
+                "excluded path materialized after apply: {}",
+                item.path
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -398,7 +487,9 @@ portable_paths = "strict"
             )
             .unwrap();
         let target = GitRepo::new(&target_path);
-        apply_snapshot(&target, &source, &snapshot).unwrap();
+        let verification = apply_snapshot(&target, &source, &snapshot).unwrap();
+        assert_eq!(verification.included_untracked, vec!["notes.md"]);
+        assert!(verification.excluded_paths.contains(&".env".to_string()));
         verify_snapshot(&target, &snapshot).unwrap();
 
         let target_status = target.status().unwrap();
@@ -432,6 +523,7 @@ portable_paths = "strict"
         fs::write(target_path.join("local.txt"), "do not overwrite\n").unwrap();
         let err = apply_snapshot(&target, &source, &snapshot).unwrap_err();
         assert!(matches!(err, DevRelayError::TargetDirty(_)));
+        assert_eq!(err.code(), "DR-APPLY-DIRTY-TARGET");
     }
 
     #[test]
@@ -517,5 +609,96 @@ portable_paths = "strict"
         let err = create_snapshot(&source, &manifest()).unwrap_err();
         assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
         assert!(err.to_string().contains("rebase-merge"));
+    }
+
+    #[test]
+    fn apply_dry_run_returns_plan_without_mutating_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+
+        source
+            .run_with_env(
+                [
+                    OsString::from("clone"),
+                    source_path.as_os_str().to_os_string(),
+                    target_path.as_os_str().to_os_string(),
+                ],
+                &[],
+            )
+            .unwrap();
+        let target = GitRepo::new(&target_path);
+        let before_head = target.run(&["rev-parse", "HEAD"]).unwrap();
+        let before_status = target.status().unwrap();
+
+        let plan = plan_apply_snapshot(&target, &source, &snapshot).unwrap();
+
+        assert_eq!(plan.snapshot_id, snapshot.snapshot_id);
+        assert_eq!(target.run(&["rev-parse", "HEAD"]).unwrap(), before_head);
+        assert_eq!(target.status().unwrap(), before_status);
+    }
+
+    #[test]
+    fn apply_reports_missing_source_object_with_stable_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+
+        source
+            .run_with_env(
+                [
+                    OsString::from("clone"),
+                    source_path.as_os_str().to_os_string(),
+                    target_path.as_os_str().to_os_string(),
+                ],
+                &[],
+            )
+            .unwrap();
+        let target = GitRepo::new(&target_path);
+        let index_ref = snapshot.index_ref();
+        source.run(&["update-ref", "-d", &index_ref]).unwrap();
+
+        let err = plan_apply_snapshot(&target, &source, &snapshot).unwrap_err();
+        assert!(matches!(err, DevRelayError::MissingSourceObject(_)));
+        assert_eq!(err.code(), "DR-APPLY-MISSING-SOURCE-OBJECT");
+    }
+
+    #[test]
+    fn verification_mismatch_uses_stable_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+
+        source
+            .run_with_env(
+                [
+                    OsString::from("clone"),
+                    source_path.as_os_str().to_os_string(),
+                    target_path.as_os_str().to_os_string(),
+                ],
+                &[],
+            )
+            .unwrap();
+        let target = GitRepo::new(&target_path);
+        apply_snapshot(&target, &source, &snapshot).unwrap();
+
+        let mut bad_snapshot = snapshot;
+        bad_snapshot.state_hash = "bad".to_string();
+        let err = verify_snapshot(&target, &bad_snapshot).unwrap_err();
+
+        assert!(matches!(err, DevRelayError::Verification(_)));
+        assert_eq!(err.code(), "DR-APPLY-VERIFICATION-MISMATCH");
     }
 }

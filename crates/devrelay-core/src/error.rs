@@ -33,6 +33,9 @@ pub enum DevRelayError {
     #[error("target workspace is dirty: {0}")]
     TargetDirty(String),
 
+    #[error("missing source snapshot object: {0}")]
+    MissingSourceObject(String),
+
     #[error("snapshot metadata validation failed: {0}")]
     SnapshotMetadata(String),
 
@@ -41,6 +44,23 @@ pub enum DevRelayError {
 
     #[error("snapshot verification failed: {0}")]
     Verification(String),
+}
+
+impl DevRelayError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Io(_) => "DR-IO",
+            Self::Toml(_) | Self::Manifest(_) => "DR-MANIFEST-INVALID",
+            Self::Json(_) => "DR-JSON",
+            Self::Glob(_) => "DR-GLOB",
+            Self::GitCommand { .. } => "DR-GIT-COMMAND",
+            Self::TargetDirty(_) => "DR-APPLY-DIRTY-TARGET",
+            Self::MissingSourceObject(_) => "DR-APPLY-MISSING-SOURCE-OBJECT",
+            Self::SnapshotMetadata(_) => "DR-SNAPSHOT-METADATA",
+            Self::UnsupportedRepositoryState(_) => "DR-GIT-UNSUPPORTED-STATE",
+            Self::Verification(_) => "DR-APPLY-VERIFICATION-MISMATCH",
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, DevRelayError>;

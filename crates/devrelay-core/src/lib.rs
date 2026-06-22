@@ -51,6 +51,7 @@ pub use manifest::{
 };
 pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
 pub use snapshot::{
-    apply_snapshot, create_snapshot, read_snapshot_file, verify_snapshot, write_snapshot_file,
+    ApplyPlan, VerificationDetails, apply_snapshot, create_snapshot, plan_apply_snapshot,
+    read_snapshot_file, verify_snapshot, write_snapshot_file,
 };
 pub use snapshot_schema::SnapshotMetadata;

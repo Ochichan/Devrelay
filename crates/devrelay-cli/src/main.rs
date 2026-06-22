@@ -8,7 +8,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use devrelay_core::{
     GitRepo, Manifest, PathDecision, apply_snapshot, classify_untracked_paths, create_snapshot,
-    read_snapshot_file, write_snapshot_file,
+    plan_apply_snapshot, read_snapshot_file, write_snapshot_file,
 };
 use std::path::PathBuf;
 
@@ -51,6 +51,10 @@ enum Command {
         source: PathBuf,
         #[arg(long)]
         snapshot: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -160,13 +164,45 @@ fn main() -> anyhow::Result<()> {
             repo,
             source,
             snapshot,
+            dry_run,
+            json,
         } => {
             let snapshot = read_snapshot_file(&snapshot)
                 .with_context(|| format!("failed to read {}", snapshot.display()))?;
             let target = GitRepo::new(repo);
             let source = GitRepo::new(source);
-            apply_snapshot(&target, &source, &snapshot)?;
-            println!("applied: {}", snapshot.snapshot_id);
+            if dry_run {
+                let plan = plan_apply_snapshot(&target, &source, &snapshot)?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "dry_run": true,
+                            "plan": plan,
+                        }))?
+                    );
+                } else {
+                    println!("apply dry-run: {}", plan.snapshot_id);
+                    println!("  head: {}", plan.head_oid);
+                    println!(
+                        "  target: {}",
+                        plan.branch.as_deref().unwrap_or("detached HEAD")
+                    );
+                }
+            } else {
+                let verification = apply_snapshot(&target, &source, &snapshot)?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "applied": snapshot.snapshot_id,
+                            "verification": verification,
+                        }))?
+                    );
+                } else {
+                    println!("applied: {}", snapshot.snapshot_id);
+                }
+            }
         }
     }
     Ok(())

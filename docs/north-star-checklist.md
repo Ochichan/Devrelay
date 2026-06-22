@@ -218,25 +218,25 @@ Conventions:
 
 ### M0.8 Apply And Verification
 
-- [ ] Refuse dirty target before apply.
-- [ ] Fetch required snapshot refs from source path.
-- [ ] Check out target branch if snapshot has branch.
-- [ ] Check out detached HEAD if snapshot is detached.
-- [ ] Reset target to source HEAD.
-- [ ] Apply work tree from work commit.
-- [ ] Reset index to index commit.
-- [ ] Verify target HEAD OID.
-- [ ] Verify target index tree OID.
-- [ ] Verify target work tree OID.
-- [ ] Verify state hash.
-- [ ] Verify included untracked paths exist where expected.
-- [ ] Verify excluded secret paths were not materialized.
-- [ ] Return structured verification details.
-- [ ] Add `apply --dry-run`.
-- [ ] Add `apply --json`.
-- [ ] Add stable error for dirty target.
-- [ ] Add stable error for missing source object.
-- [ ] Add stable error for verification mismatch.
+- [x] Refuse dirty target before apply.
+- [x] Fetch required snapshot refs from source path.
+- [x] Check out target branch if snapshot has branch.
+- [x] Check out detached HEAD if snapshot is detached.
+- [x] Reset target to source HEAD.
+- [x] Apply work tree from work commit.
+- [x] Reset index to index commit.
+- [x] Verify target HEAD OID.
+- [x] Verify target index tree OID.
+- [x] Verify target work tree OID.
+- [x] Verify state hash.
+- [x] Verify included untracked paths exist where expected.
+- [x] Verify excluded secret paths were not materialized.
+- [x] Return structured verification details.
+- [x] Add `apply --dry-run`.
+- [x] Add `apply --json`.
+- [x] Add stable error for dirty target.
+- [x] Add stable error for missing source object.
+- [x] Add stable error for verification mismatch.
 
 ### M0.9 Round-Trip Fixtures
 
