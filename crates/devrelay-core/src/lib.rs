@@ -51,7 +51,7 @@ pub use config::{
     RedactedLocalConfig, ResourceProfile, WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry,
     WorkspaceState, migrate_local_config, workspace_id_for,
 };
-pub use error::{DevRelayError, Result};
+pub use error::{DevRelayError, ErrorInfo, Result};
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind};
 pub use home::DevRelayHome;
 pub use manifest::{

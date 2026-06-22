@@ -7,11 +7,11 @@
 use anyhow::{Context, Error};
 use clap::{Parser, Subcommand, ValueEnum};
 use devrelay_core::{
-    DevRelayError, DevRelayHome, GitRepo, LocalConfig, Manifest, PathDecision, PatternConfig,
-    PortablePathsPolicy, ProjectRegistryEntry, SnapshotMetadata, SnapshotStore, StoredSnapshot,
-    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
-    classify_untracked_paths, create_snapshot, plan_apply_snapshot, read_snapshot_file,
-    workspace_id_for, write_snapshot_file,
+    DevRelayError, DevRelayHome, ErrorInfo, GitRepo, LocalConfig, Manifest, PathDecision,
+    PatternConfig, PortablePathsPolicy, ProjectRegistryEntry, SnapshotMetadata, SnapshotStore,
+    StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
+    apply_snapshot, classify_untracked_paths, create_snapshot, plan_apply_snapshot,
+    read_snapshot_file, workspace_id_for, write_snapshot_file,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -1043,7 +1043,7 @@ fn find_recovery_snapshot(
         }
     }
 
-    Err(DevRelayError::Config(format!("unknown snapshot {snapshot_id}")).into())
+    Err(DevRelayError::Recover(format!("unknown snapshot {snapshot_id}")).into())
 }
 
 fn recovery_source_path(project: &ProjectRegistryEntry) -> anyhow::Result<PathBuf> {
@@ -1055,7 +1055,7 @@ fn recovery_source_path(project: &ProjectRegistryEntry) -> anyhow::Result<PathBu
     if project.local_path.exists() {
         return Ok(project.local_path.clone());
     }
-    Err(DevRelayError::Config(format!(
+    Err(DevRelayError::Recover(format!(
         "no existing source workspace for project {}",
         project.project_id
     ))
@@ -1320,30 +1320,55 @@ fn hash_text(value: &str) -> String {
 }
 
 fn render_error(err: &Error, json: bool) {
-    let code = error_code(err);
+    let info = error_info(err);
+    let diagnostic_id = diagnostic_id(info.code, &info.detail);
     if json {
         let rendered = serde_json::json!({
             "error": {
-                "code": code,
+                "code": info.code,
+                "title": info.title,
                 "message": err.to_string(),
+                "detail": info.detail,
+                "safe_actions": info.safe_actions,
+                "diagnostic_id": diagnostic_id,
             }
         });
         eprintln!(
             "{}",
             serde_json::to_string_pretty(&rendered).unwrap_or_else(|_| {
-                format!(r#"{{"error":{{"code":"{code}","message":"{}"}}}}"#, err)
+                format!(
+                    r#"{{"error":{{"code":"{}","title":"{}","message":"{}","detail":"{}","safe_actions":[],"diagnostic_id":"{}"}}}}"#,
+                    info.code, info.title, err, info.detail, diagnostic_id
+                )
             })
         );
     } else {
-        eprintln!("error[{code}]: {err}");
+        eprintln!("error[{}]: {}", info.code, info.title);
+        eprintln!("  detail: {}", info.detail);
+        eprintln!("  diagnostic: {diagnostic_id}");
+        if !info.safe_actions.is_empty() {
+            eprintln!("  safe actions:");
+            for action in info.safe_actions {
+                eprintln!("    - {action}");
+            }
+        }
     }
 }
 
-fn error_code(err: &Error) -> &'static str {
+fn error_info(err: &Error) -> ErrorInfo {
     for cause in err.chain() {
         if let Some(devrelay) = cause.downcast_ref::<DevRelayError>() {
-            return devrelay.code();
+            return devrelay.info();
         }
     }
-    "DR-CLI-ERROR"
+    ErrorInfo {
+        code: "DR-CLI-ERROR",
+        title: "CLI error",
+        detail: err.to_string(),
+        safe_actions: vec!["Retry with --json-errors and inspect the full command output."],
+    }
+}
+
+fn diagnostic_id(code: &str, detail: &str) -> String {
+    format!("diag_{}", hash_text(&format!("{code}:{detail}")))
 }

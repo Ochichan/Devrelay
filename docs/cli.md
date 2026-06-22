@@ -47,10 +47,17 @@ Use `--json-errors` to render failures as:
 {
   "error": {
     "code": "DR-...",
-    "message": "human readable message"
+    "title": "Short title",
+    "message": "human readable message",
+    "detail": "specific failure detail",
+    "safe_actions": ["non-destructive next step"],
+    "diagnostic_id": "diag_..."
   }
 }
 ```
 
 Machine-readable success output is command-specific and enabled by each
 command's `--json` flag.
+
+Error codes are stable within their namespace: `DR-MANIFEST-*`, `DR-GIT-*`,
+`DR-SNAPSHOT-*`, `DR-APPLY-*`, `DR-RECOVER-*`, and `DR-STORAGE-*`.

@@ -89,6 +89,10 @@ fn json_errors_use_nonzero_exit() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("\"error\""));
     assert!(stderr.contains("\"code\""));
+    assert!(stderr.contains("\"title\""));
+    assert!(stderr.contains("\"detail\""));
+    assert!(stderr.contains("\"safe_actions\""));
+    assert!(stderr.contains("\"diagnostic_id\""));
 }
 
 #[test]
@@ -772,7 +776,7 @@ fn recover_show_reports_missing_snapshot() {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("DR-CONFIG"));
+    assert!(stderr.contains("DR-RECOVER-SNAPSHOT-NOT-FOUND"));
     assert!(stderr.contains("unknown snapshot"));
 
     let _ = std::fs::remove_dir_all(root);

@@ -432,20 +432,20 @@ Conventions:
 
 ### M1.9 Stable Error Schema
 
-- [ ] Define error code namespace.
-- [ ] Add `DR-MANIFEST-*` codes.
-- [ ] Add `DR-GIT-*` codes.
-- [ ] Add `DR-SNAPSHOT-*` codes.
-- [ ] Add `DR-APPLY-*` codes.
-- [ ] Add `DR-RECOVER-*` codes.
-- [ ] Add `DR-STORAGE-*` codes.
-- [ ] Add title field.
-- [ ] Add detail field.
-- [ ] Add safe actions field.
-- [ ] Add diagnostic ID field.
-- [ ] Add terminal rendering.
-- [ ] Add JSON rendering.
-- [ ] Add tests for representative errors.
+- [x] Define error code namespace.
+- [x] Add `DR-MANIFEST-*` codes.
+- [x] Add `DR-GIT-*` codes.
+- [x] Add `DR-SNAPSHOT-*` codes.
+- [x] Add `DR-APPLY-*` codes.
+- [x] Add `DR-RECOVER-*` codes.
+- [x] Add `DR-STORAGE-*` codes.
+- [x] Add title field.
+- [x] Add detail field.
+- [x] Add safe actions field.
+- [x] Add diagnostic ID field.
+- [x] Add terminal rendering.
+- [x] Add JSON rendering.
+- [x] Add tests for representative errors.
 
 ### M1.10 Local Handoff Simulator
 
