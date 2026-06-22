@@ -518,8 +518,8 @@ Conventions:
 - [x] Add `projects.add`.
 - [x] Add `projects.list`.
 - [x] Add `projects.show`.
-- [ ] Add `checkpoint.create`.
-- [ ] Add `snapshots.list`.
+- [x] Add `checkpoint.create`.
+- [x] Add `snapshots.list`.
 - [ ] Add `recover.open`.
 - [ ] Add `apply.snapshot`.
 - [ ] Add `diagnostics.export`.

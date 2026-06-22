@@ -1,16 +1,19 @@
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
-use devrelay_core::{
-    DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_SHOW, METHOD_RPC_NEGOTIATE, METHOD_STATUS_GET, MetadataDb,
-};
 #[cfg(unix)]
 use devrelay_core::{
-    GitRepo, IpcConnection, IpcLimits, IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult,
-    ProjectsAddParams, ProjectsListResult, ProjectsShowParams, RPC_PROTOCOL_VERSION, RpcError,
-    RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
-    StatusGetParams, StatusGetResult, UnixIpcConnection, UnixIpcListener, WorkspaceRegistryEntry,
-    WorkspaceState, classify_untracked_paths, workspace_id_for,
+    CheckpointCreateParams, CheckpointCreateResult, GitRepo, IpcConnection, IpcLimits,
+    IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
+    ProjectsListResult, ProjectsShowParams, RPC_PROTOCOL_VERSION, RpcError, RpcRequest,
+    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, SnapshotStore,
+    SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult, UnixIpcConnection,
+    UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, classify_untracked_paths,
+    workspace_id_for,
+};
+use devrelay_core::{
+    DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_CHECKPOINT_CREATE, METHOD_PROJECTS_ADD,
+    METHOD_PROJECTS_LIST, METHOD_PROJECTS_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST,
+    METHOD_STATUS_GET, MetadataDb,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -65,6 +68,7 @@ struct AgentHealth {
 #[derive(Clone)]
 struct AgentState {
     foreground: bool,
+    home: DevRelayHome,
     config_path: PathBuf,
     socket_path: PathBuf,
     config: Arc<Mutex<LocalConfig>>,
@@ -100,6 +104,8 @@ impl AgentState {
             METHOD_PROJECTS_ADD.to_string(),
             METHOD_PROJECTS_LIST.to_string(),
             METHOD_PROJECTS_SHOW.to_string(),
+            METHOD_CHECKPOINT_CREATE.to_string(),
+            METHOD_SNAPSHOTS_LIST.to_string(),
         ]
     }
 }
@@ -128,6 +134,7 @@ fn main() -> anyhow::Result<()> {
 
     let state = AgentState {
         foreground: cli.foreground,
+        home,
         config_path,
         socket_path,
         config: Arc::new(Mutex::new(config)),
@@ -223,6 +230,8 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_PROJECTS_ADD => handle_projects_add(id, request.params, state),
         METHOD_PROJECTS_LIST => handle_projects_list(id, state),
         METHOD_PROJECTS_SHOW => handle_projects_show(id, request.params, state),
+        METHOD_CHECKPOINT_CREATE => handle_checkpoint_create(id, request.params, state),
+        METHOD_SNAPSHOTS_LIST => handle_snapshots_list(id, request.params, state),
         method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
     }
 }
@@ -280,6 +289,68 @@ fn handle_status_get(id: devrelay_core::RpcId, params: serde_json::Value) -> Rpc
     };
 
     match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_checkpoint_create(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: CheckpointCreateParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let repo = GitRepo::new(params.repo);
+    let manifest_path = params
+        .manifest
+        .unwrap_or_else(|| repo.path().join("devrelay.toml"));
+    let manifest = match Manifest::load(&manifest_path) {
+        Ok(manifest) => manifest,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let mut store = match SnapshotStore::open(&state.home, &manifest.project_id) {
+        Ok(store) => store,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let checkpoint = match store.checkpoint(&repo, &manifest, params.pin, params.label) {
+        Ok(checkpoint) => checkpoint,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let result = CheckpointCreateResult {
+        checkpoint,
+        snapshot_repo: store.snapshot_repo_path().to_path_buf(),
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_snapshots_list(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: SnapshotsListParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let store = match SnapshotStore::open(&state.home, &params.project) {
+        Ok(store) => store,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let snapshots = match store.list_snapshots() {
+        Ok(snapshots) => snapshots,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+
+    match serde_json::to_value(SnapshotsListResult { snapshots }) {
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }

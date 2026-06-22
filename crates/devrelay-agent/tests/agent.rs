@@ -255,6 +255,66 @@ portable_paths = "strict"
 }
 
 #[cfg(unix)]
+#[test]
+fn foreground_serves_checkpoint_create_and_snapshots_list_rpc() {
+    use devrelay_core::{IpcLimits, UnixIpcConnection};
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-snapshot-rpc-test");
+    let repo = running.root.join("snapshot-project");
+    create_manifest_repo(&repo, "11223344", "Snapshot Project");
+    std::fs::write(repo.join("README.md"), "base\nchanged\n").unwrap();
+    std::fs::write(repo.join("notes.md"), "carry me\n").unwrap();
+
+    let checkpoint = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "checkpoint-1",
+            "method": "checkpoint.create",
+            "params": {
+                "repo": repo,
+                "manifest": repo.join("devrelay.toml"),
+                "label": "rpc checkpoint",
+                "pin": true
+            }
+        }),
+    );
+    assert_eq!(checkpoint["id"], "checkpoint-1");
+    assert_eq!(checkpoint["result"]["checkpoint"]["project_id"], "11223344");
+    assert_eq!(checkpoint["result"]["checkpoint"]["pinned"], true);
+    assert_eq!(
+        checkpoint["result"]["checkpoint"]["label"],
+        "rpc checkpoint"
+    );
+    assert!(
+        checkpoint["result"]["checkpoint"]["metadata"]["included_untracked"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry == "notes.md")
+    );
+    assert!(std::path::Path::new(checkpoint["result"]["snapshot_repo"].as_str().unwrap()).exists());
+
+    let snapshot_id = checkpoint["result"]["checkpoint"]["snapshot_id"]
+        .as_str()
+        .unwrap();
+    let listed = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "snapshots-1",
+            "method": "snapshots.list",
+            "params": { "project": "11223344" }
+        }),
+    );
+    assert_eq!(listed["result"]["snapshots"][0]["snapshot_id"], snapshot_id);
+    assert_eq!(listed["result"]["snapshots"][0]["sequence_number"], 1);
+
+    running.stop();
+}
+
+#[cfg(unix)]
 fn rpc_call(
     connection: &mut devrelay_core::UnixIpcConnection,
     request: serde_json::Value,
@@ -278,6 +338,32 @@ fn run_git(repo: &std::path::Path, args: &[&str]) {
         .status()
         .unwrap();
     assert!(status.success(), "git {args:?} failed");
+}
+
+#[cfg(unix)]
+fn create_manifest_repo(repo: &std::path::Path, project_id: &str, name: &str) {
+    std::fs::create_dir(repo).unwrap();
+    run_git(repo, &["init", "-b", "main"]);
+    run_git(repo, &["config", "user.email", "devrelay@example.test"]);
+    run_git(repo, &["config", "user.name", "DevRelay Test"]);
+    std::fs::write(repo.join("README.md"), "base\n").unwrap();
+    std::fs::write(
+        repo.join("devrelay.toml"),
+        format!(
+            r#"
+schema = 1
+project_id = "{project_id}"
+name = "{name}"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#
+        ),
+    )
+    .unwrap();
+    run_git(repo, &["add", "README.md", "devrelay.toml"]);
+    run_git(repo, &["commit", "-m", "base"]);
 }
 
 #[cfg(unix)]

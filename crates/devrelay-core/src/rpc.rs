@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
-use crate::{ClassifiedPath, ProjectRegistryEntry, StatusEntry, StatusSummary};
+use crate::{ClassifiedPath, ProjectRegistryEntry, StatusEntry, StatusSummary, StoredSnapshot};
 
 pub const RPC_JSONRPC_VERSION: &str = "2.0";
 pub const RPC_PROTOCOL_VERSION: u32 = 1;
@@ -18,6 +18,8 @@ pub const METHOD_STATUS_GET: &str = "status.get";
 pub const METHOD_PROJECTS_ADD: &str = "projects.add";
 pub const METHOD_PROJECTS_LIST: &str = "projects.list";
 pub const METHOD_PROJECTS_SHOW: &str = "projects.show";
+pub const METHOD_CHECKPOINT_CREATE: &str = "checkpoint.create";
+pub const METHOD_SNAPSHOTS_LIST: &str = "snapshots.list";
 
 pub const RPC_PARSE_ERROR: i64 = -32700;
 pub const RPC_INVALID_REQUEST: i64 = -32600;
@@ -204,6 +206,31 @@ pub struct ProjectsListResult {
     pub projects: Vec<ProjectRegistryEntry>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointCreateParams {
+    pub repo: PathBuf,
+    pub manifest: Option<PathBuf>,
+    pub label: Option<String>,
+    #[serde(default)]
+    pub pin: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointCreateResult {
+    pub checkpoint: StoredSnapshot,
+    pub snapshot_repo: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotsListParams {
+    pub project: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotsListResult {
+    pub snapshots: Vec<StoredSnapshot>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,5 +325,18 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(show.id_or_name, "demo");
+    }
+
+    #[test]
+    fn checkpoint_create_defaults_pin_to_false() {
+        let params: CheckpointCreateParams = serde_json::from_value(json!({
+            "repo": "/tmp/repo",
+            "manifest": "/tmp/repo/devrelay.toml",
+            "label": "manual"
+        }))
+        .unwrap();
+
+        assert!(!params.pin);
+        assert_eq!(params.label.as_deref(), Some("manual"));
     }
 }
