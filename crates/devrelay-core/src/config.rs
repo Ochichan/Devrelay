@@ -59,6 +59,12 @@ pub struct ProjectRegistryEntry {
     pub project_id: String,
     pub display_name: String,
     pub local_path: PathBuf,
+    #[serde(default)]
+    pub manifest_path: Option<PathBuf>,
+    #[serde(default)]
+    pub remote_url_fingerprint: Option<String>,
+    #[serde(default)]
+    pub root_commit_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -268,6 +274,9 @@ anchor_mode = "local-only"
                 project_id: "project123".to_string(),
                 display_name: "Demo".to_string(),
                 local_path: PathBuf::from("/Users/dev/private/project"),
+                manifest_path: Some(PathBuf::from("/Users/dev/private/project/devrelay.toml")),
+                remote_url_fingerprint: Some("remote123".to_string()),
+                root_commit_fingerprint: Some("root123".to_string()),
             },
         );
 

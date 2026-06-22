@@ -39,6 +39,9 @@ pub enum DevRelayError {
         stderr: String,
     },
 
+    #[error("path is not a Git repository: {0}")]
+    NotGitRepository(String),
+
     #[error("target workspace is dirty: {0}")]
     TargetDirty(String),
 
@@ -65,6 +68,7 @@ impl DevRelayError {
             Self::Glob(_) => "DR-GLOB",
             Self::Config(_) => "DR-CONFIG",
             Self::GitCommand { .. } => "DR-GIT-COMMAND",
+            Self::NotGitRepository(_) => "DR-GIT-NOT-REPOSITORY",
             Self::TargetDirty(_) => "DR-APPLY-DIRTY-TARGET",
             Self::MissingSourceObject(_) => "DR-APPLY-MISSING-SOURCE-OBJECT",
             Self::SnapshotMetadata(_) => "DR-SNAPSHOT-METADATA",

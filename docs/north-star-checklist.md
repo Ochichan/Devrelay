@@ -346,23 +346,23 @@ Conventions:
 
 ### M1.4 Project Registry
 
-- [ ] Add `devrelay project add <path>`.
-- [ ] Resolve Git repository root.
-- [ ] Detect non-Git path and return stable error.
-- [ ] Load `devrelay.toml` from project root if present.
-- [ ] Accept `--manifest <path>`.
-- [ ] Generate project ID when manifest absent.
-- [ ] Use manifest project ID when present.
-- [ ] Capture project display name.
-- [ ] Capture canonical remote URL fingerprint.
-- [ ] Capture root commit fingerprint where possible.
-- [ ] Add workspace record for current path.
-- [ ] Prevent duplicate workspace registration.
-- [ ] Add `devrelay projects list`.
-- [ ] Add `devrelay project show <id-or-name>`.
-- [ ] Add `devrelay project remove <id-or-name>`.
-- [ ] Add JSON output for project commands.
-- [ ] Add project registry integration tests.
+- [x] Add `devrelay project add <path>`.
+- [x] Resolve Git repository root.
+- [x] Detect non-Git path and return stable error.
+- [x] Load `devrelay.toml` from project root if present.
+- [x] Accept `--manifest <path>`.
+- [x] Generate project ID when manifest absent.
+- [x] Use manifest project ID when present.
+- [x] Capture project display name.
+- [x] Capture canonical remote URL fingerprint.
+- [x] Capture root commit fingerprint where possible.
+- [x] Add workspace record for current path.
+- [x] Prevent duplicate workspace registration.
+- [x] Add `devrelay projects list`.
+- [x] Add `devrelay project show <id-or-name>`.
+- [x] Add `devrelay project remove <id-or-name>`.
+- [x] Add JSON output for project commands.
+- [x] Add project registry integration tests.
 
 ### M1.5 Workspace Mapping
 

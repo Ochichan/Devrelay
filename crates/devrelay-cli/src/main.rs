@@ -11,7 +11,7 @@ use devrelay_core::{
     classify_untracked_paths, create_snapshot, plan_apply_snapshot, read_snapshot_file,
     write_snapshot_file,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[derive(Debug, Parser)]
@@ -37,6 +37,14 @@ enum Command {
     Manifest {
         #[command(subcommand)]
         command: ManifestCommand,
+    },
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
+    Projects {
+        #[command(subcommand)]
+        command: ProjectsCommand,
     },
     Status {
         #[arg(long, default_value = ".")]
@@ -92,6 +100,43 @@ enum ConfigCommand {
 enum ManifestCommand {
     Check {
         path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectCommand {
+    Add {
+        path: PathBuf,
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    Show {
+        id_or_name: String,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    Remove {
+        id_or_name: String,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectsCommand {
+    List {
+        #[arg(long)]
+        config: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -174,6 +219,98 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                         "ok: {} ({}) schema {}",
                         manifest.name, manifest.project_id, manifest.schema
                     );
+                }
+            }
+        },
+        Command::Project { command } => match command {
+            ProjectCommand::Add {
+                path,
+                manifest,
+                config,
+                json,
+            } => {
+                let (config_path, mut local_config) = load_or_default_config(config)?;
+                let entry = build_project_registry_entry(&path, manifest.as_deref())?;
+                ensure_workspace_not_registered(&local_config, &entry.local_path)?;
+                local_config
+                    .project_registry
+                    .projects
+                    .insert(entry.project_id.clone(), entry.clone());
+                local_config.save(&config_path)?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "added": entry,
+                            "config": config_path,
+                        }))?
+                    );
+                } else {
+                    println!(
+                        "added project: {} ({})",
+                        entry.display_name, entry.project_id
+                    );
+                    println!("  path: {}", entry.local_path.display());
+                }
+            }
+            ProjectCommand::Show {
+                id_or_name,
+                config,
+                json,
+            } => {
+                let (_, local_config) = load_or_default_config(config)?;
+                let entry = find_project(&local_config, &id_or_name)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(entry)?);
+                } else {
+                    println!("project: {} ({})", entry.display_name, entry.project_id);
+                    println!("  path: {}", entry.local_path.display());
+                }
+            }
+            ProjectCommand::Remove {
+                id_or_name,
+                config,
+                json,
+            } => {
+                let (config_path, mut local_config) = load_or_default_config(config)?;
+                let project_id = find_project(&local_config, &id_or_name)?.project_id.clone();
+                let removed = local_config
+                    .project_registry
+                    .projects
+                    .remove(&project_id)
+                    .ok_or_else(|| DevRelayError::Config("project disappeared".to_string()))?;
+                local_config.save(&config_path)?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "removed": removed,
+                            "config": config_path,
+                        }))?
+                    );
+                } else {
+                    println!(
+                        "removed project: {} ({})",
+                        removed.display_name, removed.project_id
+                    );
+                }
+            }
+        },
+        Command::Projects { command } => match command {
+            ProjectsCommand::List { config, json } => {
+                let (_, local_config) = load_or_default_config(config)?;
+                let projects = local_config
+                    .project_registry
+                    .projects
+                    .values()
+                    .collect::<Vec<_>>();
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&projects)?);
+                } else {
+                    for project in projects {
+                        println!("{} ({})", project.display_name, project.project_id);
+                        println!("  path: {}", project.local_path.display());
+                    }
                 }
             }
         },
@@ -318,6 +455,116 @@ fn config_path(path: Option<PathBuf>, create_home: bool) -> anyhow::Result<PathB
         home.create_base_dirs()?;
     }
     Ok(home.config_file())
+}
+
+fn load_or_default_config(path: Option<PathBuf>) -> anyhow::Result<(PathBuf, LocalConfig)> {
+    let path = config_path(path, true)?;
+    if path.exists() {
+        Ok((path.clone(), LocalConfig::load(&path)?))
+    } else {
+        Ok((path, LocalConfig::default()))
+    }
+}
+
+fn build_project_registry_entry(
+    path: &Path,
+    manifest_path: Option<&Path>,
+) -> anyhow::Result<devrelay_core::ProjectRegistryEntry> {
+    let root = resolve_git_root(path)?;
+    let manifest_path = manifest_path.map(PathBuf::from).or_else(|| {
+        root.join("devrelay.toml")
+            .exists()
+            .then(|| root.join("devrelay.toml"))
+    });
+    let manifest = manifest_path
+        .as_ref()
+        .map(Manifest::load)
+        .transpose()
+        .with_context(|| "failed to load project manifest")?;
+    let project_id = manifest
+        .as_ref()
+        .map(|manifest| manifest.project_id.clone())
+        .unwrap_or_else(|| generated_project_id(&root));
+    let display_name = manifest
+        .as_ref()
+        .map(|manifest| manifest.name.clone())
+        .or_else(|| {
+            root.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| project_id.clone());
+    let repo = GitRepo::new(&root);
+
+    Ok(devrelay_core::ProjectRegistryEntry {
+        project_id,
+        display_name,
+        local_path: root,
+        manifest_path,
+        remote_url_fingerprint: remote_fingerprint(&repo),
+        root_commit_fingerprint: root_commit_fingerprint(&repo),
+    })
+}
+
+fn resolve_git_root(path: &Path) -> anyhow::Result<PathBuf> {
+    let repo = GitRepo::new(path);
+    let raw = repo
+        .run(&["rev-parse", "--show-toplevel"])
+        .map_err(|_| DevRelayError::NotGitRepository(path.display().to_string()))?;
+    Ok(PathBuf::from(raw))
+}
+
+fn ensure_workspace_not_registered(config: &LocalConfig, local_path: &Path) -> anyhow::Result<()> {
+    for project in config.project_registry.projects.values() {
+        if project.local_path == local_path {
+            return Err(DevRelayError::Config(format!(
+                "{} is already registered as {}",
+                local_path.display(),
+                project.project_id
+            ))
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn find_project<'a>(
+    config: &'a LocalConfig,
+    id_or_name: &str,
+) -> anyhow::Result<&'a devrelay_core::ProjectRegistryEntry> {
+    config
+        .project_registry
+        .projects
+        .get(id_or_name)
+        .or_else(|| {
+            config
+                .project_registry
+                .projects
+                .values()
+                .find(|project| project.display_name == id_or_name)
+        })
+        .ok_or_else(|| DevRelayError::Config(format!("unknown project {id_or_name}")).into())
+}
+
+fn generated_project_id(root: &Path) -> String {
+    format!("p_{}", hash_text(&root.to_string_lossy()))
+}
+
+fn remote_fingerprint(repo: &GitRepo) -> Option<String> {
+    repo.run(&["remote", "get-url", "origin"])
+        .ok()
+        .map(|remote| format!("remote_{}", hash_text(remote.trim())))
+}
+
+fn root_commit_fingerprint(repo: &GitRepo) -> Option<String> {
+    repo.run(&["rev-list", "--max-parents=0", "HEAD"])
+        .ok()
+        .and_then(|roots| roots.lines().next().map(str::to_string))
+        .map(|root| format!("root_{}", hash_text(&root)))
+}
+
+fn hash_text(value: &str) -> String {
+    let digest = blake3::hash(value.as_bytes());
+    digest.to_hex()[..16].to_string()
 }
 
 fn render_error(err: &Error, json: bool) {
