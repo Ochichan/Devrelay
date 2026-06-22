@@ -133,46 +133,46 @@ Conventions:
 
 ### M0.4 Snapshot Metadata Schema
 
-- [ ] Create explicit snapshot schema module.
-- [ ] Add `schema_version`.
-- [ ] Add stable snapshot ID format.
-- [ ] Add project ID.
-- [ ] Add project name.
-- [ ] Add session ID placeholder or explicit absence.
-- [ ] Add parent snapshot ID placeholder or explicit absence.
-- [ ] Add source device ID placeholder or explicit absence.
-- [ ] Add branch name.
-- [ ] Add HEAD OID.
-- [ ] Add index tree OID.
-- [ ] Add index commit OID.
-- [ ] Add work tree OID.
-- [ ] Add work commit OID.
-- [ ] Add status counts.
-- [ ] Add included untracked manifest.
-- [ ] Add excluded path manifest.
-- [ ] Add state hash.
-- [ ] Add created timestamp.
-- [ ] Add snapshot metadata JSON golden fixture.
-- [ ] Add schema backward compatibility test for current version.
-- [ ] Add JSON serialization test with stable field names.
-- [ ] Add JSON deserialization test from golden fixture.
-- [ ] Add validation for empty required OIDs.
-- [ ] Add validation for malformed snapshot IDs.
+- [x] Create explicit snapshot schema module.
+- [x] Add `schema_version`.
+- [x] Add stable snapshot ID format.
+- [x] Add project ID.
+- [x] Add project name.
+- [x] Add session ID placeholder or explicit absence.
+- [x] Add parent snapshot ID placeholder or explicit absence.
+- [x] Add source device ID placeholder or explicit absence.
+- [x] Add branch name.
+- [x] Add HEAD OID.
+- [x] Add index tree OID.
+- [x] Add index commit OID.
+- [x] Add work tree OID.
+- [x] Add work commit OID.
+- [x] Add status counts.
+- [x] Add included untracked manifest.
+- [x] Add excluded path manifest.
+- [x] Add state hash.
+- [x] Add created timestamp.
+- [x] Add snapshot metadata JSON golden fixture.
+- [x] Add schema backward compatibility test for current version.
+- [x] Add JSON serialization test with stable field names.
+- [x] Add JSON deserialization test from golden fixture.
+- [x] Add validation for empty required OIDs.
+- [x] Add validation for malformed snapshot IDs.
 
 ### M0.5 State Hashing
 
-- [ ] Define canonical state hash input fields.
-- [ ] Exclude non-semantic fields from state hash.
-- [ ] Include project ID in state hash.
-- [ ] Include HEAD OID in state hash.
-- [ ] Include index tree OID in state hash.
-- [ ] Include work tree OID in state hash.
-- [ ] Include included untracked manifest in state hash.
-- [ ] Include excluded path reasons in state hash.
-- [ ] Add deterministic ordering for included paths.
-- [ ] Add deterministic ordering for excluded paths.
-- [ ] Add test proving path order does not change hash after canonical sort.
-- [ ] Add test proving content/tree changes do change hash.
+- [x] Define canonical state hash input fields.
+- [x] Exclude non-semantic fields from state hash.
+- [x] Include project ID in state hash.
+- [x] Include HEAD OID in state hash.
+- [x] Include index tree OID in state hash.
+- [x] Include work tree OID in state hash.
+- [x] Include included untracked manifest in state hash.
+- [x] Include excluded path reasons in state hash.
+- [x] Add deterministic ordering for included paths.
+- [x] Add deterministic ordering for excluded paths.
+- [x] Add test proving path order does not change hash after canonical sort.
+- [x] Add test proving content/tree changes do change hash.
 
 ### M0.6 Secret And Untracked Policy
 

@@ -7,54 +7,31 @@
 
 use crate::error::{DevRelayError, Result};
 use crate::policy::classify_untracked_paths;
-use crate::{ClassifiedPath, GitRepo, GitStatus, Manifest, PathDecision, StatusCounts};
-use serde::{Deserialize, Serialize};
+use crate::snapshot_schema::{SNAPSHOT_ID_PREFIX, SNAPSHOT_SCHEMA_VERSION, calculate_state_hash};
+use crate::{GitRepo, GitStatus, Manifest, PathDecision, SnapshotMetadata};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SnapshotMetadata {
-    pub schema_version: u32,
-    pub snapshot_id: String,
-    pub project_id: String,
-    pub project_name: String,
-    pub branch: Option<String>,
-    pub head_oid: String,
-    pub index_tree_oid: String,
-    pub index_commit_oid: String,
-    pub work_tree_oid: String,
-    pub work_commit_oid: String,
-    pub source_status: StatusCounts,
-    pub included_untracked: Vec<String>,
-    pub excluded: Vec<ClassifiedPath>,
-    pub state_hash: String,
-    pub created_at_unix_seconds: u64,
-}
-
-impl SnapshotMetadata {
-    pub fn index_ref(&self) -> String {
-        format!("refs/devrelay/snapshots/{}/index", self.snapshot_id)
-    }
-
-    pub fn work_ref(&self) -> String {
-        format!("refs/devrelay/snapshots/{}/work", self.snapshot_id)
-    }
-}
-
 pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMetadata> {
     let status = repo.status()?;
     let classified = classify_untracked_paths(repo.path(), manifest, status.untracked_paths())?;
-    let included_untracked = classified
+    let mut included_untracked = classified
         .iter()
         .filter(|item| item.decision == PathDecision::Include)
         .map(|item| item.path.clone())
         .collect::<Vec<_>>();
-    let excluded = classified
+    included_untracked.sort();
+    let mut excluded = classified
         .into_iter()
         .filter(|item| item.decision == PathDecision::Exclude)
         .collect::<Vec<_>>();
+    excluded.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.reason.cmp(&right.reason))
+    });
 
     let head_oid = status.head_oid.clone();
     let index_tree_oid = repo.current_index_tree()?;
@@ -74,10 +51,13 @@ pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMe
 
     let snapshot_id = snapshot_id(&status, &index_tree_oid, &work_tree_oid);
     let metadata = SnapshotMetadata {
-        schema_version: 1,
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
         snapshot_id,
         project_id: manifest.project_id.clone(),
         project_name: manifest.name.clone(),
+        session_id: None,
+        parent_snapshot_id: None,
+        source_device_id: None,
         branch: status.branch.clone(),
         head_oid,
         index_tree_oid,
@@ -94,6 +74,7 @@ pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMe
         state_hash: calculate_state_hash(&metadata),
         ..metadata
     };
+    metadata.validate()?;
 
     repo.run(&[
         "update-ref",
@@ -110,6 +91,7 @@ pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMe
 }
 
 pub fn write_snapshot_file(path: impl AsRef<Path>, metadata: &SnapshotMetadata) -> Result<()> {
+    metadata.validate()?;
     let path = path.as_ref();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -120,7 +102,9 @@ pub fn write_snapshot_file(path: impl AsRef<Path>, metadata: &SnapshotMetadata) 
 
 pub fn read_snapshot_file(path: impl AsRef<Path>) -> Result<SnapshotMetadata> {
     let raw = fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&raw)?)
+    let metadata: SnapshotMetadata = serde_json::from_str(&raw)?;
+    metadata.validate()?;
+    Ok(metadata)
 }
 
 pub fn apply_snapshot(
@@ -270,28 +254,7 @@ fn snapshot_id(status: &GitStatus, index_tree_oid: &str, work_tree_oid: &str) ->
     hasher.update(work_tree_oid.as_bytes());
     hasher.update(&unix_nanos().to_le_bytes());
     let digest = hasher.finalize();
-    format!("s_{}", &digest.to_hex()[..24])
-}
-
-fn calculate_state_hash(metadata: &SnapshotMetadata) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(metadata.project_id.as_bytes());
-    hasher.update(metadata.head_oid.as_bytes());
-    hasher.update(metadata.index_tree_oid.as_bytes());
-    hasher.update(metadata.work_tree_oid.as_bytes());
-    if let Some(branch) = &metadata.branch {
-        hasher.update(branch.as_bytes());
-    }
-    for path in &metadata.included_untracked {
-        hasher.update(path.as_bytes());
-        hasher.update(&[0]);
-    }
-    for item in &metadata.excluded {
-        hasher.update(item.path.as_bytes());
-        hasher.update(item.reason.as_bytes());
-        hasher.update(&[0]);
-    }
-    hasher.finalize().to_hex().to_string()
+    format!("{}{}", SNAPSHOT_ID_PREFIX, &digest.to_hex()[..24])
 }
 
 fn unix_seconds() -> u64 {

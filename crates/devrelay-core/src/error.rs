@@ -33,6 +33,9 @@ pub enum DevRelayError {
     #[error("target workspace is dirty: {0}")]
     TargetDirty(String),
 
+    #[error("snapshot metadata validation failed: {0}")]
+    SnapshotMetadata(String),
+
     #[error("snapshot verification failed: {0}")]
     Verification(String),
 }

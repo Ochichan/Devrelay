@@ -40,6 +40,7 @@ mod git;
 pub mod manifest;
 mod policy;
 mod snapshot;
+mod snapshot_schema;
 
 pub use error::{DevRelayError, Result};
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind};
@@ -50,6 +51,6 @@ pub use manifest::{
 };
 pub use policy::{ClassifiedPath, PathDecision, classify_untracked_paths};
 pub use snapshot::{
-    SnapshotMetadata, apply_snapshot, create_snapshot, read_snapshot_file, verify_snapshot,
-    write_snapshot_file,
+    apply_snapshot, create_snapshot, read_snapshot_file, verify_snapshot, write_snapshot_file,
 };
+pub use snapshot_schema::SnapshotMetadata;
