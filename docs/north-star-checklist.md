@@ -277,15 +277,15 @@ Conventions:
 
 ### M0 Exit Gate
 
-- [ ] Run `cargo fmt --all -- --check`.
-- [ ] Run `cargo clippy --workspace --all-targets -- -D warnings`.
-- [ ] Run `cargo test --workspace`.
-- [ ] Run local round-trip fixture suite.
-- [ ] Verify source repository remains unchanged after checkpoint.
-- [ ] Verify target status equivalence after apply.
-- [ ] Verify dirty target stable error code.
-- [ ] Update `docs/foundation.md`.
-- [ ] Update `README.md` quick start if commands changed.
+- [x] Run `cargo fmt --all -- --check`.
+- [x] Run `cargo clippy --workspace --all-targets -- -D warnings`.
+- [x] Run `cargo test --workspace`.
+- [x] Run local round-trip fixture suite.
+- [x] Verify source repository remains unchanged after checkpoint.
+- [x] Verify target status equivalence after apply.
+- [x] Verify dirty target stable error code.
+- [x] Update `docs/foundation.md`.
+- [x] Update `README.md` quick start if commands changed.
 
 ## M1. Local CLI MVP
 

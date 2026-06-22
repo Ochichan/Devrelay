@@ -38,13 +38,19 @@ leases, device pairing, and UI surfaces come after this correctness gate.
 
 ```bash
 devrelay manifest check <path>
+devrelay manifest check <path> --json
 devrelay status --repo <path> --manifest <path> [--json]
 devrelay checkpoint --repo <path> --manifest <path> [--out <snapshot.json>]
-devrelay apply --repo <target> --source <source> --snapshot <snapshot.json>
+devrelay apply --repo <target> --source <source> --snapshot <snapshot.json> [--dry-run] [--json]
 ```
 
 `apply` refuses dirty targets by default. That matches the product promise that
 DevRelay never quietly overwrites local work.
+
+`checkpoint` writes snapshot metadata to
+`.devrelay/snapshots/<snapshot-id>.json` unless `--out` is supplied. `apply
+--dry-run` validates that the target is clean and the source snapshot refs are
+available without mutating the target.
 
 ## Core API Boundary
 
@@ -53,3 +59,17 @@ public module because it is part of the project contract; Git orchestration,
 policy classification, snapshot implementation, and error internals stay behind
 private modules. The reviewed surface is recorded in
 [`docs/api-surface.md`](api-surface.md).
+
+## M0 Verification Coverage
+
+The M0 gate is covered by:
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
+- `crates/devrelay-core/tests/round_trip.rs` for staged, unstaged, untracked,
+  secret exclusion, binary, executable-bit, rename, dirty-target, source
+  unchanged, and target status equivalence fixtures
+
+Snapshot verification now returns structured details for HEAD, index tree, work
+tree, state hash, included untracked paths, and excluded paths.

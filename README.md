@@ -23,7 +23,9 @@ is correctness of state capture and round-trip behavior.
 
 ```bash
 just preflight
+cargo run -p devrelay-cli -- --version
 cargo run -p devrelay-cli -- manifest check devrelay_spec_bundle/devrelay.toml
+cargo run -p devrelay-cli -- manifest check devrelay_spec_bundle/devrelay.toml --json
 cargo run -p devrelay-cli -- status --repo . --manifest devrelay_spec_bundle/devrelay.toml
 ```
 
