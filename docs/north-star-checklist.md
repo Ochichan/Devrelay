@@ -326,23 +326,23 @@ Conventions:
 
 ### M1.3 SQLite Metadata
 
-- [ ] Add SQLite dependency.
-- [ ] Create migration runner.
-- [ ] Create metadata DB file.
-- [ ] Enable WAL mode.
-- [ ] Create `schema_migrations` table.
-- [ ] Create `projects` table.
-- [ ] Create `workspaces` table.
-- [ ] Create `sessions` table.
-- [ ] Create `snapshots` table.
-- [ ] Create `leases` table placeholder.
-- [ ] Create `handoffs` table placeholder.
-- [ ] Create indexes for project lookup.
-- [ ] Create indexes for session snapshot timeline.
-- [ ] Add transaction helper.
-- [ ] Add migration test for empty DB.
-- [ ] Add migration idempotency test.
-- [ ] Add migration rollback policy documentation.
+- [x] Add SQLite dependency.
+- [x] Create migration runner.
+- [x] Create metadata DB file.
+- [x] Enable WAL mode.
+- [x] Create `schema_migrations` table.
+- [x] Create `projects` table.
+- [x] Create `workspaces` table.
+- [x] Create `sessions` table.
+- [x] Create `snapshots` table.
+- [x] Create `leases` table placeholder.
+- [x] Create `handoffs` table placeholder.
+- [x] Create indexes for project lookup.
+- [x] Create indexes for session snapshot timeline.
+- [x] Add transaction helper.
+- [x] Add migration test for empty DB.
+- [x] Add migration idempotency test.
+- [x] Add migration rollback policy documentation.
 
 ### M1.4 Project Registry
 

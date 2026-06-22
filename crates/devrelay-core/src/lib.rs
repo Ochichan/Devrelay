@@ -43,6 +43,7 @@ pub mod manifest;
 mod policy;
 mod snapshot;
 mod snapshot_schema;
+mod storage;
 
 pub use config::{
     AnchorMode, EditorPreference, LocalConfig, ProjectRegistryEntry, ProjectRegistryIndex,
@@ -62,3 +63,4 @@ pub use snapshot::{
     read_snapshot_file, verify_snapshot, write_snapshot_file,
 };
 pub use snapshot_schema::SnapshotMetadata;
+pub use storage::MetadataDb;

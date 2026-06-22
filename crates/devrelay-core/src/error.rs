@@ -20,6 +20,9 @@ pub enum DevRelayError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
     #[error("glob pattern error: {0}")]
     Glob(#[from] globset::Error),
 
@@ -58,6 +61,7 @@ impl DevRelayError {
             Self::Io(_) => "DR-IO",
             Self::Toml(_) | Self::TomlSerialize(_) | Self::Manifest(_) => "DR-MANIFEST-INVALID",
             Self::Json(_) => "DR-JSON",
+            Self::Sqlite(_) => "DR-STORAGE-SQLITE",
             Self::Glob(_) => "DR-GLOB",
             Self::Config(_) => "DR-CONFIG",
             Self::GitCommand { .. } => "DR-GIT-COMMAND",
