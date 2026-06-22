@@ -29,6 +29,23 @@ fn init_git_repo(root: &Path) {
     git(root, &["commit", "-m", "base"]);
 }
 
+fn write_manifest(root: &Path, project_id: &str, name: &str) {
+    std::fs::write(
+        root.join("devrelay.toml"),
+        format!(
+            r#"schema = 1
+project_id = "{project_id}"
+name = "{name}"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#
+        ),
+    )
+    .unwrap();
+}
+
 #[test]
 fn prints_version() {
     let output = devrelay().arg("--version").output().unwrap();
@@ -203,18 +220,7 @@ fn project_add_uses_manifest_and_records_fingerprints() {
             "https://example.com/devrelay/demo.git",
         ],
     );
-    std::fs::write(
-        root.join("devrelay.toml"),
-        r#"schema = 1
-project_id = "manifest-project"
-name = "Manifest Project"
-
-[workspace]
-untracked = "safe"
-portable_paths = "strict"
-"#,
-    )
-    .unwrap();
+    write_manifest(&root, "manifest-project", "Manifest Project");
 
     let add = devrelay()
         .args([
@@ -247,6 +253,24 @@ portable_paths = "strict"
             .as_str()
             .is_some_and(|value| value.starts_with("root_"))
     );
+    let workspaces = added["workspaces"].as_object().unwrap();
+    assert_eq!(workspaces.len(), 1);
+    let workspace = workspaces.values().next().unwrap();
+    assert!(
+        workspace["workspace_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("w_"))
+    );
+    assert_eq!(workspace["project_id"].as_str(), Some("manifest-project"));
+    assert_eq!(workspace["device_id"].as_str(), Some("local-device"));
+    assert_eq!(
+        workspace["local_path"].as_str(),
+        Some(root.canonicalize().unwrap().to_str().unwrap())
+    );
+    assert!(workspace["platform_profile"].as_str().is_some());
+    assert_eq!(workspace["state"].as_str(), Some("active"));
+    assert!(workspace["last_seen_head"].as_str().is_some());
+    assert!(workspace["last_checkpoint_id"].is_null());
 
     let duplicate = devrelay()
         .args([
@@ -265,6 +289,128 @@ portable_paths = "strict"
     assert!(stderr.contains("already registered"));
 
     let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_file(config);
+}
+
+#[test]
+fn project_add_appends_workspaces_and_workspace_remove_handles_stale_paths() {
+    let root_a = std::env::temp_dir().join(format!(
+        "devrelay-workspace-test-{}-{}",
+        std::process::id(),
+        "repo-a"
+    ));
+    let root_b = std::env::temp_dir().join(format!(
+        "devrelay-workspace-test-{}-{}",
+        std::process::id(),
+        "repo-b"
+    ));
+    let config = std::env::temp_dir().join(format!(
+        "devrelay-workspace-test-{}-{}.toml",
+        std::process::id(),
+        "config"
+    ));
+    let _ = std::fs::remove_dir_all(&root_a);
+    let _ = std::fs::remove_dir_all(&root_b);
+    let _ = std::fs::remove_file(&config);
+    std::fs::create_dir(&root_a).unwrap();
+    std::fs::create_dir(&root_b).unwrap();
+    init_git_repo(&root_a);
+    init_git_repo(&root_b);
+    write_manifest(&root_a, "shared-project", "Shared Project");
+    write_manifest(&root_b, "shared-project", "Shared Project");
+
+    let add_a = devrelay()
+        .args([
+            "project",
+            "add",
+            root_a.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(add_a.status.success());
+    let add_a_json: serde_json::Value = serde_json::from_slice(&add_a.stdout).unwrap();
+    let workspace_id_a = add_a_json["added"]["workspaces"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap()
+        .to_string();
+
+    let add_b = devrelay()
+        .args([
+            "project",
+            "add",
+            root_b.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(add_b.status.success());
+    let add_b_json: serde_json::Value = serde_json::from_slice(&add_b.stdout).unwrap();
+    assert_eq!(
+        add_b_json["added"]["workspaces"].as_object().unwrap().len(),
+        2
+    );
+
+    std::fs::remove_dir_all(&root_a).unwrap();
+    let list = devrelay()
+        .args([
+            "projects",
+            "list",
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(list.status.success());
+    let list_json: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(
+        list_json[0]["workspaces"][&workspace_id_a]["state"].as_str(),
+        Some("stale")
+    );
+
+    let remove = devrelay()
+        .args([
+            "workspace",
+            "remove",
+            &workspace_id_a,
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(remove.status.success());
+
+    let show = devrelay()
+        .args([
+            "project",
+            "show",
+            "shared-project",
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    let show_json: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    let workspaces = show_json["workspaces"].as_object().unwrap();
+    assert_eq!(workspaces.len(), 1);
+    assert!(!workspaces.contains_key(&workspace_id_a));
+    assert_eq!(
+        show_json["local_path"].as_str(),
+        Some(root_b.canonicalize().unwrap().to_str().unwrap())
+    );
+
+    let _ = std::fs::remove_dir_all(root_b);
     let _ = std::fs::remove_file(config);
 }
 

@@ -366,19 +366,19 @@ Conventions:
 
 ### M1.5 Workspace Mapping
 
-- [ ] Define workspace ID format.
-- [ ] Store device ID placeholder.
-- [ ] Store local path.
-- [ ] Store platform profile.
-- [ ] Store workspace state.
-- [ ] Store last seen HEAD.
-- [ ] Store last checkpoint ID.
-- [ ] Add workspace lookup by path.
-- [ ] Add workspace lookup by project/device/path.
-- [ ] Add duplicate path protection.
-- [ ] Add stale path detection.
-- [ ] Add workspace remove command.
-- [ ] Add workspace tests.
+- [x] Define workspace ID format.
+- [x] Store device ID placeholder.
+- [x] Store local path.
+- [x] Store platform profile.
+- [x] Store workspace state.
+- [x] Store last seen HEAD.
+- [x] Store last checkpoint ID.
+- [x] Add workspace lookup by path.
+- [x] Add workspace lookup by project/device/path.
+- [x] Add duplicate path protection.
+- [x] Add stale path detection.
+- [x] Add workspace remove command.
+- [x] Add workspace tests.
 
 ### M1.6 Snapshot Store
 
