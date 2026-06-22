@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use crate::{
     ApplyPlan, ClassifiedPath, ProjectRegistryEntry, StatusEntry, StatusSummary, StoredSnapshot,
-    VerificationDetails,
+    VerificationDetails, WorkspaceRegistryEntry,
 };
 
 pub const RPC_JSONRPC_VERSION: &str = "2.0";
@@ -24,6 +24,7 @@ pub const METHOD_PROJECTS_SHOW: &str = "projects.show";
 pub const METHOD_CHECKPOINT_CREATE: &str = "checkpoint.create";
 pub const METHOD_SNAPSHOTS_LIST: &str = "snapshots.list";
 pub const METHOD_APPLY_SNAPSHOT: &str = "apply.snapshot";
+pub const METHOD_RECOVER_OPEN: &str = "recover.open";
 pub const METHOD_DIAGNOSTICS_EXPORT: &str = "diagnostics.export";
 
 pub const RPC_PARSE_ERROR: i64 = -32700;
@@ -253,6 +254,25 @@ pub struct ApplySnapshotResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoverOpenParams {
+    pub snapshot_id: String,
+    pub path: PathBuf,
+    pub project: Option<String>,
+    #[serde(default)]
+    pub register: bool,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoverOpenResult {
+    pub recovered: StoredSnapshot,
+    pub path: PathBuf,
+    pub name: Option<String>,
+    pub registered: Option<WorkspaceRegistryEntry>,
+    pub verification: VerificationDetails,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiagnosticsExportParams {
     pub out: Option<PathBuf>,
     #[serde(default)]
@@ -387,6 +407,18 @@ mod tests {
 
         assert!(!params.dry_run);
         assert_eq!(params.project, "12345678");
+    }
+
+    #[test]
+    fn recover_open_defaults_register_to_false() {
+        let params: RecoverOpenParams = serde_json::from_value(json!({
+            "snapshot_id": "snap_abc",
+            "path": "/tmp/recovery"
+        }))
+        .unwrap();
+
+        assert!(!params.register);
+        assert_eq!(params.project, None);
     }
 
     #[test]

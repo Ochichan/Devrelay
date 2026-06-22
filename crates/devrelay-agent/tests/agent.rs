@@ -401,6 +401,106 @@ fn foreground_serves_apply_snapshot_rpc() {
 
 #[cfg(unix)]
 #[test]
+fn foreground_serves_recover_open_rpc() {
+    use devrelay_core::{IpcLimits, UnixIpcConnection};
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-recover-rpc-test");
+    let source = running.root.join("recover-source");
+    let recovered = running.root.join("recovered-workspace");
+    create_manifest_repo(&source, "66778899", "Recover Project");
+
+    let added = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "recover-project-add",
+            "method": "projects.add",
+            "params": {
+                "path": source,
+                "manifest": source.join("devrelay.toml")
+            }
+        }),
+    );
+    assert_eq!(added["result"]["project"]["project_id"], "66778899");
+
+    std::fs::write(source.join("README.md"), "base\nrecovered\n").unwrap();
+    std::fs::write(source.join("notes.md"), "recover me\n").unwrap();
+    let checkpoint = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "recover-checkpoint",
+            "method": "checkpoint.create",
+            "params": {
+                "repo": source,
+                "manifest": source.join("devrelay.toml"),
+                "label": "recover source"
+            }
+        }),
+    );
+    let snapshot_id = checkpoint["result"]["checkpoint"]["snapshot_id"]
+        .as_str()
+        .unwrap();
+
+    let opened = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "recover-open",
+            "method": "recover.open",
+            "params": {
+                "snapshot_id": snapshot_id,
+                "path": recovered,
+                "project": "Recover Project",
+                "register": true,
+                "name": "Recovered copy"
+            }
+        }),
+    );
+    assert_eq!(opened["id"], "recover-open");
+    assert_eq!(opened["result"]["recovered"]["snapshot_id"], snapshot_id);
+    assert_eq!(opened["result"]["name"], "Recovered copy");
+    assert_eq!(opened["result"]["registered"]["project_id"], "66778899");
+    assert_eq!(
+        opened["result"]["verification"]["included_untracked"][0],
+        "notes.md"
+    );
+    assert_eq!(
+        std::fs::read_to_string(recovered.join("README.md")).unwrap(),
+        "base\nrecovered\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(recovered.join("notes.md")).unwrap(),
+        "recover me\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(source.join("README.md")).unwrap(),
+        "base\nrecovered\n"
+    );
+
+    let shown = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "recover-project-show",
+            "method": "projects.show",
+            "params": { "id_or_name": "66778899" }
+        }),
+    );
+    assert_eq!(
+        shown["result"]["project"]["workspaces"]
+            .as_object()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    running.stop();
+}
+
+#[cfg(unix)]
+#[test]
 fn foreground_serves_diagnostics_export_rpc() {
     use devrelay_core::{IpcLimits, UnixIpcConnection};
     use serde_json::json;

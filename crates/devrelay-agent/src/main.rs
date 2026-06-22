@@ -5,17 +5,18 @@ use devrelay_core::{
     ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
     DiagnosticsExportParams, DiagnosticsExportResult, GitRepo, IpcConnection, IpcLimits,
     IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
-    ProjectsListResult, ProjectsShowParams, RPC_PROTOCOL_VERSION, RpcError, RpcRequest,
-    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, SnapshotStore,
-    SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult, UnixIpcConnection,
-    UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
-    classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
+    ProjectsListResult, ProjectsShowParams, RPC_PROTOCOL_VERSION, RecoverOpenParams,
+    RecoverOpenResult, RpcError, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
+    RpcVersionNegotiationResult, SnapshotStore, SnapshotsListParams, SnapshotsListResult,
+    StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection, UnixIpcListener,
+    WorkspaceRegistryEntry, WorkspaceState, apply_snapshot, classify_untracked_paths,
+    plan_apply_snapshot, workspace_id_for,
 };
 use devrelay_core::{
     DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
     METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
-    MetadataDb,
+    METHOD_PROJECTS_SHOW, METHOD_RECOVER_OPEN, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST,
+    METHOD_STATUS_GET, MetadataDb,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -111,6 +112,7 @@ impl AgentState {
             METHOD_CHECKPOINT_CREATE.to_string(),
             METHOD_SNAPSHOTS_LIST.to_string(),
             METHOD_APPLY_SNAPSHOT.to_string(),
+            METHOD_RECOVER_OPEN.to_string(),
             METHOD_DIAGNOSTICS_EXPORT.to_string(),
         ]
     }
@@ -239,6 +241,7 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_CHECKPOINT_CREATE => handle_checkpoint_create(id, request.params, state),
         METHOD_SNAPSHOTS_LIST => handle_snapshots_list(id, request.params, state),
         METHOD_APPLY_SNAPSHOT => handle_apply_snapshot(id, request.params, state),
+        METHOD_RECOVER_OPEN => handle_recover_open(id, request.params, state),
         METHOD_DIAGNOSTICS_EXPORT => handle_diagnostics_export(id, request.params, state),
         method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
     }
@@ -411,6 +414,78 @@ fn handle_apply_snapshot(
 }
 
 #[cfg(unix)]
+fn handle_recover_open(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: RecoverOpenParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let (project_entry, store, snapshot) = {
+        let config = match state.config.lock() {
+            Ok(config) => config,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+        match find_recovery_snapshot(
+            &state.home,
+            &config,
+            params.project.as_deref(),
+            &params.snapshot_id,
+        ) {
+            Ok(found) => found,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        }
+    };
+    let source_path = match recovery_source_path(&project_entry) {
+        Ok(path) => path,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let target = match prepare_recovery_workspace(&params.path, &source_path) {
+        Ok(target) => target,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let snapshot_source = GitRepo::new(store.snapshot_repo_path());
+    let verification = match apply_snapshot(&target, &snapshot_source, &snapshot.metadata) {
+        Ok(verification) => verification,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let registered = if params.register {
+        let mut config = match state.config.lock() {
+            Ok(config) => config,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+        let workspace = match register_recovery_workspace(
+            &mut config,
+            &project_entry.project_id,
+            target.path(),
+        ) {
+            Ok(workspace) => workspace,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+        if let Err(err) = config.save(&state.config_path) {
+            return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+        }
+        Some(workspace)
+    } else {
+        None
+    };
+    let result = RecoverOpenResult {
+        recovered: snapshot,
+        path: target.path().to_path_buf(),
+        name: params.name,
+        registered,
+        verification,
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
 fn handle_diagnostics_export(
     id: devrelay_core::RpcId,
     params: serde_json::Value,
@@ -568,6 +643,121 @@ fn handle_projects_show(
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }
+}
+
+#[cfg(unix)]
+fn find_recovery_snapshot(
+    home: &DevRelayHome,
+    config: &LocalConfig,
+    project: Option<&str>,
+    snapshot_id: &str,
+) -> anyhow::Result<(ProjectRegistryEntry, SnapshotStore, StoredSnapshot)> {
+    if let Some(project) = project {
+        let entry = find_project(config, project)
+            .ok_or_else(|| anyhow::anyhow!("unknown project {project}"))?
+            .clone();
+        let store = SnapshotStore::open(home, &entry.project_id)?;
+        let snapshot = store.get_snapshot(snapshot_id)?;
+        return Ok((entry, store, snapshot));
+    }
+
+    for project in config.project_registry.projects.values() {
+        let store = SnapshotStore::open(home, &project.project_id)?;
+        if let Ok(snapshot) = store.get_snapshot(snapshot_id) {
+            return Ok((project.clone(), store, snapshot));
+        }
+    }
+
+    Err(anyhow::anyhow!("unknown snapshot {snapshot_id}"))
+}
+
+#[cfg(unix)]
+fn recovery_source_path(project: &ProjectRegistryEntry) -> anyhow::Result<PathBuf> {
+    if let Some(workspace) = project.workspaces.values().find(|workspace| {
+        workspace.local_path.exists() && workspace.state == WorkspaceState::Active
+    }) {
+        return Ok(workspace.local_path.clone());
+    }
+    if project.local_path.exists() {
+        return Ok(project.local_path.clone());
+    }
+    Err(anyhow::anyhow!(
+        "no existing source workspace for project {}",
+        project.project_id
+    ))
+}
+
+#[cfg(unix)]
+fn prepare_recovery_workspace(path: &Path, source_path: &Path) -> anyhow::Result<GitRepo> {
+    if path.join(".git").exists() {
+        let target = GitRepo::new(path);
+        let status = target.status()?;
+        if !status.is_clean() {
+            return Err(anyhow::anyhow!(
+                "target workspace is dirty: {}",
+                status.short_summary()
+            ));
+        }
+        return Ok(target);
+    }
+
+    if path.exists() && std::fs::read_dir(path)?.next().is_some() {
+        return Err(anyhow::anyhow!(
+            "{} exists and is not an empty recovery directory",
+            path.display()
+        ));
+    }
+
+    std::fs::create_dir_all(path)?;
+    clone_repository(source_path, path)?;
+    Ok(GitRepo::new(path))
+}
+
+#[cfg(unix)]
+fn clone_repository(source_path: &Path, target_path: &Path) -> anyhow::Result<()> {
+    let output = std::process::Command::new("git")
+        .arg("clone")
+        .arg(source_path)
+        .arg(target_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "git clone {} {} failed: {}",
+            source_path.display(),
+            target_path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn register_recovery_workspace(
+    config: &mut LocalConfig,
+    project_id: &str,
+    path: &Path,
+) -> anyhow::Result<WorkspaceRegistryEntry> {
+    let root = resolve_git_root(path)?;
+    ensure_workspace_not_registered(config, &root)?;
+    let workspace_id = workspace_id_for(project_id, &config.device_id, &root);
+    let repo = GitRepo::new(&root);
+    let workspace = WorkspaceRegistryEntry {
+        workspace_id: workspace_id.clone(),
+        project_id: project_id.to_string(),
+        device_id: config.device_id.clone(),
+        local_path: root,
+        platform_profile: current_platform_profile(),
+        state: WorkspaceState::Active,
+        last_seen_head: head_oid(&repo),
+        last_checkpoint_id: None,
+    };
+    let project = config
+        .project_registry
+        .projects
+        .get_mut(project_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown project {project_id}"))?;
+    project.workspaces.insert(workspace_id, workspace.clone());
+    Ok(workspace)
 }
 
 #[cfg(unix)]

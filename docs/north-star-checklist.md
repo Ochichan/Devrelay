@@ -520,7 +520,7 @@ Conventions:
 - [x] Add `projects.show`.
 - [x] Add `checkpoint.create`.
 - [x] Add `snapshots.list`.
-- [ ] Add `recover.open`.
+- [x] Add `recover.open`.
 - [x] Add `apply.snapshot`.
 - [x] Add `diagnostics.export`.
 - [x] Add RPC schema tests.
