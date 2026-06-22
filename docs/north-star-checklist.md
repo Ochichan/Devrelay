@@ -1,6 +1,6 @@
 # DevRelay North Star Checklist
 
-Last updated: 2026-06-22
+Last updated: 2026-06-23
 
 This is the execution checklist for `docs/north-star-roadmap.md`. The roadmap
 explains why and when. This file tracks what must be built, tested, documented,
@@ -494,18 +494,18 @@ Conventions:
 
 ### M2.2 Local IPC Transport
 
-- [ ] Define IPC transport trait.
-- [ ] Implement Unix domain socket transport.
+- [x] Define IPC transport trait.
+- [x] Implement Unix domain socket transport.
 - [ ] Implement Windows named pipe transport.
-- [ ] Add local socket path resolution.
-- [ ] Add stale socket cleanup.
-- [ ] Add peer credential check on Unix where available.
+- [x] Add local socket path resolution.
+- [x] Add stale socket cleanup.
+- [x] Add peer credential check on Unix where available.
 - [ ] Add pipe access control on Windows.
-- [ ] Add connection timeout.
-- [ ] Add request timeout.
-- [ ] Add max message size.
-- [ ] Add malformed message handling.
-- [ ] Add IPC integration tests on current platform.
+- [x] Add connection timeout.
+- [x] Add request timeout.
+- [x] Add max message size.
+- [x] Add malformed message handling.
+- [x] Add IPC integration tests on current platform.
 
 ### M2.3 JSON-RPC API
 

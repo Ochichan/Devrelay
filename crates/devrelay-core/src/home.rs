@@ -75,6 +75,10 @@ impl DevRelayHome {
         self.root.join("diagnostics")
     }
 
+    pub fn agent_socket_path(&self) -> PathBuf {
+        self.root.join("agent.sock")
+    }
+
     pub fn create_base_dirs(&self) -> Result<()> {
         for dir in [
             self.root.clone(),
@@ -226,6 +230,10 @@ mod tests {
         assert_eq!(
             home.diagnostics_dir(),
             PathBuf::from("/tmp/devrelay-test/diagnostics")
+        );
+        assert_eq!(
+            home.agent_socket_path(),
+            PathBuf::from("/tmp/devrelay-test/agent.sock")
         );
     }
 

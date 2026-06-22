@@ -39,6 +39,7 @@ mod config;
 mod error;
 mod git;
 mod home;
+mod ipc;
 pub mod manifest;
 mod policy;
 mod snapshot;
@@ -54,6 +55,9 @@ pub use config::{
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind};
 pub use home::DevRelayHome;
+pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
+#[cfg(unix)]
+pub use ipc::{UnixIpcConnection, UnixIpcListener};
 pub use manifest::{
     DirtyTargetPolicy, EnvironmentConfig, EnvironmentKind, EnvironmentProfile, HandoffConfig,
     Manifest, PatternConfig, PortablePathsPolicy, RestoreTerminals, SecretConfig, SecretMode,

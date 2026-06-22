@@ -1,5 +1,7 @@
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
+#[cfg(unix)]
+use devrelay_core::UnixIpcListener;
 use devrelay_core::{DevRelayHome, LocalConfig, MetadataDb};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -59,7 +61,7 @@ fn main() -> anyhow::Result<()> {
     let socket_path = cli
         .socket_path
         .clone()
-        .unwrap_or_else(|| home.root().join("agent.sock"));
+        .unwrap_or_else(|| home.agent_socket_path());
 
     eprintln!(
         "devrelay-agent started foreground={} log_level={:?} projects={} socket={}",
@@ -82,6 +84,10 @@ fn main() -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&health)?);
         return Ok(());
     }
+
+    #[cfg(unix)]
+    let _ipc_listener = UnixIpcListener::bind(&socket_path)
+        .with_context(|| format!("failed to bind IPC socket {}", socket_path.display()))?;
 
     if cli.foreground {
         while !shutdown.load(Ordering::SeqCst) {

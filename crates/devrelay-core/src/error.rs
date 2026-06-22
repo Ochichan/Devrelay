@@ -37,6 +37,9 @@ pub enum DevRelayError {
     #[error("configuration error: {0}")]
     Config(String),
 
+    #[error("IPC error: {0}")]
+    Ipc(String),
+
     #[error("recovery error: {0}")]
     Recover(String),
 
@@ -78,6 +81,7 @@ impl DevRelayError {
             Self::Sqlite(_) => "DR-STORAGE-SQLITE",
             Self::Glob(_) => "DR-MANIFEST-GLOB",
             Self::Config(_) => "DR-CONFIG",
+            Self::Ipc(_) => "DR-IPC-LOCAL",
             Self::Recover(_) => "DR-RECOVER-SNAPSHOT-NOT-FOUND",
             Self::GitCommand { .. } => "DR-GIT-COMMAND",
             Self::NotGitRepository(_) => "DR-GIT-NOT-REPOSITORY",
@@ -116,6 +120,10 @@ impl DevRelayError {
                 vec![
                     "Run the command with the intended --config path and inspect the config file.",
                 ],
+            ),
+            Self::Ipc(_) => (
+                "Local IPC error",
+                vec!["Check that the local DevRelay agent is running for the current user."],
             ),
             Self::Recover(_) => (
                 "Recovery snapshot not found",
@@ -187,6 +195,10 @@ mod tests {
             (
                 DevRelayError::TargetDirty("1 unstaged".to_string()),
                 "DR-APPLY-DIRTY-TARGET",
+            ),
+            (
+                DevRelayError::Ipc("socket unavailable".to_string()),
+                "DR-IPC-LOCAL",
             ),
             (
                 DevRelayError::Recover("unknown snapshot".to_string()),
