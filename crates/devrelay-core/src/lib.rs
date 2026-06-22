@@ -35,6 +35,7 @@
 //! # Ok::<(), devrelay_core::DevRelayError>(())
 //! ```
 
+mod config;
 mod error;
 mod git;
 mod home;
@@ -43,6 +44,10 @@ mod policy;
 mod snapshot;
 mod snapshot_schema;
 
+pub use config::{
+    AnchorMode, EditorPreference, LocalConfig, ProjectRegistryEntry, ProjectRegistryIndex,
+    RedactedLocalConfig, ResourceProfile, migrate_local_config,
+};
 pub use error::{DevRelayError, Result};
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind};
 pub use home::DevRelayHome;

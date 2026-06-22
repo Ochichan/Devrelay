@@ -7,8 +7,9 @@
 use anyhow::{Context, Error};
 use clap::{Parser, Subcommand};
 use devrelay_core::{
-    DevRelayError, GitRepo, Manifest, PathDecision, apply_snapshot, classify_untracked_paths,
-    create_snapshot, plan_apply_snapshot, read_snapshot_file, write_snapshot_file,
+    DevRelayError, DevRelayHome, GitRepo, LocalConfig, Manifest, PathDecision, apply_snapshot,
+    classify_untracked_paths, create_snapshot, plan_apply_snapshot, read_snapshot_file,
+    write_snapshot_file,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -29,6 +30,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
     Manifest {
         #[command(subcommand)]
         command: ManifestCommand,
@@ -66,6 +71,24 @@ enum Command {
 }
 
 #[derive(Debug, Subcommand)]
+enum ConfigCommand {
+    Load {
+        #[arg(long)]
+        path: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    Save {
+        #[arg(long)]
+        path: Option<PathBuf>,
+        #[arg(long)]
+        overwrite: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum ManifestCommand {
     Check {
         path: PathBuf,
@@ -88,6 +111,50 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
+        Command::Config { command } => match command {
+            ConfigCommand::Load { path, json } => {
+                let path = config_path(path, false)?;
+                let config = LocalConfig::load(&path)
+                    .with_context(|| format!("failed to load {}", path.display()))?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&config)?);
+                } else {
+                    println!("config: {}", path.display());
+                    println!("  fabric: {}", config.fabric_name);
+                    println!("  device: {}", config.device_name);
+                    println!("  projects: {}", config.project_registry.projects.len());
+                }
+            }
+            ConfigCommand::Save {
+                path,
+                overwrite,
+                json,
+            } => {
+                let path = config_path(path, true)?;
+                if path.exists() && !overwrite {
+                    return Err(DevRelayError::Config(format!(
+                        "{} already exists; pass --overwrite to replace it",
+                        path.display()
+                    ))
+                    .into());
+                }
+                let config = LocalConfig::default();
+                config
+                    .save(&path)
+                    .with_context(|| format!("failed to save {}", path.display()))?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "saved": path,
+                            "config": config,
+                        }))?
+                    );
+                } else {
+                    println!("saved config: {}", path.display());
+                }
+            }
+        },
         Command::Manifest { command } => match command {
             ManifestCommand::Check { path, json } => {
                 let manifest = Manifest::load(&path)
@@ -240,6 +307,17 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn config_path(path: Option<PathBuf>, create_home: bool) -> anyhow::Result<PathBuf> {
+    if let Some(path) = path {
+        return Ok(path);
+    }
+    let home = DevRelayHome::resolve()?;
+    if create_home {
+        home.create_base_dirs()?;
+    }
+    Ok(home.config_file())
 }
 
 fn render_error(err: &Error, json: bool) {

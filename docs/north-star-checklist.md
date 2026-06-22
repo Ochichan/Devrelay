@@ -309,20 +309,20 @@ Conventions:
 
 ### M1.2 Local Config
 
-- [ ] Define local config TOML schema.
-- [ ] Add config version field.
-- [ ] Add default fabric name.
-- [ ] Add default device name.
-- [ ] Add default editor preference field.
-- [ ] Add resource profile field.
-- [ ] Add anchor mode field.
-- [ ] Add project registry index.
-- [ ] Add config load command.
-- [ ] Add config save command.
-- [ ] Add config migration placeholder.
-- [ ] Add config validation.
-- [ ] Add config redaction for diagnostics.
-- [ ] Add config tests.
+- [x] Define local config TOML schema.
+- [x] Add config version field.
+- [x] Add default fabric name.
+- [x] Add default device name.
+- [x] Add default editor preference field.
+- [x] Add resource profile field.
+- [x] Add anchor mode field.
+- [x] Add project registry index.
+- [x] Add config load command.
+- [x] Add config save command.
+- [x] Add config migration placeholder.
+- [x] Add config validation.
+- [x] Add config redaction for diagnostics.
+- [x] Add config tests.
 
 ### M1.3 SQLite Metadata
 

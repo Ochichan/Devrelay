@@ -14,6 +14,9 @@ pub enum DevRelayError {
     #[error("TOML parse error: {0}")]
     Toml(#[from] toml::de::Error),
 
+    #[error("TOML serialize error: {0}")]
+    TomlSerialize(#[from] toml::ser::Error),
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -53,7 +56,7 @@ impl DevRelayError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Io(_) => "DR-IO",
-            Self::Toml(_) | Self::Manifest(_) => "DR-MANIFEST-INVALID",
+            Self::Toml(_) | Self::TomlSerialize(_) | Self::Manifest(_) => "DR-MANIFEST-INVALID",
             Self::Json(_) => "DR-JSON",
             Self::Glob(_) => "DR-GLOB",
             Self::Config(_) => "DR-CONFIG",

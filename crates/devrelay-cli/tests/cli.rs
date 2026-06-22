@@ -48,3 +48,30 @@ fn json_errors_use_nonzero_exit() {
     assert!(stderr.contains("\"error\""));
     assert!(stderr.contains("\"code\""));
 }
+
+#[test]
+fn config_save_and_load_round_trip() {
+    let path = std::env::temp_dir().join(format!(
+        "devrelay-config-test-{}-{}.toml",
+        std::process::id(),
+        "round-trip"
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    let save = devrelay()
+        .args(["config", "save", "--path", path.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    assert!(save.status.success());
+
+    let load = devrelay()
+        .args(["config", "load", "--path", path.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    assert!(load.status.success());
+    let stdout = String::from_utf8(load.stdout).unwrap();
+    assert!(stdout.contains("\"version\": 1"));
+    assert!(stdout.contains("\"device_name\""));
+
+    let _ = std::fs::remove_file(path);
+}
