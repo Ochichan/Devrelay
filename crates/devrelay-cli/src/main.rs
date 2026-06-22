@@ -6,12 +6,15 @@
 
 use anyhow::{Context, Error};
 use clap::{Parser, Subcommand, ValueEnum};
+#[cfg(unix)]
+use devrelay_core::{AgentRpcClient, METHOD_STATUS_GET, StatusGetParams};
 use devrelay_core::{
     DevRelayError, DevRelayHome, ErrorInfo, GitRepo, LocalConfig, Manifest, PathDecision,
     PatternConfig, PortablePathsPolicy, ProjectRegistryEntry, SnapshotMetadata, SnapshotStore,
-    StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
-    apply_snapshot, classify_untracked_paths, create_snapshot, plan_apply_snapshot,
-    read_snapshot_file, workspace_id_for, write_snapshot_file,
+    StatusGetResult, StatusSummary, StoredSnapshot, UntrackedPolicy, WorkspaceConfig,
+    WorkspaceRegistryEntry, WorkspaceState, apply_snapshot, classify_untracked_paths,
+    create_snapshot, plan_apply_snapshot, read_snapshot_file, workspace_id_for,
+    write_snapshot_file,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -135,6 +138,12 @@ impl DirtyPolicy {
             Self::NewWorkspace => "new-workspace",
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct AgentOptions {
+    direct: bool,
+    socket_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -293,7 +302,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         agent_socket,
         command,
     } = cli;
-    let _agent_options = (direct, agent_socket);
+    let agent_options = AgentOptions {
+        direct,
+        socket_path: agent_socket,
+    };
 
     match command {
         Command::Continue {
@@ -760,56 +772,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             repo,
             manifest,
             json,
-        } => {
-            let manifest = Manifest::load(&manifest)
-                .with_context(|| format!("failed to load {}", manifest.display()))?;
-            let repo = GitRepo::new(repo);
-            let status = repo.status()?;
-            let classified =
-                classify_untracked_paths(repo.path(), &manifest, status.untracked_paths())?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "project": manifest.name,
-                        "status": status.summary(),
-                        "untracked_policy": classified,
-                    }))?
-                );
-            } else {
-                println!(
-                    "{} / {}",
-                    manifest.name,
-                    status.branch.as_deref().unwrap_or("detached")
-                );
-                println!("  head: {}", status.head_oid);
-                println!("  state: {}", status.short_summary());
-                let included = classified
-                    .iter()
-                    .filter(|item| item.decision == PathDecision::Include)
-                    .count();
-                let excluded = classified.len() - included;
-                println!("  untracked policy: {included} included, {excluded} excluded");
-                if included > 0 {
-                    println!("  included untracked:");
-                    for item in classified
-                        .iter()
-                        .filter(|item| item.decision == PathDecision::Include)
-                    {
-                        println!("    + {} ({})", item.path, item.reason);
-                    }
-                }
-                if excluded > 0 {
-                    println!("  excluded untracked:");
-                    for item in classified
-                        .iter()
-                        .filter(|item| item.decision == PathDecision::Exclude)
-                    {
-                        println!("    - {} ({})", item.path, item.reason);
-                    }
-                }
-            }
-        }
+        } => handle_status(repo, manifest, json, &agent_options)?,
         Command::Checkpoint {
             repo,
             manifest,
@@ -1016,6 +979,147 @@ fn resolve_git_root(path: &Path) -> anyhow::Result<PathBuf> {
         .run(&["rev-parse", "--show-toplevel"])
         .map_err(|_| DevRelayError::NotGitRepository(path.display().to_string()))?;
     Ok(PathBuf::from(raw))
+}
+
+fn handle_status(
+    repo: PathBuf,
+    manifest: PathBuf,
+    json: bool,
+    agent_options: &AgentOptions,
+) -> anyhow::Result<()> {
+    let repo = absolute_cli_path(repo)?;
+    let manifest_path = absolute_cli_path(manifest)?;
+    let manifest = Manifest::load(&manifest_path)
+        .with_context(|| format!("failed to load {}", manifest_path.display()))?;
+    let result = if agent_options.direct {
+        collect_status_direct(&repo, &manifest)?
+    } else {
+        collect_status_via_agent(agent_options, repo, Some(manifest_path))?
+    };
+    render_status_result(&manifest.name, &result, json)
+}
+
+fn collect_status_direct(repo_path: &Path, manifest: &Manifest) -> anyhow::Result<StatusGetResult> {
+    let repo = GitRepo::new(repo_path);
+    let status = repo.status()?;
+    let untracked = classify_untracked_paths(repo.path(), manifest, status.untracked_paths())?;
+    Ok(StatusGetResult {
+        status: status.summary(),
+        entries: status.entries,
+        untracked,
+    })
+}
+
+#[cfg(unix)]
+fn collect_status_via_agent(
+    agent_options: &AgentOptions,
+    repo: PathBuf,
+    manifest: Option<PathBuf>,
+) -> anyhow::Result<StatusGetResult> {
+    let socket = agent_options
+        .socket_path
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| DevRelayHome::resolve().map(|home| home.agent_socket_path()))?;
+    let client = AgentRpcClient::new(&socket);
+    client
+        .call(METHOD_STATUS_GET, StatusGetParams { repo, manifest })
+        .map_err(|err| agent_rpc_error(&socket, err).into())
+}
+
+#[cfg(not(unix))]
+fn collect_status_via_agent(
+    _agent_options: &AgentOptions,
+    repo: PathBuf,
+    manifest: Option<PathBuf>,
+) -> anyhow::Result<StatusGetResult> {
+    let manifest_path = manifest
+        .ok_or_else(|| DevRelayError::Manifest("status requires a manifest path".to_string()))?;
+    let manifest = Manifest::load(&manifest_path)
+        .with_context(|| format!("failed to load {}", manifest_path.display()))?;
+    collect_status_direct(&repo, &manifest)
+}
+
+#[cfg(unix)]
+fn agent_rpc_error(socket: &Path, err: DevRelayError) -> DevRelayError {
+    match err {
+        DevRelayError::Ipc(detail) => DevRelayError::Ipc(detail),
+        other => DevRelayError::Ipc(format!(
+            "failed to contact local DevRelay agent at {}: {other}; pass --direct to bypass the agent",
+            socket.display()
+        )),
+    }
+}
+
+fn render_status_result(
+    project_name: &str,
+    result: &StatusGetResult,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "project": project_name,
+                "status": result.status,
+                "untracked_policy": result.untracked,
+            }))?
+        );
+    } else {
+        println!(
+            "{} / {}",
+            project_name,
+            result.status.branch.as_deref().unwrap_or("detached")
+        );
+        println!("  head: {}", result.status.head_oid);
+        println!("  state: {}", status_summary_label(&result.status));
+        let included = result
+            .untracked
+            .iter()
+            .filter(|item| item.decision == PathDecision::Include)
+            .count();
+        let excluded = result.untracked.len() - included;
+        println!("  untracked policy: {included} included, {excluded} excluded");
+        if included > 0 {
+            println!("  included untracked:");
+            for item in result
+                .untracked
+                .iter()
+                .filter(|item| item.decision == PathDecision::Include)
+            {
+                println!("    + {} ({})", item.path, item.reason);
+            }
+        }
+        if excluded > 0 {
+            println!("  excluded untracked:");
+            for item in result
+                .untracked
+                .iter()
+                .filter(|item| item.decision == PathDecision::Exclude)
+            {
+                println!("    - {} ({})", item.path, item.reason);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn status_summary_label(status: &StatusSummary) -> String {
+    format!(
+        "{} staged, {} unstaged, {} untracked, {} unmerged",
+        status.counts.staged,
+        status.counts.unstaged,
+        status.counts.untracked,
+        status.counts.unmerged
+    )
+}
+
+fn absolute_cli_path(path: PathBuf) -> anyhow::Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
 }
 
 fn ensure_workspace_not_registered(config: &LocalConfig, local_path: &Path) -> anyhow::Result<()> {

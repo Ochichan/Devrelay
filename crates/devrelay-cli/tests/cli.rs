@@ -76,6 +76,154 @@ fn exposes_agent_routing_global_flags() {
     assert!(stdout.contains("--agent-socket"));
 }
 
+#[cfg(unix)]
+#[test]
+fn status_uses_agent_rpc_by_default() {
+    use devrelay_core::{
+        IpcConnection, IpcLimits, IpcTransport, METHOD_STATUS_GET, RpcRequest, RpcResponse,
+        UnixIpcListener,
+    };
+    use serde_json::json;
+
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-status-agent-test-{}-{}",
+        std::process::id(),
+        "repo"
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+    init_git_repo(&root);
+    write_manifest(&root, "agent-status-project", "Agent Status Project");
+    git(&root, &["add", "devrelay.toml"]);
+    git(&root, &["commit", "-m", "manifest"]);
+
+    let manifest = root.join("devrelay.toml");
+    let socket = root.join("agent.sock");
+    let listener = UnixIpcListener::bind(&socket).unwrap();
+    let expected_repo = root.clone();
+    let expected_manifest = manifest.clone();
+    let handle = std::thread::spawn(move || {
+        let mut connection = listener.accept().unwrap();
+        let request_bytes = connection.read_message(IpcLimits::default()).unwrap();
+        let request = RpcRequest::parse(&request_bytes).unwrap();
+        assert_eq!(request.method, METHOD_STATUS_GET);
+        assert_eq!(
+            request.params["repo"].as_str(),
+            Some(expected_repo.to_str().unwrap())
+        );
+        assert_eq!(
+            request.params["manifest"].as_str(),
+            Some(expected_manifest.to_str().unwrap())
+        );
+        let response = RpcResponse::success(
+            request.required_id().unwrap(),
+            json!({
+                "status": {
+                    "head_oid": "agent-head",
+                    "branch": "agent-branch",
+                    "upstream": null,
+                    "counts": {
+                        "staged": 0,
+                        "unstaged": 0,
+                        "untracked": 1,
+                        "ignored": 0,
+                        "unmerged": 0
+                    },
+                    "clean": false,
+                    "initial": false
+                },
+                "entries": [],
+                "untracked": [
+                    {
+                        "path": "agent-only.txt",
+                        "decision": "include",
+                        "reason": "safe-untracked"
+                    }
+                ]
+            }),
+        );
+        connection
+            .write_message(
+                &serde_json::to_vec(&response).unwrap(),
+                IpcLimits::default(),
+            )
+            .unwrap();
+    });
+
+    let output = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "status",
+            "--repo",
+            root.to_str().unwrap(),
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(stdout["project"].as_str(), Some("Agent Status Project"));
+    assert_eq!(stdout["status"]["branch"].as_str(), Some("agent-branch"));
+    assert_eq!(
+        stdout["untracked_policy"][0]["path"].as_str(),
+        Some("agent-only.txt")
+    );
+    handle.join().unwrap();
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn status_direct_bypasses_agent_socket() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-status-direct-test-{}-{}",
+        std::process::id(),
+        "repo"
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+    init_git_repo(&root);
+    write_manifest(&root, "direct-status-project", "Direct Status Project");
+    git(&root, &["add", "devrelay.toml"]);
+    git(&root, &["commit", "-m", "manifest"]);
+
+    let manifest = root.join("devrelay.toml");
+    let output = devrelay()
+        .args([
+            "--direct",
+            "--agent-socket",
+            root.join("missing.sock").to_str().unwrap(),
+            "status",
+            "--repo",
+            root.to_str().unwrap(),
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(stdout["project"].as_str(), Some("Direct Status Project"));
+    assert_eq!(stdout["status"]["branch"].as_str(), Some("main"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn manifest_check_supports_json() {
     let output = devrelay()

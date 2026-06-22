@@ -531,7 +531,7 @@ Conventions:
 - [x] Add client library for local agent RPC.
 - [x] Add CLI global `--direct` escape hatch.
 - [x] Add CLI global `--agent-socket`.
-- [ ] Route `status` through agent.
+- [x] Route `status` through agent.
 - [ ] Route project commands through agent.
 - [ ] Route checkpoint through agent.
 - [ ] Route recover through agent.
