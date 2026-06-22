@@ -465,15 +465,15 @@ Conventions:
 
 ### M1 Exit Gate
 
-- [ ] User can add a project without manual config edits.
-- [ ] User can checkpoint a registered project.
-- [ ] User can list snapshots.
-- [ ] User can recover a snapshot into a new workspace.
-- [ ] User can run local handoff simulator.
-- [ ] Local apply never overwrites dirty target data.
-- [ ] SQLite migrations have tests.
-- [ ] CLI JSON schemas are documented.
-- [ ] All M1 tests pass in CI.
+- [x] User can add a project without manual config edits.
+- [x] User can checkpoint a registered project.
+- [x] User can list snapshots.
+- [x] User can recover a snapshot into a new workspace.
+- [x] User can run local handoff simulator.
+- [x] Local apply never overwrites dirty target data.
+- [x] SQLite migrations have tests.
+- [x] CLI JSON schemas are documented.
+- [x] All M1 tests pass in CI.
 
 ## M2. Agent And Local IPC
 
