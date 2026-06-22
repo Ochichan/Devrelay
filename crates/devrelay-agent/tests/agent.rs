@@ -316,6 +316,91 @@ fn foreground_serves_checkpoint_create_and_snapshots_list_rpc() {
 
 #[cfg(unix)]
 #[test]
+fn foreground_serves_apply_snapshot_rpc() {
+    use devrelay_core::{IpcLimits, UnixIpcConnection};
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-apply-rpc-test");
+    let source = running.root.join("apply-source");
+    let target = running.root.join("apply-target");
+    create_manifest_repo(&source, "55667788", "Apply Project");
+    std::fs::write(source.join("README.md"), "base\nchanged\n").unwrap();
+    std::fs::write(source.join("notes.md"), "carry me\n").unwrap();
+    clone_repo(&source, &target);
+
+    let checkpoint = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "checkpoint-apply",
+            "method": "checkpoint.create",
+            "params": {
+                "repo": source,
+                "manifest": source.join("devrelay.toml"),
+                "label": "apply source"
+            }
+        }),
+    );
+    let snapshot_id = checkpoint["result"]["checkpoint"]["snapshot_id"]
+        .as_str()
+        .unwrap();
+
+    let dry_run = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "apply-dry-run",
+            "method": "apply.snapshot",
+            "params": {
+                "repo": target,
+                "project": "55667788",
+                "snapshot_id": snapshot_id,
+                "dry_run": true
+            }
+        }),
+    );
+    assert_eq!(dry_run["id"], "apply-dry-run");
+    assert_eq!(dry_run["result"]["plan"]["snapshot_id"], snapshot_id);
+    assert!(dry_run["result"]["verification"].is_null());
+    assert_eq!(
+        std::fs::read_to_string(target.join("README.md")).unwrap(),
+        "base\n"
+    );
+    assert!(!target.join("notes.md").exists());
+
+    let applied = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "apply-1",
+            "method": "apply.snapshot",
+            "params": {
+                "repo": target,
+                "project": "55667788",
+                "snapshot_id": snapshot_id
+            }
+        }),
+    );
+    assert_eq!(applied["id"], "apply-1");
+    assert_eq!(applied["result"]["snapshot"]["snapshot_id"], snapshot_id);
+    assert_eq!(
+        applied["result"]["verification"]["included_untracked"][0],
+        "notes.md"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("README.md")).unwrap(),
+        "base\nchanged\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("notes.md")).unwrap(),
+        "carry me\n"
+    );
+
+    running.stop();
+}
+
+#[cfg(unix)]
+#[test]
 fn foreground_serves_diagnostics_export_rpc() {
     use devrelay_core::{IpcLimits, UnixIpcConnection};
     use serde_json::json;
@@ -379,6 +464,17 @@ fn run_git(repo: &std::path::Path, args: &[&str]) {
         .status()
         .unwrap();
     assert!(status.success(), "git {args:?} failed");
+}
+
+#[cfg(unix)]
+fn clone_repo(source: &std::path::Path, target: &std::path::Path) {
+    let status = Command::new("git")
+        .arg("clone")
+        .arg(source)
+        .arg(target)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git clone failed");
 }
 
 #[cfg(unix)]

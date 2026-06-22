@@ -521,7 +521,7 @@ Conventions:
 - [x] Add `checkpoint.create`.
 - [x] Add `snapshots.list`.
 - [ ] Add `recover.open`.
-- [ ] Add `apply.snapshot`.
+- [x] Add `apply.snapshot`.
 - [x] Add `diagnostics.export`.
 - [x] Add RPC schema tests.
 - [x] Add backwards compatibility policy.

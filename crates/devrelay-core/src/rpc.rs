@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
-use crate::{ClassifiedPath, ProjectRegistryEntry, StatusEntry, StatusSummary, StoredSnapshot};
+use crate::{
+    ApplyPlan, ClassifiedPath, ProjectRegistryEntry, StatusEntry, StatusSummary, StoredSnapshot,
+    VerificationDetails,
+};
 
 pub const RPC_JSONRPC_VERSION: &str = "2.0";
 pub const RPC_PROTOCOL_VERSION: u32 = 1;
@@ -20,6 +23,7 @@ pub const METHOD_PROJECTS_LIST: &str = "projects.list";
 pub const METHOD_PROJECTS_SHOW: &str = "projects.show";
 pub const METHOD_CHECKPOINT_CREATE: &str = "checkpoint.create";
 pub const METHOD_SNAPSHOTS_LIST: &str = "snapshots.list";
+pub const METHOD_APPLY_SNAPSHOT: &str = "apply.snapshot";
 pub const METHOD_DIAGNOSTICS_EXPORT: &str = "diagnostics.export";
 
 pub const RPC_PARSE_ERROR: i64 = -32700;
@@ -233,6 +237,22 @@ pub struct SnapshotsListResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplySnapshotParams {
+    pub repo: PathBuf,
+    pub project: String,
+    pub snapshot_id: String,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplySnapshotResult {
+    pub snapshot: StoredSnapshot,
+    pub plan: Option<ApplyPlan>,
+    pub verification: Option<VerificationDetails>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiagnosticsExportParams {
     pub out: Option<PathBuf>,
     #[serde(default)]
@@ -354,6 +374,19 @@ mod tests {
 
         assert!(!params.pin);
         assert_eq!(params.label.as_deref(), Some("manual"));
+    }
+
+    #[test]
+    fn apply_snapshot_defaults_dry_run_to_false() {
+        let params: ApplySnapshotParams = serde_json::from_value(json!({
+            "repo": "/tmp/target",
+            "project": "12345678",
+            "snapshot_id": "snap_abc"
+        }))
+        .unwrap();
+
+        assert!(!params.dry_run);
+        assert_eq!(params.project, "12345678");
     }
 
     #[test]

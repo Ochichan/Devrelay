@@ -2,18 +2,20 @@ use anyhow::Context;
 use clap::{Parser, ValueEnum};
 #[cfg(unix)]
 use devrelay_core::{
-    CheckpointCreateParams, CheckpointCreateResult, DiagnosticsExportParams,
-    DiagnosticsExportResult, GitRepo, IpcConnection, IpcLimits, IpcTransport, Manifest,
-    ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsShowParams,
-    RPC_PROTOCOL_VERSION, RpcError, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
-    RpcVersionNegotiationResult, SnapshotStore, SnapshotsListParams, SnapshotsListResult,
-    StatusGetParams, StatusGetResult, UnixIpcConnection, UnixIpcListener, WorkspaceRegistryEntry,
-    WorkspaceState, classify_untracked_paths, workspace_id_for,
+    ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
+    DiagnosticsExportParams, DiagnosticsExportResult, GitRepo, IpcConnection, IpcLimits,
+    IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
+    ProjectsListResult, ProjectsShowParams, RPC_PROTOCOL_VERSION, RpcError, RpcRequest,
+    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, SnapshotStore,
+    SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult, UnixIpcConnection,
+    UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
+    classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
 };
 use devrelay_core::{
-    DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_CHECKPOINT_CREATE,
-    METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_SHOW,
-    METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb,
+    DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
+    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_PROJECTS_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
+    MetadataDb,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -108,6 +110,7 @@ impl AgentState {
             METHOD_PROJECTS_SHOW.to_string(),
             METHOD_CHECKPOINT_CREATE.to_string(),
             METHOD_SNAPSHOTS_LIST.to_string(),
+            METHOD_APPLY_SNAPSHOT.to_string(),
             METHOD_DIAGNOSTICS_EXPORT.to_string(),
         ]
     }
@@ -235,6 +238,7 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_PROJECTS_SHOW => handle_projects_show(id, request.params, state),
         METHOD_CHECKPOINT_CREATE => handle_checkpoint_create(id, request.params, state),
         METHOD_SNAPSHOTS_LIST => handle_snapshots_list(id, request.params, state),
+        METHOD_APPLY_SNAPSHOT => handle_apply_snapshot(id, request.params, state),
         METHOD_DIAGNOSTICS_EXPORT => handle_diagnostics_export(id, request.params, state),
         method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
     }
@@ -355,6 +359,52 @@ fn handle_snapshots_list(
     };
 
     match serde_json::to_value(SnapshotsListResult { snapshots }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_apply_snapshot(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: ApplySnapshotParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let store = match SnapshotStore::open(&state.home, &params.project) {
+        Ok(store) => store,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let snapshot = match store.get_snapshot(&params.snapshot_id) {
+        Ok(snapshot) => snapshot,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let target = GitRepo::new(params.repo);
+    let source = GitRepo::new(store.snapshot_repo_path());
+    let result = if params.dry_run {
+        match plan_apply_snapshot(&target, &source, &snapshot.metadata) {
+            Ok(plan) => ApplySnapshotResult {
+                snapshot,
+                plan: Some(plan),
+                verification: None,
+            },
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        }
+    } else {
+        match apply_snapshot(&target, &source, &snapshot.metadata) {
+            Ok(verification) => ApplySnapshotResult {
+                snapshot,
+                plan: None,
+                verification: Some(verification),
+            },
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        }
+    };
+
+    match serde_json::to_value(result) {
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }
