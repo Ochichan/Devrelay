@@ -45,3 +45,11 @@ devrelay apply --repo <target> --source <source> --snapshot <snapshot.json>
 
 `apply` refuses dirty targets by default. That matches the product promise that
 DevRelay never quietly overwrites local work.
+
+## Core API Boundary
+
+`devrelay-core` exposes the M0 API from the crate root. The manifest schema is a
+public module because it is part of the project contract; Git orchestration,
+policy classification, snapshot implementation, and error internals stay behind
+private modules. The reviewed surface is recorded in
+[`docs/api-surface.md`](api-surface.md).

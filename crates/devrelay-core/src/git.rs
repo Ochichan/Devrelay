@@ -1,3 +1,11 @@
+//! Git CLI orchestration and porcelain status parsing.
+//!
+//! DevRelay uses Git's installed CLI as the M0 authority for repository state.
+//! This module wraps command execution narrowly and parses
+//! `git status --porcelain=v2 -z --branch` into typed status data. Unknown
+//! porcelain headers are ignored so newer Git versions can add metadata without
+//! breaking status collection.
+
 use crate::error::{DevRelayError, Result};
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};

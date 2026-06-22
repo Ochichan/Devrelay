@@ -57,7 +57,7 @@ Conventions:
 ### Documentation Baseline
 
 - [x] Keep `README.md` updated with current runnable commands.
-- [ ] Keep `docs/foundation.md` aligned with current implementation.
+- [x] Keep `docs/foundation.md` aligned with current implementation.
 - [ ] Keep `docs/north-star-roadmap.md` aligned with strategic scope.
 - [ ] Keep this checklist aligned with roadmap milestones.
 - [ ] Add a glossary for Fabric, Device, Project, Workspace, Session, Snapshot, Lease, and Capsule.
@@ -71,16 +71,16 @@ Conventions:
 
 ### M0.1 Existing Foundation Cleanup
 
-- [ ] Review current `devrelay-core` public API shape.
-- [ ] Decide which current structs are public stable API.
-- [ ] Move unstable structs behind internal modules where appropriate.
-- [ ] Add crate-level documentation for `devrelay-core`.
-- [ ] Add crate-level documentation for `devrelay-cli`.
-- [ ] Add module documentation for manifest parsing.
-- [ ] Add module documentation for Git orchestration.
-- [ ] Add module documentation for untracked/secret policy.
-- [ ] Add module documentation for snapshots.
-- [ ] Add examples to Rust docs where useful.
+- [x] Review current `devrelay-core` public API shape.
+- [x] Decide which current structs are public stable API.
+- [x] Move unstable structs behind internal modules where appropriate.
+- [x] Add crate-level documentation for `devrelay-core`.
+- [x] Add crate-level documentation for `devrelay-cli`.
+- [x] Add module documentation for manifest parsing.
+- [x] Add module documentation for Git orchestration.
+- [x] Add module documentation for untracked/secret policy.
+- [x] Add module documentation for snapshots.
+- [x] Add examples to Rust docs where useful.
 
 ### M0.2 Manifest Validation
 

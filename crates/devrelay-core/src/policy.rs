@@ -1,3 +1,10 @@
+//! Untracked-file and secret-safety classification.
+//!
+//! Snapshot creation asks this module which untracked paths can be carried
+//! forward. Secret-like names and private key material are hard-blocked before
+//! manifest include rules are considered. Generated directories and large files
+//! are excluded to keep local handoffs intentional and reviewable.
+
 use crate::error::Result;
 use crate::manifest::{Manifest, UntrackedPolicy};
 use globset::{Glob, GlobSet, GlobSetBuilder};

@@ -1,3 +1,11 @@
+//! `devrelay.toml` schema types, loading, and validation.
+//!
+//! The manifest captures portable project intent: workspace policy, environment
+//! profiles, tasks, secrets, sync hints, and handoff preferences. Validation in
+//! this module rejects unsupported schemas, empty executable commands, duplicate
+//! pattern lists, and other inputs that would make later snapshot behavior
+//! ambiguous.
+
 use crate::error::{DevRelayError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

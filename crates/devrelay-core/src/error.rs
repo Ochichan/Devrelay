@@ -1,3 +1,9 @@
+//! Error types shared by the local CLI and core workflows.
+//!
+//! M0 errors are still intentionally small. Stable, namespaced error codes are
+//! tracked separately in the roadmap and should be added before the local CLI
+//! MVP depends on machine-readable failures.
+
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]

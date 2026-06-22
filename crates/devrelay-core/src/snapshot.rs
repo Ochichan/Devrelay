@@ -1,7 +1,13 @@
+//! Local synthetic snapshot creation, application, and verification.
+//!
+//! A snapshot records Git HEAD, the current index tree, a synthetic work-tree
+//! commit, included untracked paths, excluded path reasons, and a state hash.
+//! Applying a snapshot refuses dirty targets, fetches the synthetic refs, then
+//! verifies HEAD, index tree, work tree, and state hash after materialization.
+
 use crate::error::{DevRelayError, Result};
-use crate::git::{GitRepo, GitStatus, StatusCounts};
-use crate::manifest::Manifest;
-use crate::policy::{ClassifiedPath, PathDecision, classify_untracked_paths};
+use crate::policy::classify_untracked_paths;
+use crate::{ClassifiedPath, GitRepo, GitStatus, Manifest, PathDecision, StatusCounts};
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
 use std::fs;

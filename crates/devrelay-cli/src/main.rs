@@ -1,10 +1,14 @@
+//! Command-line interface for the local DevRelay foundation.
+//!
+//! This binary is intentionally thin in M0. It loads manifests, delegates Git
+//! state work to `devrelay-core`, and renders human or JSON output for explicit
+//! local commands.
+
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use devrelay_core::git::GitRepo;
-use devrelay_core::manifest::Manifest;
-use devrelay_core::policy::{PathDecision, classify_untracked_paths};
-use devrelay_core::snapshot::{
-    apply_snapshot, create_snapshot, read_snapshot_file, write_snapshot_file,
+use devrelay_core::{
+    GitRepo, Manifest, PathDecision, apply_snapshot, classify_untracked_paths, create_snapshot,
+    read_snapshot_file, write_snapshot_file,
 };
 use std::path::PathBuf;
 
