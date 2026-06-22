@@ -27,6 +27,7 @@ pub const METHOD_STATUS_GET: &str = "status.get";
 pub const METHOD_PROJECTS_ADD: &str = "projects.add";
 pub const METHOD_PROJECTS_LIST: &str = "projects.list";
 pub const METHOD_PROJECTS_SHOW: &str = "projects.show";
+pub const METHOD_PROJECTS_REMOVE: &str = "projects.remove";
 pub const METHOD_CHECKPOINT_CREATE: &str = "checkpoint.create";
 pub const METHOD_SNAPSHOTS_LIST: &str = "snapshots.list";
 pub const METHOD_APPLY_SNAPSHOT: &str = "apply.snapshot";
@@ -205,6 +206,11 @@ pub struct ProjectsAddParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectsShowParams {
+    pub id_or_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectsRemoveParams {
     pub id_or_name: String,
 }
 
@@ -461,6 +467,12 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(show.id_or_name, "demo");
+
+        let remove: ProjectsRemoveParams = serde_json::from_value(json!({
+            "id_or_name": "demo"
+        }))
+        .unwrap();
+        assert_eq!(remove.id_or_name, "demo");
     }
 
     #[test]

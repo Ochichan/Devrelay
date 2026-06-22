@@ -245,6 +245,7 @@ dependencies = [
  "blake3",
  "clap",
  "devrelay-core",
+ "serde",
  "serde_json",
 ]
 

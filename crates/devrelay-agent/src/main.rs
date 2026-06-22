@@ -5,18 +5,18 @@ use devrelay_core::{
     ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
     DiagnosticsExportParams, DiagnosticsExportResult, GitRepo, IpcConnection, IpcLimits,
     IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
-    ProjectsListResult, ProjectsShowParams, RPC_PROTOCOL_VERSION, RecoverOpenParams,
-    RecoverOpenResult, RpcError, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
-    RpcVersionNegotiationResult, SnapshotStore, SnapshotsListParams, SnapshotsListResult,
-    StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection, UnixIpcListener,
-    WorkspaceRegistryEntry, WorkspaceState, apply_snapshot, classify_untracked_paths,
-    plan_apply_snapshot, workspace_id_for,
+    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RPC_PROTOCOL_VERSION,
+    RecoverOpenParams, RecoverOpenResult, RpcError, RpcRequest, RpcResponse,
+    RpcVersionNegotiationParams, RpcVersionNegotiationResult, SnapshotStore, SnapshotsListParams,
+    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection,
+    UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
+    classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
 };
 use devrelay_core::{
     DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
     METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_SHOW, METHOD_RECOVER_OPEN, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST,
-    METHOD_STATUS_GET, MetadataDb,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_OPEN, METHOD_RPC_NEGOTIATE,
+    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -109,6 +109,7 @@ impl AgentState {
             METHOD_PROJECTS_ADD.to_string(),
             METHOD_PROJECTS_LIST.to_string(),
             METHOD_PROJECTS_SHOW.to_string(),
+            METHOD_PROJECTS_REMOVE.to_string(),
             METHOD_CHECKPOINT_CREATE.to_string(),
             METHOD_SNAPSHOTS_LIST.to_string(),
             METHOD_APPLY_SNAPSHOT.to_string(),
@@ -238,6 +239,7 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_PROJECTS_ADD => handle_projects_add(id, request.params, state),
         METHOD_PROJECTS_LIST => handle_projects_list(id, state),
         METHOD_PROJECTS_SHOW => handle_projects_show(id, request.params, state),
+        METHOD_PROJECTS_REMOVE => handle_projects_remove(id, request.params, state),
         METHOD_CHECKPOINT_CREATE => handle_checkpoint_create(id, request.params, state),
         METHOD_SNAPSHOTS_LIST => handle_snapshots_list(id, request.params, state),
         METHOD_APPLY_SNAPSHOT => handle_apply_snapshot(id, request.params, state),
@@ -638,6 +640,48 @@ fn handle_projects_show(
             );
         }
     };
+
+    match serde_json::to_value(ProjectResult { project }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_projects_remove(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: ProjectsRemoveParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let mut config = match state.config.lock() {
+        Ok(config) => config,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let project_id = match find_project(&config, &params.id_or_name) {
+        Some(project) => project.project_id.clone(),
+        None => {
+            return RpcResponse::error(
+                Some(id),
+                RpcError::internal(format!("unknown project {}", params.id_or_name)),
+            );
+        }
+    };
+    let project = match config.project_registry.projects.remove(&project_id) {
+        Some(project) => project,
+        None => {
+            return RpcResponse::error(
+                Some(id),
+                RpcError::internal(format!("project disappeared {project_id}")),
+            );
+        }
+    };
+    if let Err(err) = config.save(&state.config_path) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
 
     match serde_json::to_value(ProjectResult { project }) {
         Ok(result) => RpcResponse::success(id, result),

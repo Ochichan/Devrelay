@@ -532,7 +532,7 @@ Conventions:
 - [x] Add CLI global `--direct` escape hatch.
 - [x] Add CLI global `--agent-socket`.
 - [x] Route `status` through agent.
-- [ ] Route project commands through agent.
+- [x] Route project commands through agent.
 - [ ] Route checkpoint through agent.
 - [ ] Route recover through agent.
 - [ ] Route apply through agent.

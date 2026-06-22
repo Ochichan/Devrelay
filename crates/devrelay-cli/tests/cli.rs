@@ -224,6 +224,185 @@ fn status_direct_bypasses_agent_socket() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn project_commands_use_agent_rpc_by_default() {
+    use devrelay_core::{
+        IpcConnection, IpcLimits, IpcTransport, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+        METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, RpcRequest, RpcResponse, UnixIpcListener,
+    };
+    use serde_json::json;
+
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-project-agent-test-{}-{}",
+        std::process::id(),
+        "repo"
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+    init_git_repo(&root);
+    write_manifest(&root, "agent-project", "Agent Project");
+    git(&root, &["add", "devrelay.toml"]);
+    git(&root, &["commit", "-m", "manifest"]);
+
+    let manifest = root.join("devrelay.toml");
+    let socket = root.join("agent.sock");
+    let listener = UnixIpcListener::bind(&socket).unwrap();
+    let expected_repo = root.to_str().unwrap().to_string();
+    let expected_manifest = manifest.to_str().unwrap().to_string();
+    let project = json!({
+        "project_id": "agent-project",
+        "display_name": "Agent Project",
+        "local_path": expected_repo,
+        "workspaces": {
+            "w_agent": {
+                "workspace_id": "w_agent",
+                "project_id": "agent-project",
+                "device_id": "agent-device",
+                "local_path": expected_repo,
+                "platform_profile": "macos-aarch64",
+                "state": "active",
+                "last_seen_head": "agent-head",
+                "last_checkpoint_id": null
+            }
+        },
+        "manifest_path": expected_manifest,
+        "remote_url_fingerprint": null,
+        "root_commit_fingerprint": "root_agent"
+    });
+    let handle = std::thread::spawn(move || {
+        for method in [
+            METHOD_PROJECTS_ADD,
+            METHOD_PROJECTS_LIST,
+            METHOD_PROJECTS_SHOW,
+            METHOD_PROJECTS_REMOVE,
+        ] {
+            let mut connection = listener.accept().unwrap();
+            let request_bytes = connection.read_message(IpcLimits::default()).unwrap();
+            let request = RpcRequest::parse(&request_bytes).unwrap();
+            assert_eq!(request.method, method);
+
+            let result = match method {
+                METHOD_PROJECTS_ADD => {
+                    assert_eq!(
+                        request.params["path"].as_str(),
+                        project["local_path"].as_str()
+                    );
+                    assert_eq!(
+                        request.params["manifest"].as_str(),
+                        project["manifest_path"].as_str()
+                    );
+                    json!({ "project": project.clone() })
+                }
+                METHOD_PROJECTS_LIST => json!({ "projects": [project.clone()] }),
+                METHOD_PROJECTS_SHOW => {
+                    assert_eq!(request.params["id_or_name"].as_str(), Some("Agent Project"));
+                    json!({ "project": project.clone() })
+                }
+                METHOD_PROJECTS_REMOVE => {
+                    assert_eq!(request.params["id_or_name"].as_str(), Some("Agent Project"));
+                    json!({ "project": project.clone() })
+                }
+                _ => unreachable!(),
+            };
+            let response = RpcResponse::success(request.required_id().unwrap(), result);
+            connection
+                .write_message(
+                    &serde_json::to_vec(&response).unwrap(),
+                    IpcLimits::default(),
+                )
+                .unwrap();
+        }
+    });
+
+    let add = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "project",
+            "add",
+            root.to_str().unwrap(),
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let add_json: serde_json::Value = serde_json::from_slice(&add.stdout).unwrap();
+    assert_eq!(
+        add_json["added"]["project_id"].as_str(),
+        Some("agent-project")
+    );
+    assert!(add_json["config"].as_str().is_some());
+
+    let list = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "projects",
+            "list",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let list_json: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(list_json[0]["display_name"].as_str(), Some("Agent Project"));
+
+    let show = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "project",
+            "show",
+            "Agent Project",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        show.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&show.stderr)
+    );
+    let show_json: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(show_json["project_id"].as_str(), Some("agent-project"));
+
+    let remove = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "project",
+            "remove",
+            "Agent Project",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        remove.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    let remove_json: serde_json::Value = serde_json::from_slice(&remove.stdout).unwrap();
+    assert_eq!(
+        remove_json["removed"]["project_id"].as_str(),
+        Some("agent-project")
+    );
+    handle.join().unwrap();
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn manifest_check_supports_json() {
     let output = devrelay()

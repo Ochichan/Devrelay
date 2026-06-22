@@ -240,6 +240,32 @@ portable_paths = "strict"
     );
     assert_eq!(shown["result"]["project"]["project_id"], "87654321");
 
+    let removed = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "remove-1",
+            "method": "projects.remove",
+            "params": { "id_or_name": "Demo Project" }
+        }),
+    );
+    assert_eq!(removed["result"]["project"]["project_id"], "87654321");
+
+    let listed_after_remove = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "list-2",
+            "method": "projects.list"
+        }),
+    );
+    assert!(
+        listed_after_remove["result"]["projects"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
     let health = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
         json!({
@@ -248,7 +274,7 @@ portable_paths = "strict"
             "method": "agent.health"
         }),
     );
-    assert_eq!(health["result"]["project_count"], 1);
+    assert_eq!(health["result"]["project_count"], 0);
     assert!(running.root.join("config.toml").exists());
 
     running.stop();

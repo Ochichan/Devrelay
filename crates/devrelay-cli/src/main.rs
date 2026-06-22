@@ -7,14 +7,16 @@
 use anyhow::{Context, Error};
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(unix)]
-use devrelay_core::{AgentRpcClient, METHOD_STATUS_GET, StatusGetParams};
+use devrelay_core::AgentRpcClient;
 use devrelay_core::{
-    DevRelayError, DevRelayHome, ErrorInfo, GitRepo, LocalConfig, Manifest, PathDecision,
-    PatternConfig, PortablePathsPolicy, ProjectRegistryEntry, SnapshotMetadata, SnapshotStore,
-    StatusGetResult, StatusSummary, StoredSnapshot, UntrackedPolicy, WorkspaceConfig,
-    WorkspaceRegistryEntry, WorkspaceState, apply_snapshot, classify_untracked_paths,
-    create_snapshot, plan_apply_snapshot, read_snapshot_file, workspace_id_for,
-    write_snapshot_file,
+    DevRelayError, DevRelayHome, ErrorInfo, GitRepo, LocalConfig, METHOD_PROJECTS_ADD,
+    METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_STATUS_GET,
+    Manifest, PathDecision, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
+    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
+    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
+    StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
+    apply_snapshot, classify_untracked_paths, create_snapshot, plan_apply_snapshot,
+    read_snapshot_file, workspace_id_for, write_snapshot_file,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -461,124 +463,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         },
-        Command::Project { command } => match command {
-            ProjectCommand::Add {
-                path,
-                manifest,
-                config,
-                json,
-            } => {
-                let (config_path, mut local_config) = load_or_default_config(config)?;
-                refresh_workspace_states(&mut local_config);
-                let entry = build_project_registry_entry(
-                    &path,
-                    manifest.as_deref(),
-                    &local_config.device_id,
-                )?;
-                ensure_workspace_not_registered(&local_config, &entry.local_path)?;
-                let project_id = entry.project_id.clone();
-                merge_project_registry_entry(&mut local_config, entry);
-                let added = local_config
-                    .project_registry
-                    .projects
-                    .get(&project_id)
-                    .cloned()
-                    .ok_or_else(|| DevRelayError::Config("project disappeared".to_string()))?;
-                local_config.save(&config_path)?;
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "added": added,
-                            "config": config_path,
-                        }))?
-                    );
-                } else {
-                    println!(
-                        "added project: {} ({})",
-                        added.display_name, added.project_id
-                    );
-                    println!("  path: {}", added.local_path.display());
-                    println!("  workspaces: {}", added.workspaces.len());
-                }
-            }
-            ProjectCommand::Show {
-                id_or_name,
-                config,
-                json,
-            } => {
-                let (config_path, mut local_config) = load_or_default_config(config)?;
-                if refresh_workspace_states(&mut local_config) {
-                    local_config.save(&config_path)?;
-                }
-                let entry = find_project(&local_config, &id_or_name)?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(entry)?);
-                } else {
-                    println!("project: {} ({})", entry.display_name, entry.project_id);
-                    println!("  path: {}", entry.local_path.display());
-                    println!("  workspaces: {}", entry.workspaces.len());
-                    for workspace in entry.workspaces.values() {
-                        println!(
-                            "    {} [{}] {}",
-                            workspace.workspace_id,
-                            workspace_state_label(workspace.state),
-                            workspace.local_path.display()
-                        );
-                    }
-                }
-            }
-            ProjectCommand::Remove {
-                id_or_name,
-                config,
-                json,
-            } => {
-                let (config_path, mut local_config) = load_or_default_config(config)?;
-                let project_id = find_project(&local_config, &id_or_name)?.project_id.clone();
-                let removed = local_config
-                    .project_registry
-                    .projects
-                    .remove(&project_id)
-                    .ok_or_else(|| DevRelayError::Config("project disappeared".to_string()))?;
-                local_config.save(&config_path)?;
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "removed": removed,
-                            "config": config_path,
-                        }))?
-                    );
-                } else {
-                    println!(
-                        "removed project: {} ({})",
-                        removed.display_name, removed.project_id
-                    );
-                }
-            }
-        },
-        Command::Projects { command } => match command {
-            ProjectsCommand::List { config, json } => {
-                let (config_path, mut local_config) = load_or_default_config(config)?;
-                if refresh_workspace_states(&mut local_config) {
-                    local_config.save(&config_path)?;
-                }
-                let projects = local_config
-                    .project_registry
-                    .projects
-                    .values()
-                    .collect::<Vec<_>>();
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&projects)?);
-                } else {
-                    for project in projects {
-                        println!("{} ({})", project.display_name, project.project_id);
-                        println!("  path: {}", project.local_path.display());
-                        println!("  workspaces: {}", project.workspaces.len());
-                    }
-                }
-            }
-        },
+        Command::Project { command } => handle_project_command(command, &agent_options)?,
+        Command::Projects { command } => handle_projects_command(command, &agent_options)?,
         Command::Workspace { command } => match command {
             WorkspaceCommand::Remove {
                 id_or_path,
@@ -898,6 +784,264 @@ fn load_or_default_config(path: Option<PathBuf>) -> anyhow::Result<(PathBuf, Loc
     }
 }
 
+fn handle_project_command(
+    command: ProjectCommand,
+    agent_options: &AgentOptions,
+) -> anyhow::Result<()> {
+    match command {
+        ProjectCommand::Add {
+            path,
+            manifest,
+            config,
+            json,
+        } => {
+            let (added, config_path) =
+                if should_route_config_command(agent_options, config.as_ref()) {
+                    (
+                        project_add_via_agent(agent_options, path, manifest)?,
+                        config_path(None, false)?,
+                    )
+                } else {
+                    project_add_direct(path, manifest, config)?
+                };
+            render_project_add(&added, &config_path, json)
+        }
+        ProjectCommand::Show {
+            id_or_name,
+            config,
+            json,
+        } => {
+            let entry = if should_route_config_command(agent_options, config.as_ref()) {
+                project_show_via_agent(agent_options, id_or_name)?
+            } else {
+                project_show_direct(id_or_name, config)?
+            };
+            render_project_show(&entry, json)
+        }
+        ProjectCommand::Remove {
+            id_or_name,
+            config,
+            json,
+        } => {
+            let (removed, config_path) =
+                if should_route_config_command(agent_options, config.as_ref()) {
+                    (
+                        project_remove_via_agent(agent_options, id_or_name)?,
+                        config_path(None, false)?,
+                    )
+                } else {
+                    project_remove_direct(id_or_name, config)?
+                };
+            render_project_remove(&removed, &config_path, json)
+        }
+    }
+}
+
+fn handle_projects_command(
+    command: ProjectsCommand,
+    agent_options: &AgentOptions,
+) -> anyhow::Result<()> {
+    match command {
+        ProjectsCommand::List { config, json } => {
+            let projects = if should_route_config_command(agent_options, config.as_ref()) {
+                projects_list_via_agent(agent_options)?
+            } else {
+                projects_list_direct(config)?
+            };
+            render_projects_list(&projects, json)
+        }
+    }
+}
+
+fn should_route_config_command(agent_options: &AgentOptions, config: Option<&PathBuf>) -> bool {
+    !agent_options.direct && config.is_none()
+}
+
+fn project_add_direct(
+    path: PathBuf,
+    manifest: Option<PathBuf>,
+    config: Option<PathBuf>,
+) -> anyhow::Result<(ProjectRegistryEntry, PathBuf)> {
+    let (config_path, mut local_config) = load_or_default_config(config)?;
+    refresh_workspace_states(&mut local_config);
+    let entry = build_project_registry_entry(&path, manifest.as_deref(), &local_config.device_id)?;
+    ensure_workspace_not_registered(&local_config, &entry.local_path)?;
+    let project_id = entry.project_id.clone();
+    merge_project_registry_entry(&mut local_config, entry);
+    let added = local_config
+        .project_registry
+        .projects
+        .get(&project_id)
+        .cloned()
+        .ok_or_else(|| DevRelayError::Config("project disappeared".to_string()))?;
+    local_config.save(&config_path)?;
+    Ok((added, config_path))
+}
+
+fn project_show_direct(
+    id_or_name: String,
+    config: Option<PathBuf>,
+) -> anyhow::Result<ProjectRegistryEntry> {
+    let (config_path, mut local_config) = load_or_default_config(config)?;
+    if refresh_workspace_states(&mut local_config) {
+        local_config.save(&config_path)?;
+    }
+    Ok(find_project(&local_config, &id_or_name)?.clone())
+}
+
+fn project_remove_direct(
+    id_or_name: String,
+    config: Option<PathBuf>,
+) -> anyhow::Result<(ProjectRegistryEntry, PathBuf)> {
+    let (config_path, mut local_config) = load_or_default_config(config)?;
+    let project_id = find_project(&local_config, &id_or_name)?.project_id.clone();
+    let removed = local_config
+        .project_registry
+        .projects
+        .remove(&project_id)
+        .ok_or_else(|| DevRelayError::Config("project disappeared".to_string()))?;
+    local_config.save(&config_path)?;
+    Ok((removed, config_path))
+}
+
+fn projects_list_direct(config: Option<PathBuf>) -> anyhow::Result<Vec<ProjectRegistryEntry>> {
+    let (config_path, mut local_config) = load_or_default_config(config)?;
+    if refresh_workspace_states(&mut local_config) {
+        local_config.save(&config_path)?;
+    }
+    Ok(local_config
+        .project_registry
+        .projects
+        .values()
+        .cloned()
+        .collect())
+}
+
+fn project_add_via_agent(
+    agent_options: &AgentOptions,
+    path: PathBuf,
+    manifest: Option<PathBuf>,
+) -> anyhow::Result<ProjectRegistryEntry> {
+    let path = absolute_cli_path(path)?;
+    let manifest = manifest.map(absolute_cli_path).transpose()?;
+    let result: ProjectResult = call_agent(
+        agent_options,
+        METHOD_PROJECTS_ADD,
+        ProjectsAddParams { path, manifest },
+    )?;
+    Ok(result.project)
+}
+
+fn project_show_via_agent(
+    agent_options: &AgentOptions,
+    id_or_name: String,
+) -> anyhow::Result<ProjectRegistryEntry> {
+    let result: ProjectResult = call_agent(
+        agent_options,
+        METHOD_PROJECTS_SHOW,
+        ProjectsShowParams { id_or_name },
+    )?;
+    Ok(result.project)
+}
+
+fn project_remove_via_agent(
+    agent_options: &AgentOptions,
+    id_or_name: String,
+) -> anyhow::Result<ProjectRegistryEntry> {
+    let result: ProjectResult = call_agent(
+        agent_options,
+        METHOD_PROJECTS_REMOVE,
+        ProjectsRemoveParams { id_or_name },
+    )?;
+    Ok(result.project)
+}
+
+fn projects_list_via_agent(
+    agent_options: &AgentOptions,
+) -> anyhow::Result<Vec<ProjectRegistryEntry>> {
+    let result: ProjectsListResult =
+        call_agent(agent_options, METHOD_PROJECTS_LIST, serde_json::json!({}))?;
+    Ok(result.projects)
+}
+
+fn render_project_add(
+    added: &ProjectRegistryEntry,
+    config_path: &Path,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "added": added,
+                "config": config_path,
+            }))?
+        );
+    } else {
+        println!(
+            "added project: {} ({})",
+            added.display_name, added.project_id
+        );
+        println!("  path: {}", added.local_path.display());
+        println!("  workspaces: {}", added.workspaces.len());
+    }
+    Ok(())
+}
+
+fn render_project_show(entry: &ProjectRegistryEntry, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(entry)?);
+    } else {
+        println!("project: {} ({})", entry.display_name, entry.project_id);
+        println!("  path: {}", entry.local_path.display());
+        println!("  workspaces: {}", entry.workspaces.len());
+        for workspace in entry.workspaces.values() {
+            println!(
+                "    {} [{}] {}",
+                workspace.workspace_id,
+                workspace_state_label(workspace.state),
+                workspace.local_path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn render_project_remove(
+    removed: &ProjectRegistryEntry,
+    config_path: &Path,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "removed": removed,
+                "config": config_path,
+            }))?
+        );
+    } else {
+        println!(
+            "removed project: {} ({})",
+            removed.display_name, removed.project_id
+        );
+    }
+    Ok(())
+}
+
+fn render_projects_list(projects: &[ProjectRegistryEntry], json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(projects)?);
+    } else {
+        for project in projects {
+            println!("{} ({})", project.display_name, project.project_id);
+            println!("  path: {}", project.local_path.display());
+            println!("  workspaces: {}", project.workspaces.len());
+        }
+    }
+    Ok(())
+}
+
 fn build_project_registry_entry(
     path: &Path,
     manifest_path: Option<&Path>,
@@ -1016,15 +1160,11 @@ fn collect_status_via_agent(
     repo: PathBuf,
     manifest: Option<PathBuf>,
 ) -> anyhow::Result<StatusGetResult> {
-    let socket = agent_options
-        .socket_path
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(|| DevRelayHome::resolve().map(|home| home.agent_socket_path()))?;
-    let client = AgentRpcClient::new(&socket);
-    client
-        .call(METHOD_STATUS_GET, StatusGetParams { repo, manifest })
-        .map_err(|err| agent_rpc_error(&socket, err).into())
+    call_agent(
+        agent_options,
+        METHOD_STATUS_GET,
+        StatusGetParams { repo, manifest },
+    )
 }
 
 #[cfg(not(unix))]
@@ -1038,6 +1178,32 @@ fn collect_status_via_agent(
     let manifest = Manifest::load(&manifest_path)
         .with_context(|| format!("failed to load {}", manifest_path.display()))?;
     collect_status_direct(&repo, &manifest)
+}
+
+#[cfg(unix)]
+fn call_agent<P, R>(agent_options: &AgentOptions, method: &str, params: P) -> anyhow::Result<R>
+where
+    P: serde::Serialize,
+    R: serde::de::DeserializeOwned,
+{
+    let socket = agent_options
+        .socket_path
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| DevRelayHome::resolve().map(|home| home.agent_socket_path()))?;
+    let client = AgentRpcClient::new(&socket);
+    client
+        .call(method, params)
+        .map_err(|err| agent_rpc_error(&socket, err).into())
+}
+
+#[cfg(not(unix))]
+fn call_agent<P, R>(_agent_options: &AgentOptions, _method: &str, _params: P) -> anyhow::Result<R>
+where
+    P: serde::Serialize,
+    R: serde::de::DeserializeOwned,
+{
+    Err(DevRelayError::Ipc("agent RPC is not supported on this platform".to_string()).into())
 }
 
 #[cfg(unix)]
