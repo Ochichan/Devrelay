@@ -1,17 +1,25 @@
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
-use devrelay_core::{DevRelayHome, LocalConfig, MetadataDb};
+use devrelay_core::{
+    DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_PROJECTS_SHOW, METHOD_RPC_NEGOTIATE, METHOD_STATUS_GET, MetadataDb,
+};
 #[cfg(unix)]
 use devrelay_core::{
-    GitRepo, IpcConnection, IpcLimits, IpcTransport, METHOD_AGENT_HEALTH, METHOD_RPC_NEGOTIATE,
-    METHOD_STATUS_GET, Manifest, RPC_PROTOCOL_VERSION, RpcError, RpcRequest, RpcResponse,
-    RpcVersionNegotiationParams, RpcVersionNegotiationResult, StatusGetParams, StatusGetResult,
-    UnixIpcConnection, UnixIpcListener, classify_untracked_paths,
+    GitRepo, IpcConnection, IpcLimits, IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult,
+    ProjectsAddParams, ProjectsListResult, ProjectsShowParams, RPC_PROTOCOL_VERSION, RpcError,
+    RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
+    StatusGetParams, StatusGetResult, UnixIpcConnection, UnixIpcListener, WorkspaceRegistryEntry,
+    WorkspaceState, classify_untracked_paths, workspace_id_for,
 };
 use serde::Serialize;
+#[cfg(unix)]
+use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
@@ -59,7 +67,7 @@ struct AgentState {
     foreground: bool,
     config_path: PathBuf,
     socket_path: PathBuf,
-    project_count: usize,
+    config: Arc<Mutex<LocalConfig>>,
     database_path: PathBuf,
     shutdown: Arc<AtomicBool>,
 }
@@ -71,10 +79,17 @@ impl AgentState {
             foreground: self.foreground,
             config_path: self.config_path.clone(),
             socket_path: self.socket_path.clone(),
-            project_count: self.project_count,
+            project_count: self.project_count(),
             database_path: self.database_path.clone(),
             shutdown_requested: self.shutdown.load(Ordering::SeqCst),
         }
+    }
+
+    fn project_count(&self) -> usize {
+        self.config
+            .lock()
+            .map(|config| config.project_registry.projects.len())
+            .unwrap_or_default()
     }
 
     fn supported_methods() -> Vec<String> {
@@ -82,6 +97,9 @@ impl AgentState {
             METHOD_RPC_NEGOTIATE.to_string(),
             METHOD_AGENT_HEALTH.to_string(),
             METHOD_STATUS_GET.to_string(),
+            METHOD_PROJECTS_ADD.to_string(),
+            METHOD_PROJECTS_LIST.to_string(),
+            METHOD_PROJECTS_SHOW.to_string(),
         ]
     }
 }
@@ -112,7 +130,7 @@ fn main() -> anyhow::Result<()> {
         foreground: cli.foreground,
         config_path,
         socket_path,
-        project_count: config.project_registry.projects.len(),
+        config: Arc::new(Mutex::new(config)),
         database_path,
         shutdown: Arc::clone(&shutdown),
     };
@@ -202,6 +220,9 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
             Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
         },
         METHOD_STATUS_GET => handle_status_get(id, request.params),
+        METHOD_PROJECTS_ADD => handle_projects_add(id, request.params, state),
+        METHOD_PROJECTS_LIST => handle_projects_list(id, state),
+        METHOD_PROJECTS_SHOW => handle_projects_show(id, request.params, state),
         method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
     }
 }
@@ -262,6 +283,252 @@ fn handle_status_get(id: devrelay_core::RpcId, params: serde_json::Value) -> Rpc
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }
+}
+
+#[cfg(unix)]
+fn handle_projects_add(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: ProjectsAddParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let device_id = match state.config.lock() {
+        Ok(config) => config.device_id.clone(),
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let entry =
+        match build_project_registry_entry(&params.path, params.manifest.as_deref(), &device_id) {
+            Ok(entry) => entry,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+
+    let mut config = match state.config.lock() {
+        Ok(config) => config,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    if let Err(err) = ensure_workspace_not_registered(&config, &entry.local_path) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    merge_project_registry_entry(&mut config, entry.clone());
+    if let Err(err) = config.save(&state.config_path) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+
+    match serde_json::to_value(ProjectResult { project: entry }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_projects_list(id: devrelay_core::RpcId, state: &AgentState) -> RpcResponse {
+    let config = match state.config.lock() {
+        Ok(config) => config,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let projects = config
+        .project_registry
+        .projects
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+
+    match serde_json::to_value(ProjectsListResult { projects }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_projects_show(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: ProjectsShowParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let config = match state.config.lock() {
+        Ok(config) => config,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let project = match find_project(&config, &params.id_or_name) {
+        Some(project) => project.clone(),
+        None => {
+            return RpcResponse::error(
+                Some(id),
+                RpcError::internal(format!("unknown project {}", params.id_or_name)),
+            );
+        }
+    };
+
+    match serde_json::to_value(ProjectResult { project }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn build_project_registry_entry(
+    path: &Path,
+    manifest_path: Option<&Path>,
+    device_id: &str,
+) -> anyhow::Result<ProjectRegistryEntry> {
+    let root = resolve_git_root(path)?;
+    let manifest_path = manifest_path.map(PathBuf::from).or_else(|| {
+        root.join("devrelay.toml")
+            .exists()
+            .then(|| root.join("devrelay.toml"))
+    });
+    let manifest = manifest_path
+        .as_ref()
+        .map(Manifest::load)
+        .transpose()
+        .with_context(|| "failed to load project manifest")?;
+    let project_id = manifest
+        .as_ref()
+        .map(|manifest| manifest.project_id.clone())
+        .unwrap_or_else(|| generated_project_id(&root));
+    let display_name = manifest
+        .as_ref()
+        .map(|manifest| manifest.name.clone())
+        .or_else(|| {
+            root.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| project_id.clone());
+    let repo = GitRepo::new(&root);
+    let workspace_id = workspace_id_for(&project_id, device_id, &root);
+    let workspace = WorkspaceRegistryEntry {
+        workspace_id: workspace_id.clone(),
+        project_id: project_id.clone(),
+        device_id: device_id.to_string(),
+        local_path: root.clone(),
+        platform_profile: current_platform_profile(),
+        state: WorkspaceState::Active,
+        last_seen_head: head_oid(&repo),
+        last_checkpoint_id: None,
+    };
+
+    Ok(ProjectRegistryEntry {
+        project_id,
+        display_name,
+        local_path: root,
+        workspaces: BTreeMap::from([(workspace_id, workspace)]),
+        manifest_path,
+        remote_url_fingerprint: remote_fingerprint(&repo),
+        root_commit_fingerprint: root_commit_fingerprint(&repo),
+    })
+}
+
+#[cfg(unix)]
+fn merge_project_registry_entry(config: &mut LocalConfig, entry: ProjectRegistryEntry) {
+    let project_id = entry.project_id.clone();
+    if let Some(existing) = config.project_registry.projects.get_mut(&project_id) {
+        for (workspace_id, workspace) in entry.workspaces {
+            existing.workspaces.insert(workspace_id, workspace);
+        }
+        if existing.manifest_path.is_none() {
+            existing.manifest_path = entry.manifest_path;
+        }
+        if existing.remote_url_fingerprint.is_none() {
+            existing.remote_url_fingerprint = entry.remote_url_fingerprint;
+        }
+        if existing.root_commit_fingerprint.is_none() {
+            existing.root_commit_fingerprint = entry.root_commit_fingerprint;
+        }
+    } else {
+        config.project_registry.projects.insert(project_id, entry);
+    }
+}
+
+#[cfg(unix)]
+fn ensure_workspace_not_registered(config: &LocalConfig, local_path: &Path) -> anyhow::Result<()> {
+    if let Some((project, workspace)) = config.project_registry.workspace_by_path(local_path) {
+        return Err(anyhow::anyhow!(
+            "{} is already registered as workspace {} for {}",
+            local_path.display(),
+            workspace.workspace_id,
+            project.project_id
+        ));
+    }
+    for project in config.project_registry.projects.values() {
+        if project.workspaces.is_empty() && project.local_path == local_path {
+            return Err(anyhow::anyhow!(
+                "{} is already registered as {}",
+                local_path.display(),
+                project.project_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn resolve_git_root(path: &Path) -> anyhow::Result<PathBuf> {
+    let repo = GitRepo::new(path);
+    let raw = repo
+        .run(&["rev-parse", "--show-toplevel"])
+        .map_err(|_| anyhow::anyhow!("path is not a Git repository: {}", path.display()))?;
+    Ok(PathBuf::from(raw))
+}
+
+#[cfg(unix)]
+fn find_project<'a>(config: &'a LocalConfig, id_or_name: &str) -> Option<&'a ProjectRegistryEntry> {
+    config
+        .project_registry
+        .projects
+        .get(id_or_name)
+        .or_else(|| {
+            config
+                .project_registry
+                .projects
+                .values()
+                .find(|project| project.display_name == id_or_name)
+        })
+}
+
+#[cfg(unix)]
+fn generated_project_id(root: &Path) -> String {
+    format!("p_{}", hash_text(&root.to_string_lossy()))
+}
+
+#[cfg(unix)]
+fn remote_fingerprint(repo: &GitRepo) -> Option<String> {
+    repo.run(&["remote", "get-url", "origin"])
+        .ok()
+        .map(|remote| format!("remote_{}", hash_text(remote.trim())))
+}
+
+#[cfg(unix)]
+fn root_commit_fingerprint(repo: &GitRepo) -> Option<String> {
+    repo.run(&["rev-list", "--max-parents=0", "HEAD"])
+        .ok()
+        .and_then(|roots| roots.lines().next().map(str::to_string))
+        .map(|root| format!("root_{}", hash_text(&root)))
+}
+
+#[cfg(unix)]
+fn head_oid(repo: &GitRepo) -> Option<String> {
+    repo.run(&["rev-parse", "--verify", "HEAD"])
+        .ok()
+        .map(|head| head.trim().to_string())
+        .filter(|head| !head.is_empty())
+}
+
+#[cfg(unix)]
+fn current_platform_profile() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+#[cfg(unix)]
+fn hash_text(value: &str) -> String {
+    let digest = blake3::hash(value.as_bytes());
+    digest.to_hex()[..16].to_string()
 }
 
 fn install_shutdown_handler() -> anyhow::Result<Arc<AtomicBool>> {

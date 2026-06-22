@@ -165,6 +165,96 @@ portable_paths = "strict"
 }
 
 #[cfg(unix)]
+#[test]
+fn foreground_serves_project_registry_rpc() {
+    use devrelay_core::{IpcLimits, UnixIpcConnection};
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-project-rpc-test");
+    let repo = running.root.join("project");
+    std::fs::create_dir(&repo).unwrap();
+    run_git(&repo, &["init", "-b", "main"]);
+    run_git(&repo, &["config", "user.email", "devrelay@example.test"]);
+    run_git(&repo, &["config", "user.name", "DevRelay Test"]);
+    std::fs::write(repo.join("README.md"), "base\n").unwrap();
+    std::fs::write(
+        repo.join("devrelay.toml"),
+        r#"
+schema = 1
+project_id = "87654321"
+name = "Demo Project"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#,
+    )
+    .unwrap();
+    run_git(&repo, &["add", "README.md", "devrelay.toml"]);
+    run_git(&repo, &["commit", "-m", "base"]);
+
+    let added = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "add-1",
+            "method": "projects.add",
+            "params": {
+                "path": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+    assert_eq!(added["id"], "add-1");
+    assert_eq!(added["result"]["project"]["project_id"], "87654321");
+    assert_eq!(added["result"]["project"]["display_name"], "Demo Project");
+    assert_eq!(
+        added["result"]["project"]["workspaces"]
+            .as_object()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let listed = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "list-1",
+            "method": "projects.list"
+        }),
+    );
+    assert_eq!(
+        listed["result"]["projects"][0]["display_name"],
+        "Demo Project"
+    );
+
+    let shown = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "show-1",
+            "method": "projects.show",
+            "params": { "id_or_name": "Demo Project" }
+        }),
+    );
+    assert_eq!(shown["result"]["project"]["project_id"], "87654321");
+
+    let health = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "health-projects",
+            "method": "agent.health"
+        }),
+    );
+    assert_eq!(health["result"]["project_count"], 1);
+    assert!(running.root.join("config.toml").exists());
+
+    running.stop();
+}
+
+#[cfg(unix)]
 fn rpc_call(
     connection: &mut devrelay_core::UnixIpcConnection,
     request: serde_json::Value,

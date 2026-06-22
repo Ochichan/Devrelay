@@ -66,9 +66,11 @@ pub use manifest::{
 };
 pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
 pub use rpc::{
-    METHOD_AGENT_HEALTH, METHOD_RPC_NEGOTIATE, METHOD_STATUS_GET, RPC_JSONRPC_VERSION,
-    RPC_PROTOCOL_VERSION, RpcError, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
-    RpcVersionNegotiationResult, StatusGetParams, StatusGetResult,
+    METHOD_AGENT_HEALTH, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_SHOW,
+    METHOD_RPC_NEGOTIATE, METHOD_STATUS_GET, ProjectResult, ProjectsAddParams, ProjectsListResult,
+    ProjectsShowParams, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcError, RpcId, RpcRequest,
+    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, StatusGetParams,
+    StatusGetResult,
 };
 pub use snapshot::{
     ApplyPlan, VerificationDetails, apply_snapshot, create_snapshot, plan_apply_snapshot,

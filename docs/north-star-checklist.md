@@ -515,9 +515,9 @@ Conventions:
 - [x] Define version negotiation method.
 - [x] Add `agent.health`.
 - [x] Add `status.get`.
-- [ ] Add `projects.add`.
-- [ ] Add `projects.list`.
-- [ ] Add `projects.show`.
+- [x] Add `projects.add`.
+- [x] Add `projects.list`.
+- [x] Add `projects.show`.
 - [ ] Add `checkpoint.create`.
 - [ ] Add `snapshots.list`.
 - [ ] Add `recover.open`.

@@ -8,13 +8,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
-use crate::{ClassifiedPath, StatusEntry, StatusSummary};
+use crate::{ClassifiedPath, ProjectRegistryEntry, StatusEntry, StatusSummary};
 
 pub const RPC_JSONRPC_VERSION: &str = "2.0";
 pub const RPC_PROTOCOL_VERSION: u32 = 1;
 pub const METHOD_RPC_NEGOTIATE: &str = "rpc.negotiate";
 pub const METHOD_AGENT_HEALTH: &str = "agent.health";
 pub const METHOD_STATUS_GET: &str = "status.get";
+pub const METHOD_PROJECTS_ADD: &str = "projects.add";
+pub const METHOD_PROJECTS_LIST: &str = "projects.list";
+pub const METHOD_PROJECTS_SHOW: &str = "projects.show";
 
 pub const RPC_PARSE_ERROR: i64 = -32700;
 pub const RPC_INVALID_REQUEST: i64 = -32600;
@@ -180,6 +183,27 @@ pub struct StatusGetResult {
     pub untracked: Vec<ClassifiedPath>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectsAddParams {
+    pub path: PathBuf,
+    pub manifest: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectsShowParams {
+    pub id_or_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectResult {
+    pub project: ProjectRegistryEntry,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectsListResult {
+    pub projects: Vec<ProjectRegistryEntry>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,5 +282,21 @@ mod tests {
             params.manifest.as_deref(),
             Some(std::path::Path::new("/tmp/repo/devrelay.toml"))
         );
+    }
+
+    #[test]
+    fn project_registry_params_use_stable_field_names() {
+        let add: ProjectsAddParams = serde_json::from_value(json!({
+            "path": "/tmp/repo",
+            "manifest": "/tmp/repo/devrelay.toml"
+        }))
+        .unwrap();
+        assert_eq!(add.path, PathBuf::from("/tmp/repo"));
+
+        let show: ProjectsShowParams = serde_json::from_value(json!({
+            "id_or_name": "demo"
+        }))
+        .unwrap();
+        assert_eq!(show.id_or_name, "demo");
     }
 }
