@@ -240,26 +240,26 @@ Conventions:
 
 ### M0.9 Round-Trip Fixtures
 
-- [ ] Add fixture helper for temporary Git repos.
-- [ ] Add fixture helper for source/target clone setup.
-- [ ] Add fixture for staged add.
-- [ ] Add fixture for staged modify.
-- [ ] Add fixture for staged delete.
-- [ ] Add fixture for unstaged modify.
-- [ ] Add fixture for unstaged delete.
-- [ ] Add fixture for staged delete plus same-path recreation if supported.
-- [ ] Add fixture for untracked file include.
-- [ ] Add fixture for untracked secret exclude.
-- [ ] Add fixture for binary file modify.
-- [ ] Add fixture for empty file.
-- [ ] Add fixture for executable bit on POSIX.
-- [ ] Add fixture for Unicode path.
-- [ ] Add fixture for path with spaces.
-- [ ] Add fixture for rename.
-- [ ] Add fixture for ignored generated directory exclusion.
-- [ ] Add fixture for dirty target refusal.
-- [ ] Add fixture for source status unchanged after checkpoint.
-- [ ] Add fixture for status equivalence after apply.
+- [x] Add fixture helper for temporary Git repos.
+- [x] Add fixture helper for source/target clone setup.
+- [x] Add fixture for staged add.
+- [x] Add fixture for staged modify.
+- [x] Add fixture for staged delete.
+- [x] Add fixture for unstaged modify.
+- [x] Add fixture for unstaged delete.
+- [x] Add fixture for staged delete plus same-path recreation if supported.
+- [x] Add fixture for untracked file include.
+- [x] Add fixture for untracked secret exclude.
+- [x] Add fixture for binary file modify.
+- [x] Add fixture for empty file.
+- [x] Add fixture for executable bit on POSIX.
+- [x] Add fixture for Unicode path.
+- [x] Add fixture for path with spaces.
+- [x] Add fixture for rename.
+- [x] Add fixture for ignored generated directory exclusion.
+- [x] Add fixture for dirty target refusal.
+- [x] Add fixture for source status unchanged after checkpoint.
+- [x] Add fixture for status equivalence after apply.
 
 ### M0.10 CLI Polish
 
