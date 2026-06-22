@@ -84,26 +84,26 @@ Conventions:
 
 ### M0.2 Manifest Validation
 
-- [ ] Add golden test for bundled `devrelay.toml`.
-- [ ] Add negative test for missing `schema`.
-- [ ] Add negative test for unsupported `schema`.
-- [ ] Add negative test for short `project_id`.
-- [ ] Add negative test for empty project `name`.
-- [ ] Add negative test for overlong project `name`.
-- [ ] Add negative test for invalid `workspace.untracked`.
-- [ ] Add negative test for invalid `workspace.portable_paths`.
-- [ ] Add negative test for invalid `large_file_threshold_mib`.
-- [ ] Add negative test for duplicate exclude patterns.
-- [ ] Add negative test for duplicate include patterns.
-- [ ] Add negative test for empty environment profile command.
-- [ ] Add negative test for empty environment profile target.
-- [ ] Add negative test for empty task command.
-- [ ] Add negative test for empty task profile.
-- [ ] Add negative test for empty secret target.
-- [ ] Add serde round-trip test for manifest structs.
-- [ ] Add canonical execution-trust hash calculation for commands.
-- [ ] Add tests proving non-executable manifest edits do not change trust hash.
-- [ ] Add tests proving command edits do change trust hash.
+- [x] Add golden test for bundled `devrelay.toml`.
+- [x] Add negative test for missing `schema`.
+- [x] Add negative test for unsupported `schema`.
+- [x] Add negative test for short `project_id`.
+- [x] Add negative test for empty project `name`.
+- [x] Add negative test for overlong project `name`.
+- [x] Add negative test for invalid `workspace.untracked`.
+- [x] Add negative test for invalid `workspace.portable_paths`.
+- [x] Add negative test for invalid `large_file_threshold_mib`.
+- [x] Add negative test for duplicate exclude patterns.
+- [x] Add negative test for duplicate include patterns.
+- [x] Add negative test for empty environment profile command.
+- [x] Add negative test for empty environment profile target.
+- [x] Add negative test for empty task command.
+- [x] Add negative test for empty task profile.
+- [x] Add negative test for empty secret target.
+- [x] Add serde round-trip test for manifest structs.
+- [x] Add canonical execution-trust hash calculation for commands.
+- [x] Add tests proving non-executable manifest edits do not change trust hash.
+- [x] Add tests proving command edits do change trust hash.
 
 ### M0.3 Git Status Parser
 

@@ -323,6 +323,36 @@ impl Manifest {
 
         Ok(())
     }
+
+    /// Returns a canonical hash of manifest fields that can execute commands.
+    ///
+    /// Non-executable manifest edits, such as project display name or path
+    /// policy changes, do not affect this hash. Command edits, task/profile
+    /// remapping, and healthcheck edits do affect it.
+    pub fn execution_trust_hash(&self) -> String {
+        let mut hasher = blake3::Hasher::new();
+        update_hash_field(&mut hasher, "devrelay.execution-trust.v1");
+
+        if let Some(environment) = &self.environment {
+            for (name, profile) in &environment.profiles {
+                update_hash_field(&mut hasher, "environment.profile");
+                update_hash_field(&mut hasher, name);
+                update_hash_command(&mut hasher, "command", &profile.command);
+                if let Some(healthcheck) = &profile.healthcheck {
+                    update_hash_command(&mut hasher, "healthcheck", healthcheck);
+                }
+            }
+        }
+
+        for (name, task) in &self.tasks {
+            update_hash_field(&mut hasher, "task");
+            update_hash_field(&mut hasher, name);
+            update_hash_field(&mut hasher, &task.profile);
+            update_hash_command(&mut hasher, "command", &task.command);
+        }
+
+        hasher.finalize().to_hex().to_string()
+    }
 }
 
 fn validate_command(field: &str, values: &[String]) -> Result<()> {
@@ -335,9 +365,9 @@ fn validate_command(field: &str, values: &[String]) -> Result<()> {
 }
 
 fn validate_non_empty_string_array(field: &str, values: &[String]) -> Result<()> {
-    if values.iter().any(|value| value.is_empty()) {
+    if values.is_empty() || values.iter().any(|value| value.is_empty()) {
         return Err(DevRelayError::Manifest(format!(
-            "{field} must not contain empty values"
+            "{field} must contain at least one non-empty value"
         )));
     }
     validate_unique(field, values)
@@ -355,12 +385,41 @@ fn validate_unique(field: &str, values: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn update_hash_command(hasher: &mut blake3::Hasher, field: &str, values: &[String]) {
+    update_hash_field(hasher, field);
+    for value in values {
+        update_hash_field(hasher, value);
+    }
+}
+
+fn update_hash_field(hasher: &mut blake3::Hasher, value: &str) {
+    hasher.update(value.as_bytes());
+    hasher.update(&[0]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn minimal_manifest() -> String {
+        r#"
+schema = 1
+project_id = "12345678"
+name = "demo"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#
+        .to_string()
+    }
+
+    fn manifest_with(extra: &str) -> String {
+        format!("{}\n{extra}", minimal_manifest())
+    }
+
     #[test]
-    fn parses_bundled_manifest() {
+    fn golden_bundled_manifest_parses_and_validates() {
         let raw = include_str!("../../../devrelay_spec_bundle/devrelay.toml");
         let manifest = Manifest::parse(raw).expect("bundled manifest should parse");
         assert_eq!(manifest.schema, 1);
@@ -370,8 +429,117 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_patterns() {
-        let raw = r#"
+    fn rejects_invalid_manifest_inputs() {
+        let cases = vec![
+            (
+                "missing schema",
+                r#"
+project_id = "12345678"
+name = "bad"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#
+                .to_string(),
+            ),
+            (
+                "unsupported schema",
+                r#"
+schema = 99
+project_id = "12345678"
+name = "bad"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#
+                .to_string(),
+            ),
+            (
+                "short project_id",
+                r#"
+schema = 1
+project_id = "short"
+name = "bad"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#
+                .to_string(),
+            ),
+            (
+                "empty project name",
+                r#"
+schema = 1
+project_id = "12345678"
+name = ""
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#
+                .to_string(),
+            ),
+            (
+                "overlong project name",
+                format!(
+                    r#"
+schema = 1
+project_id = "12345678"
+name = "{}"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#,
+                    "x".repeat(129)
+                ),
+            ),
+            (
+                "invalid untracked policy",
+                r#"
+schema = 1
+project_id = "12345678"
+name = "bad"
+
+[workspace]
+untracked = "maybe"
+portable_paths = "strict"
+"#
+                .to_string(),
+            ),
+            (
+                "invalid portable paths policy",
+                r#"
+schema = 1
+project_id = "12345678"
+name = "bad"
+
+[workspace]
+untracked = "safe"
+portable_paths = "maybe"
+"#
+                .to_string(),
+            ),
+            (
+                "invalid large file threshold",
+                r#"
+schema = 1
+project_id = "12345678"
+name = "bad"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+large_file_threshold_mib = 0
+"#
+                .to_string(),
+            ),
+            (
+                "duplicate exclude pattern",
+                r#"
 schema = 1
 project_id = "12345678"
 name = "bad"
@@ -382,8 +550,165 @@ portable_paths = "strict"
 
 [workspace.exclude]
 patterns = ["target/**", "target/**"]
-"#;
-        let err = Manifest::parse(raw).expect_err("duplicate pattern should fail");
-        assert!(err.to_string().contains("duplicate"));
+"#
+                .to_string(),
+            ),
+            (
+                "duplicate include pattern",
+                r#"
+schema = 1
+project_id = "12345678"
+name = "bad"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+
+[workspace.include]
+patterns = ["notes/**", "notes/**"]
+"#
+                .to_string(),
+            ),
+            (
+                "empty environment command",
+                manifest_with(
+                    r#"
+[environment.profiles.dev]
+kind = "script"
+targets = ["local"]
+command = []
+"#,
+                ),
+            ),
+            (
+                "empty environment target",
+                manifest_with(
+                    r#"
+[environment.profiles.dev]
+kind = "script"
+targets = [""]
+command = ["cargo", "test"]
+"#,
+                ),
+            ),
+            (
+                "missing environment target",
+                manifest_with(
+                    r#"
+[environment.profiles.dev]
+kind = "script"
+targets = []
+command = ["cargo", "test"]
+"#,
+                ),
+            ),
+            (
+                "empty task command",
+                manifest_with(
+                    r#"
+[tasks.test]
+profile = "dev"
+command = []
+"#,
+                ),
+            ),
+            (
+                "empty task profile",
+                manifest_with(
+                    r#"
+[tasks.test]
+profile = ""
+command = ["cargo", "test"]
+"#,
+                ),
+            ),
+            (
+                "empty secret target",
+                manifest_with(
+                    r#"
+[secrets.local_env]
+target = ""
+"#,
+                ),
+            ),
+        ];
+
+        for (name, raw) in cases {
+            assert!(
+                Manifest::parse(&raw).is_err(),
+                "case should fail manifest validation: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn manifest_structs_round_trip_through_serde() {
+        let raw = include_str!("../../../devrelay_spec_bundle/devrelay.toml");
+        let manifest = Manifest::parse(raw).expect("bundled manifest should parse");
+        let encoded = toml::to_string(&manifest).expect("manifest should serialize");
+        let reparsed = Manifest::parse(&encoded).expect("serialized manifest should parse");
+
+        assert_eq!(manifest.schema, reparsed.schema);
+        assert_eq!(manifest.project_id, reparsed.project_id);
+        assert_eq!(manifest.name, reparsed.name);
+        assert_eq!(manifest.workspace.untracked, reparsed.workspace.untracked);
+        assert_eq!(
+            manifest.workspace.exclude.patterns,
+            reparsed.workspace.exclude.patterns
+        );
+        assert_eq!(
+            manifest.tasks.keys().collect::<Vec<_>>(),
+            reparsed.tasks.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn execution_trust_hash_ignores_non_executable_manifest_edits() {
+        let raw = manifest_with(
+            r#"
+[environment.profiles.dev]
+kind = "script"
+targets = ["local"]
+command = ["cargo", "test"]
+healthcheck = ["cargo", "check"]
+
+[tasks.test]
+profile = "dev"
+command = ["cargo", "test"]
+"#,
+        );
+        let original = Manifest::parse(&raw).unwrap();
+        let renamed = Manifest::parse(&raw.replace("name = \"demo\"", "name = \"demo renamed\""))
+            .expect("renamed manifest should parse");
+
+        assert_eq!(
+            original.execution_trust_hash(),
+            renamed.execution_trust_hash()
+        );
+    }
+
+    #[test]
+    fn execution_trust_hash_changes_for_command_edits() {
+        let raw = manifest_with(
+            r#"
+[environment.profiles.dev]
+kind = "script"
+targets = ["local"]
+command = ["cargo", "test"]
+
+[tasks.test]
+profile = "dev"
+command = ["cargo", "test"]
+"#,
+        );
+        let original = Manifest::parse(&raw).unwrap();
+        let changed =
+            Manifest::parse(&raw.replace("[\"cargo\", \"test\"]", "[\"cargo\", \"clippy\"]"))
+                .expect("changed command manifest should parse");
+
+        assert_ne!(
+            original.execution_trust_hash(),
+            changed.execution_trust_hash()
+        );
     }
 }
