@@ -13,6 +13,20 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+pub mod classification_reason {
+    pub const SECRET_FILENAME: &str = "secret-filename";
+    pub const SSH_CREDENTIAL_PATH: &str = "ssh-credential-path";
+    pub const PRIVATE_KEY_FILENAME: &str = "private-key-filename";
+    pub const PRIVATE_KEY_CONTENT: &str = "private-key-content";
+    pub const HIGH_ENTROPY_PLACEHOLDER: &str = "high-entropy-placeholder";
+    pub const MANIFEST_OR_GENERATED_EXCLUDE: &str = "manifest-or-generated-exclude";
+    pub const LARGE_FILE_THRESHOLD: &str = "large-file-threshold";
+    pub const MANIFEST_UNTRACKED_NONE: &str = "manifest-untracked-none";
+    pub const SAFE_UNTRACKED: &str = "safe-untracked";
+    pub const MANIFEST_INCLUDE: &str = "manifest-include";
+    pub const MANIFEST_UNTRACKED_EXPLICIT: &str = "manifest-untracked-explicit";
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClassifiedPath {
     pub path: String,
@@ -74,23 +88,28 @@ fn classify_one(
         return excluded(path, reason);
     }
     if path_has_private_key_header(repo_root, path) {
-        return excluded(path, "private-key-content");
+        return excluded(path, classification_reason::PRIVATE_KEY_CONTENT);
+    }
+    if has_high_entropy_secret(repo_root, path) {
+        return excluded(path, classification_reason::HIGH_ENTROPY_PLACEHOLDER);
     }
     if exclude.is_match(path) {
-        return excluded(path, "manifest-or-generated-exclude");
+        return excluded(path, classification_reason::MANIFEST_OR_GENERATED_EXCLUDE);
     }
     if exceeds_threshold(repo_root, path, threshold_bytes) {
-        return excluded(path, "large-file-threshold");
+        return excluded(path, classification_reason::LARGE_FILE_THRESHOLD);
     }
 
     match policy {
-        UntrackedPolicy::None => excluded(path, "manifest-untracked-none"),
-        UntrackedPolicy::Safe | UntrackedPolicy::AllNonignored => included(path, "safe-untracked"),
+        UntrackedPolicy::None => excluded(path, classification_reason::MANIFEST_UNTRACKED_NONE),
+        UntrackedPolicy::Safe | UntrackedPolicy::AllNonignored => {
+            included(path, classification_reason::SAFE_UNTRACKED)
+        }
         UntrackedPolicy::Explicit => {
             if include.is_match(path) {
-                included(path, "manifest-include")
+                included(path, classification_reason::MANIFEST_INCLUDE)
             } else {
-                excluded(path, "manifest-untracked-explicit")
+                excluded(path, classification_reason::MANIFEST_UNTRACKED_EXPLICIT)
             }
         }
     }
@@ -114,6 +133,7 @@ fn default_exclude_patterns() -> impl Iterator<Item = &'static str> {
         "*.sqlite-wal",
         "*.pid",
         "*.sock",
+        "*.lock",
     ]
     .into_iter()
 }
@@ -142,17 +162,17 @@ fn secret_path_reason(path: &str) -> Option<&'static str> {
     let normalized = normalize_repo_path(path).to_ascii_lowercase();
     let basename = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
     if basename == ".env" || basename.starts_with(".env.") {
-        return Some("secret-filename");
+        return Some(classification_reason::SECRET_FILENAME);
     }
     if normalized == ".ssh" || normalized.starts_with(".ssh/") || normalized.contains("/.ssh/") {
-        return Some("ssh-credential-path");
+        return Some(classification_reason::SSH_CREDENTIAL_PATH);
     }
     if basename.ends_with(".pem")
         || basename.ends_with(".key")
         || basename == "id_rsa"
         || basename == "id_ed25519"
     {
-        return Some("private-key-filename");
+        return Some(classification_reason::PRIVATE_KEY_FILENAME);
     }
     None
 }
@@ -173,6 +193,16 @@ fn path_has_private_key_header(repo_root: &Path, path: &str) -> bool {
         || haystack.contains("BEGIN EC PRIVATE KEY")
 }
 
+#[cfg(feature = "entropy-detection")]
+fn has_high_entropy_secret(_repo_root: &Path, _path: &str) -> bool {
+    false
+}
+
+#[cfg(not(feature = "entropy-detection"))]
+fn has_high_entropy_secret(_repo_root: &Path, _path: &str) -> bool {
+    false
+}
+
 fn exceeds_threshold(repo_root: &Path, path: &str, threshold_bytes: u64) -> bool {
     if threshold_bytes == 0 {
         return false;
@@ -188,28 +218,179 @@ fn exceeds_threshold(repo_root: &Path, path: &str, threshold_bytes: u64) -> bool
 mod tests {
     use super::*;
     use crate::manifest::Manifest;
+    use std::fs;
 
-    fn manifest() -> Manifest {
-        Manifest::parse(
+    fn manifest(untracked: &str, include_patterns: &[&str], threshold_mib: u64) -> Manifest {
+        let include = if include_patterns.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"
+[workspace.include]
+patterns = [{}]
+"#,
+                include_patterns
+                    .iter()
+                    .map(|pattern| format!("\"{pattern}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        Manifest::parse(&format!(
             r#"
 schema = 1
 project_id = "12345678"
 name = "demo"
 
 [workspace]
-untracked = "safe"
+untracked = "{untracked}"
 portable_paths = "strict"
-large_file_threshold_mib = 32
+large_file_threshold_mib = {threshold_mib}
+{include}
 "#,
-        )
+        ))
         .unwrap()
+    }
+
+    fn safe_manifest() -> Manifest {
+        manifest("safe", &[], 32)
+    }
+
+    fn decisions(paths: &[&str]) -> Vec<ClassifiedPath> {
+        classify_untracked_paths(Path::new("."), &safe_manifest(), paths).unwrap()
     }
 
     #[test]
     fn excludes_secret_names() {
-        let decisions =
-            classify_untracked_paths(Path::new("."), &manifest(), [".env", "notes.md"]).unwrap();
+        let decisions = decisions(&[".env", ".env.local", "config/.env.production", "notes.md"]);
         assert_eq!(decisions[0].decision, PathDecision::Exclude);
+        assert_eq!(decisions[0].reason, classification_reason::SECRET_FILENAME);
+        assert_eq!(decisions[1].decision, PathDecision::Exclude);
+        assert_eq!(decisions[2].decision, PathDecision::Exclude);
+        assert_eq!(decisions[3].decision, PathDecision::Include);
+    }
+
+    #[test]
+    fn excludes_ssh_paths_and_private_key_filenames() {
+        let decisions = decisions(&[
+            ".ssh/id_rsa",
+            "nested/.ssh/config",
+            "deploy.pem",
+            "deploy.key",
+            "id_ed25519",
+            "src/main.rs",
+        ]);
+
+        for decision in &decisions[..2] {
+            assert_eq!(decision.decision, PathDecision::Exclude);
+            assert_eq!(decision.reason, classification_reason::SSH_CREDENTIAL_PATH);
+        }
+        for decision in &decisions[2..5] {
+            assert_eq!(decision.decision, PathDecision::Exclude);
+            assert_eq!(decision.reason, classification_reason::PRIVATE_KEY_FILENAME);
+        }
+        assert_eq!(decisions[5].decision, PathDecision::Include);
+    }
+
+    #[test]
+    fn excludes_private_key_content() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("notes.txt"),
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n",
+        )
+        .unwrap();
+
+        let decisions =
+            classify_untracked_paths(temp.path(), &safe_manifest(), ["notes.txt"]).unwrap();
+        assert_eq!(decisions[0].decision, PathDecision::Exclude);
+        assert_eq!(
+            decisions[0].reason,
+            classification_reason::PRIVATE_KEY_CONTENT
+        );
+    }
+
+    #[test]
+    fn excludes_generated_and_transient_paths() {
+        let decisions = decisions(&[
+            "node_modules/pkg/index.js",
+            ".venv/bin/python",
+            "target/debug/app",
+            "dist/app.js",
+            ".next/cache/data",
+            "server.sock",
+            "app.pid",
+            "db.lock",
+        ]);
+
+        assert!(decisions.iter().all(|decision| {
+            decision.decision == PathDecision::Exclude
+                && decision.reason == classification_reason::MANIFEST_OR_GENERATED_EXCLUDE
+        }));
+    }
+
+    #[test]
+    fn excludes_files_over_large_file_threshold() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("large.bin"), vec![0_u8; 1024 * 1024 + 1]).unwrap();
+
+        let manifest = manifest("safe", &[], 1);
+        let decisions =
+            classify_untracked_paths(temp.path(), &manifest, ["large.bin", "missing.bin"]).unwrap();
+
+        assert_eq!(decisions[0].decision, PathDecision::Exclude);
+        assert_eq!(
+            decisions[0].reason,
+            classification_reason::LARGE_FILE_THRESHOLD
+        );
         assert_eq!(decisions[1].decision, PathDecision::Include);
+    }
+
+    #[test]
+    fn applies_untracked_none_policy() {
+        let manifest = manifest("none", &[], 32);
+        let decisions = classify_untracked_paths(Path::new("."), &manifest, ["notes.md"]).unwrap();
+
+        assert_eq!(decisions[0].decision, PathDecision::Exclude);
+        assert_eq!(
+            decisions[0].reason,
+            classification_reason::MANIFEST_UNTRACKED_NONE
+        );
+    }
+
+    #[test]
+    fn applies_untracked_safe_policy() {
+        let decisions = decisions(&["notes.md"]);
+
+        assert_eq!(decisions[0].decision, PathDecision::Include);
+        assert_eq!(decisions[0].reason, classification_reason::SAFE_UNTRACKED);
+    }
+
+    #[test]
+    fn applies_untracked_all_nonignored_policy() {
+        let manifest = manifest("all-nonignored", &[], 32);
+        let decisions =
+            classify_untracked_paths(Path::new("."), &manifest, ["notes.md", ".env"]).unwrap();
+
+        assert_eq!(decisions[0].decision, PathDecision::Include);
+        assert_eq!(decisions[0].reason, classification_reason::SAFE_UNTRACKED);
+        assert_eq!(decisions[1].decision, PathDecision::Exclude);
+        assert_eq!(decisions[1].reason, classification_reason::SECRET_FILENAME);
+    }
+
+    #[test]
+    fn applies_untracked_explicit_policy() {
+        let manifest = manifest("explicit", &["notes/**"], 32);
+        let decisions =
+            classify_untracked_paths(Path::new("."), &manifest, ["notes/todo.md", "scratch.txt"])
+                .unwrap();
+
+        assert_eq!(decisions[0].decision, PathDecision::Include);
+        assert_eq!(decisions[0].reason, classification_reason::MANIFEST_INCLUDE);
+        assert_eq!(decisions[1].decision, PathDecision::Exclude);
+        assert_eq!(
+            decisions[1].reason,
+            classification_reason::MANIFEST_UNTRACKED_EXPLICIT
+        );
     }
 }

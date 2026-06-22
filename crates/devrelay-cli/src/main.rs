@@ -106,6 +106,24 @@ fn main() -> anyhow::Result<()> {
                     .count();
                 let excluded = classified.len() - included;
                 println!("  untracked policy: {included} included, {excluded} excluded");
+                if included > 0 {
+                    println!("  included untracked:");
+                    for item in classified
+                        .iter()
+                        .filter(|item| item.decision == PathDecision::Include)
+                    {
+                        println!("    + {} ({})", item.path, item.reason);
+                    }
+                }
+                if excluded > 0 {
+                    println!("  excluded untracked:");
+                    for item in classified
+                        .iter()
+                        .filter(|item| item.decision == PathDecision::Exclude)
+                    {
+                        println!("    - {} ({})", item.path, item.reason);
+                    }
+                }
             }
         }
         Command::Checkpoint {

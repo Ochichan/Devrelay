@@ -176,26 +176,26 @@ Conventions:
 
 ### M0.6 Secret And Untracked Policy
 
-- [ ] Add default hard-block for `.env`.
-- [ ] Add default hard-block for `.env.*`.
-- [ ] Add default hard-block for `.ssh/**`.
-- [ ] Add default hard-block for private key extensions.
-- [ ] Add private key header detection tests.
-- [ ] Add high-entropy detection placeholder behind disabled feature.
-- [ ] Add generated directory exclude for `node_modules/**`.
-- [ ] Add generated directory exclude for `.venv/**`.
-- [ ] Add generated directory exclude for `target/**`.
-- [ ] Add generated directory exclude for `dist/**`.
-- [ ] Add generated directory exclude for `.next/**`.
-- [ ] Add socket/PID/lock file exclude tests.
-- [ ] Add large file threshold exclude test.
-- [ ] Add `untracked = none` test.
-- [ ] Add `untracked = safe` test.
-- [ ] Add `untracked = all-nonignored` test.
-- [ ] Add `untracked = explicit` include-pattern test.
-- [ ] Add classification reason codes.
-- [ ] Add CLI display for included/excluded untracked paths.
-- [ ] Add JSON output for untracked classification.
+- [x] Add default hard-block for `.env`.
+- [x] Add default hard-block for `.env.*`.
+- [x] Add default hard-block for `.ssh/**`.
+- [x] Add default hard-block for private key extensions.
+- [x] Add private key header detection tests.
+- [x] Add high-entropy detection placeholder behind disabled feature.
+- [x] Add generated directory exclude for `node_modules/**`.
+- [x] Add generated directory exclude for `.venv/**`.
+- [x] Add generated directory exclude for `target/**`.
+- [x] Add generated directory exclude for `dist/**`.
+- [x] Add generated directory exclude for `.next/**`.
+- [x] Add socket/PID/lock file exclude tests.
+- [x] Add large file threshold exclude test.
+- [x] Add `untracked = none` test.
+- [x] Add `untracked = safe` test.
+- [x] Add `untracked = all-nonignored` test.
+- [x] Add `untracked = explicit` include-pattern test.
+- [x] Add classification reason codes.
+- [x] Add CLI display for included/excluded untracked paths.
+- [x] Add JSON output for untracked classification.
 
 ### M0.7 Synthetic Snapshot Creation
 

@@ -49,7 +49,7 @@ pub use manifest::{
     Manifest, PatternConfig, PortablePathsPolicy, RestoreTerminals, SecretConfig, SecretMode,
     SyncConfig, SyncMode, TaskCacheMode, TaskConfig, TaskSandbox, UntrackedPolicy, WorkspaceConfig,
 };
-pub use policy::{ClassifiedPath, PathDecision, classify_untracked_paths};
+pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
 pub use snapshot::{
     apply_snapshot, create_snapshot, read_snapshot_file, verify_snapshot, write_snapshot_file,
 };
