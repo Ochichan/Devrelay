@@ -4,18 +4,25 @@
 //! state work to `devrelay-core`, and renders human or JSON output for explicit
 //! local commands.
 
-use anyhow::Context;
+use anyhow::{Context, Error};
 use clap::{Parser, Subcommand};
 use devrelay_core::{
-    GitRepo, Manifest, PathDecision, apply_snapshot, classify_untracked_paths, create_snapshot,
-    plan_apply_snapshot, read_snapshot_file, write_snapshot_file,
+    DevRelayError, GitRepo, Manifest, PathDecision, apply_snapshot, classify_untracked_paths,
+    create_snapshot, plan_apply_snapshot, read_snapshot_file, write_snapshot_file,
 };
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 #[derive(Debug, Parser)]
 #[command(name = "devrelay")]
 #[command(about = "DevRelay personal development fabric CLI")]
+#[command(version)]
+#[command(
+    after_help = "Examples:\n  devrelay manifest check devrelay_spec_bundle/devrelay.toml\n  devrelay status --repo . --manifest devrelay.toml --json\n  devrelay checkpoint --repo . --manifest devrelay.toml --json\n  devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --dry-run"
+)]
 struct Cli {
+    #[arg(long, global = true)]
+    json_errors: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -60,20 +67,47 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum ManifestCommand {
-    Check { path: PathBuf },
+    Check {
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> ExitCode {
     let cli = Cli::parse();
+    let json_errors = cli.json_errors;
+    match run(cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            render_error(&err, json_errors);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Command::Manifest { command } => match command {
-            ManifestCommand::Check { path } => {
+            ManifestCommand::Check { path, json } => {
                 let manifest = Manifest::load(&path)
                     .with_context(|| format!("failed to load {}", path.display()))?;
-                println!(
-                    "ok: {} ({}) schema {}",
-                    manifest.name, manifest.project_id, manifest.schema
-                );
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "ok": true,
+                            "name": manifest.name,
+                            "project_id": manifest.project_id,
+                            "schema": manifest.schema,
+                        }))?
+                    );
+                } else {
+                    println!(
+                        "ok: {} ({}) schema {}",
+                        manifest.name, manifest.project_id, manifest.schema
+                    );
+                }
             }
         },
         Command::Status {
@@ -206,4 +240,33 @@ fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn render_error(err: &Error, json: bool) {
+    let code = error_code(err);
+    if json {
+        let rendered = serde_json::json!({
+            "error": {
+                "code": code,
+                "message": err.to_string(),
+            }
+        });
+        eprintln!(
+            "{}",
+            serde_json::to_string_pretty(&rendered).unwrap_or_else(|_| {
+                format!(r#"{{"error":{{"code":"{code}","message":"{}"}}}}"#, err)
+            })
+        );
+    } else {
+        eprintln!("error[{code}]: {err}");
+    }
+}
+
+fn error_code(err: &Error) -> &'static str {
+    for cause in err.chain() {
+        if let Some(devrelay) = cause.downcast_ref::<DevRelayError>() {
+            return devrelay.code();
+        }
+    }
+    "DR-CLI-ERROR"
 }

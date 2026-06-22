@@ -263,17 +263,17 @@ Conventions:
 
 ### M0.10 CLI Polish
 
-- [ ] Add `devrelay --version`.
-- [ ] Add subcommand help examples.
-- [ ] Add `manifest check --json`.
-- [ ] Add `status --json` stable schema.
-- [ ] Add `checkpoint --json` stable schema.
-- [ ] Add `apply --json` stable schema.
-- [ ] Add pretty error output for terminal users.
-- [ ] Add JSON error output for scripts.
-- [ ] Add nonzero exit code conventions.
-- [ ] Add CLI snapshot file path default documentation.
-- [ ] Add CLI integration tests with `assert_cmd` or equivalent.
+- [x] Add `devrelay --version`.
+- [x] Add subcommand help examples.
+- [x] Add `manifest check --json`.
+- [x] Add `status --json` stable schema.
+- [x] Add `checkpoint --json` stable schema.
+- [x] Add `apply --json` stable schema.
+- [x] Add pretty error output for terminal users.
+- [x] Add JSON error output for scripts.
+- [x] Add nonzero exit code conventions.
+- [x] Add CLI snapshot file path default documentation.
+- [x] Add CLI integration tests with `assert_cmd` or equivalent.
 
 ### M0 Exit Gate
 

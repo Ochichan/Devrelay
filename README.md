@@ -34,6 +34,9 @@ and `just test`.
 project directory is only the DevRelay implementation workspace unless you run
 `git init`.
 
+See [docs/cli.md](docs/cli.md) for CLI examples, JSON output, snapshot file
+defaults, and exit code conventions.
+
 ## Current Scope
 
 The first milestone intentionally excludes background watchers, LAN discovery,
