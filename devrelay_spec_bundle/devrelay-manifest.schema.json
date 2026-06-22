@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devrelay.local/schemas/devrelay-manifest-v1.json",
+  "title": "DevRelay Project Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "project_id", "name", "workspace"],
+  "properties": {
+    "schema": {"const": 1},
+    "project_id": {
+      "type": "string",
+      "minLength": 8,
+      "description": "Stable project identifier. UUIDv7 is recommended."
+    },
+    "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "workspace": {"$ref": "#/$defs/workspace"},
+    "environment": {"$ref": "#/$defs/environment"},
+    "secrets": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/secret"}
+    },
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/task"}
+    },
+    "sync": {"$ref": "#/$defs/sync"},
+    "handoff": {"$ref": "#/$defs/handoff"}
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "command": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string"}
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["untracked", "portable_paths"],
+      "properties": {
+        "untracked": {
+          "enum": ["none", "safe", "all-nonignored", "explicit"]
+        },
+        "portable_paths": {"enum": ["strict", "warn", "off"]},
+        "large_file_threshold_mib": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 102400,
+          "default": 32
+        },
+        "preserve_editor_context": {"type": "boolean", "default": true},
+        "preserve_unsaved_buffers": {"type": "boolean", "default": true},
+        "exclude": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "patterns": {"$ref": "#/$defs/stringArray"}
+          }
+        },
+        "include": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "patterns": {"$ref": "#/$defs/stringArray"}
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profiles": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/environmentProfile"}
+        }
+      }
+    },
+    "environmentProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "targets", "command"],
+      "properties": {
+        "kind": {"enum": ["nix", "devcontainer", "script", "manual"]},
+        "targets": {"$ref": "#/$defs/stringArray"},
+        "command": {"$ref": "#/$defs/command"},
+        "fingerprint_files": {"$ref": "#/$defs/stringArray"},
+        "healthcheck": {"$ref": "#/$defs/command"},
+        "working_directory": {"type": "string"},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400}
+      }
+    },
+    "secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target"],
+      "properties": {
+        "target": {"type": "string", "minLength": 1},
+        "required": {"type": "boolean", "default": true},
+        "mode": {"enum": ["file", "environment"], "default": "file"},
+        "environment_variable": {"type": "string"}
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "command"],
+      "properties": {
+        "profile": {"type": "string", "minLength": 1},
+        "command": {"$ref": "#/$defs/command"},
+        "platforms": {"$ref": "#/$defs/stringArray"},
+        "cpu": {"type": "integer", "minimum": 1, "maximum": 1024},
+        "memory_mib": {"type": "integer", "minimum": 64},
+        "disk_mib": {"type": "integer", "minimum": 0},
+        "interactive": {"type": "boolean", "default": false},
+        "cache": {"enum": ["off", "read", "write", "read-write"]},
+        "outputs": {"$ref": "#/$defs/stringArray"},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 604800},
+        "features": {"$ref": "#/$defs/stringArray"},
+        "sandbox": {"enum": ["host", "sandbox", "container", "vm"]}
+      }
+    },
+    "sync": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["adaptive", "instant", "eco", "custom"]},
+        "checkpoint_quiet_ms": {"type": "integer", "minimum": 100, "maximum": 600000},
+        "publish_quiet_ms": {"type": "integer", "minimum": 100, "maximum": 600000},
+        "max_publish_interval_s": {"type": "integer", "minimum": 1, "maximum": 86400},
+        "background_bandwidth_mib_s": {"type": "number", "minimum": 0},
+        "device_cache_quota_mib": {"type": "integer", "minimum": 128}
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "restore_editor": {"type": "boolean", "default": true},
+        "restore_terminals": {"enum": ["none", "layout-only", "approved-tasks"]},
+        "open_editor": {"type": "boolean", "default": true},
+        "target_dirty_policy": {
+          "enum": ["snapshot-and-fork", "new-workspace", "block"],
+          "default": "snapshot-and-fork"
+        }
+      }
+    }
+  }
+}

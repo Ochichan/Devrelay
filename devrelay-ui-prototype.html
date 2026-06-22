@@ -1,0 +1,1562 @@
+<!doctype html>
+<html lang="ko" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="description" content="DevRelay personal development fabric UI prototype" />
+  <title>DevRelay — Personal Development Fabric</title>
+  <style>
+    :root {
+      --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+      --font-mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+      --radius-xs: 7px;
+      --radius-sm: 10px;
+      --radius-md: 14px;
+      --radius-lg: 18px;
+      --radius-xl: 24px;
+      --sidebar-w: 238px;
+      --topbar-h: 64px;
+      --ease: cubic-bezier(.2,.8,.2,1);
+      --shadow-1: 0 1px 0 rgba(255,255,255,.025) inset, 0 18px 45px rgba(0,0,0,.16);
+      --shadow-2: 0 22px 75px rgba(0,0,0,.28), 0 1px 0 rgba(255,255,255,.06) inset;
+    }
+
+    html[data-theme="dark"] {
+      --bg: oklch(15.5% .016 275);
+      --bg-elevated: oklch(18.2% .018 275);
+      --surface: oklch(20.5% .018 275 / .78);
+      --surface-solid: oklch(20.5% .018 275);
+      --surface-2: oklch(23.5% .020 275 / .88);
+      --surface-3: oklch(26.2% .021 275);
+      --surface-hover: oklch(27% .024 275 / .78);
+      --text: oklch(96% .008 275);
+      --text-2: oklch(80% .018 275);
+      --text-3: oklch(65% .020 275);
+      --text-4: oklch(51% .018 275);
+      --border: oklch(100% 0 0 / .085);
+      --border-strong: oklch(100% 0 0 / .14);
+      --accent: oklch(78% .154 163);
+      --accent-strong: oklch(69% .166 163);
+      --accent-soft: oklch(78% .154 163 / .14);
+      --accent-soft-2: oklch(78% .154 163 / .08);
+      --violet: oklch(72% .17 292);
+      --violet-soft: oklch(72% .17 292 / .14);
+      --blue: oklch(74% .135 244);
+      --blue-soft: oklch(74% .135 244 / .13);
+      --amber: oklch(82% .145 80);
+      --amber-soft: oklch(82% .145 80 / .14);
+      --red: oklch(71% .18 24);
+      --red-soft: oklch(71% .18 24 / .14);
+      --grid: rgba(255,255,255,.027);
+      --glass: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.012));
+    }
+
+    html[data-theme="light"] {
+      --bg: oklch(97.5% .006 275);
+      --bg-elevated: oklch(99% .003 275);
+      --surface: oklch(100% 0 0 / .76);
+      --surface-solid: oklch(100% 0 0);
+      --surface-2: oklch(98% .007 275 / .93);
+      --surface-3: oklch(94.5% .010 275);
+      --surface-hover: oklch(93.5% .014 275 / .74);
+      --text: oklch(22% .018 275);
+      --text-2: oklch(38% .020 275);
+      --text-3: oklch(51% .020 275);
+      --text-4: oklch(66% .018 275);
+      --border: oklch(20% .018 275 / .10);
+      --border-strong: oklch(20% .018 275 / .16);
+      --accent: oklch(58% .155 163);
+      --accent-strong: oklch(51% .16 163);
+      --accent-soft: oklch(58% .155 163 / .12);
+      --accent-soft-2: oklch(58% .155 163 / .07);
+      --violet: oklch(58% .17 292);
+      --violet-soft: oklch(58% .17 292 / .11);
+      --blue: oklch(58% .145 244);
+      --blue-soft: oklch(58% .145 244 / .11);
+      --amber: oklch(63% .145 75);
+      --amber-soft: oklch(63% .145 75 / .12);
+      --red: oklch(58% .18 24);
+      --red-soft: oklch(58% .18 24 / .11);
+      --grid: rgba(20,25,40,.035);
+      --glass: linear-gradient(180deg, rgba(255,255,255,.72), rgba(255,255,255,.46));
+      --shadow-1: 0 1px 0 rgba(255,255,255,.9) inset, 0 18px 45px rgba(30,40,70,.08);
+      --shadow-2: 0 25px 70px rgba(30,40,70,.16), 0 1px 0 rgba(255,255,255,.95) inset;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-height: 100%; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--bg);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.45;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    a { color: inherit; text-decoration: none; }
+    svg { display: block; }
+    [hidden] { display: none !important; }
+
+    ::selection { background: var(--accent-soft); color: var(--text); }
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .icon { width: 16px; height: 16px; flex: 0 0 auto; stroke-width: 1.8; }
+    .icon-lg { width: 20px; height: 20px; }
+    .icon-xl { width: 24px; height: 24px; }
+    .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+    .tabular { font-variant-numeric: tabular-nums; }
+    .muted { color: var(--text-3); }
+    .quiet { color: var(--text-4); }
+
+    .ambient {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      pointer-events: none;
+      background:
+        radial-gradient(900px 540px at 84% -10%, color-mix(in oklab, var(--violet) 12%, transparent), transparent 68%),
+        radial-gradient(680px 520px at 18% 105%, color-mix(in oklab, var(--accent) 10%, transparent), transparent 72%),
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: auto, auto, 32px 32px, 32px 32px;
+      mask-image: linear-gradient(to bottom, black 0%, rgba(0,0,0,.75) 58%, transparent 100%);
+    }
+
+    .noise {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      opacity: .025;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.65'/%3E%3C/svg%3E");
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+      height: 100vh;
+      min-height: 620px;
+    }
+
+    .sidebar {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      padding: 14px 12px 12px;
+      border-right: 1px solid var(--border);
+      background: color-mix(in oklab, var(--bg-elevated) 82%, transparent);
+      backdrop-filter: blur(18px) saturate(120%);
+    }
+
+    .brand {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 8px;
+      margin-bottom: 8px;
+    }
+
+    .brand-mark {
+      position: relative;
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      display: grid;
+      place-items: center;
+      color: oklch(18% .025 270);
+      background: linear-gradient(145deg, color-mix(in oklab, var(--accent) 88%, white), var(--accent-strong));
+      box-shadow: 0 8px 24px color-mix(in oklab, var(--accent) 22%, transparent), 0 1px 0 rgba(255,255,255,.52) inset;
+    }
+
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      width: 5px;
+      height: 5px;
+      right: 4px;
+      top: 4px;
+      border-radius: 99px;
+      background: white;
+      opacity: .82;
+    }
+
+    .brand-copy { min-width: 0; }
+    .brand-name { font-size: 14px; font-weight: 720; letter-spacing: -.015em; }
+    .brand-meta { margin-top: -1px; font-size: 10.5px; color: var(--text-4); letter-spacing: .02em; }
+
+    .fabric-switch {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 40px;
+      margin: 0 4px 12px;
+      padding: 8px 9px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--glass), var(--surface);
+      cursor: pointer;
+      transition: border-color .16s var(--ease), background .16s var(--ease);
+    }
+    .fabric-switch:hover { border-color: var(--border-strong); background-color: var(--surface-hover); }
+    .fabric-left { display: flex; gap: 8px; align-items: center; min-width: 0; }
+    .fabric-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+      box-shadow: 0 0 0 4px var(--accent-soft);
+    }
+    .fabric-title { font-size: 12px; font-weight: 620; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fabric-sub { font-size: 10.5px; color: var(--text-4); }
+
+    .nav-group { margin: 0 2px 14px; }
+    .nav-label {
+      padding: 0 8px 6px;
+      color: var(--text-4);
+      font-size: 10px;
+      font-weight: 680;
+      letter-spacing: .075em;
+      text-transform: uppercase;
+    }
+    .nav-list { display: grid; gap: 2px; }
+    .nav-item {
+      position: relative;
+      width: 100%;
+      min-height: 37px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 10px;
+      color: var(--text-3);
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      transition: color .14s var(--ease), background .14s var(--ease), transform .14s var(--ease);
+    }
+    .nav-item:hover { color: var(--text); background: var(--accent-soft-2); }
+    .nav-item:active { transform: translateY(1px); }
+    .nav-item.active {
+      color: var(--text);
+      background: linear-gradient(90deg, var(--accent-soft), color-mix(in oklab, var(--accent-soft) 20%, transparent));
+    }
+    .nav-item.active::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      border-radius: 99px;
+      background: var(--accent);
+      box-shadow: 0 0 12px color-mix(in oklab, var(--accent) 45%, transparent);
+    }
+    .nav-text { flex: 1; font-size: 12.5px; font-weight: 560; }
+    .nav-count {
+      min-width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      padding: 0 5px;
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      color: var(--text-3);
+      background: color-mix(in oklab, var(--surface-2) 75%, transparent);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .sidebar-spacer { flex: 1; min-height: 14px; }
+    .active-mini {
+      margin: 0 4px 10px;
+      padding: 11px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--glass), var(--surface);
+      box-shadow: var(--shadow-1);
+    }
+    .active-mini-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .active-mini-title { font-size: 11.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .live-pulse { display: flex; align-items: center; gap: 6px; font-size: 9.5px; color: var(--accent); font-weight: 680; text-transform: uppercase; letter-spacing: .06em; }
+    .pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); position: relative; }
+    .pulse-dot::after { content: ""; position: absolute; inset: -4px; border: 1px solid var(--accent); border-radius: inherit; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 20% { transform: scale(.55); opacity: .8; } 70%, 100% { transform: scale(1.55); opacity: 0; } }
+    .active-mini-branch { margin-top: 4px; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .active-mini-row { display: flex; align-items: center; gap: 6px; margin-top: 9px; color: var(--text-4); font-size: 10.5px; }
+    .mini-line { height: 3px; flex: 1; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
+    .mini-line > span { display: block; width: 74%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--blue)); }
+
+    .anchor-status {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 8px 4px;
+      color: var(--text-3);
+    }
+    .avatar {
+      width: 27px; height: 27px; border-radius: 9px;
+      display: grid; place-items: center;
+      background: linear-gradient(145deg, var(--violet-soft), var(--accent-soft));
+      border: 1px solid var(--border-strong);
+      color: var(--text);
+      font-size: 10px; font-weight: 750;
+    }
+    .anchor-copy { min-width: 0; flex: 1; }
+    .anchor-title { color: var(--text-2); font-size: 10.5px; font-weight: 600; }
+    .anchor-sub { color: var(--text-4); font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .workspace { min-width: 0; display: grid; grid-template-rows: var(--topbar-h) minmax(0, 1fr); }
+    .topbar {
+      position: relative;
+      z-index: 9;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in oklab, var(--bg) 73%, transparent);
+      backdrop-filter: blur(22px) saturate(130%);
+    }
+    .topbar-context { min-width: 0; display: flex; align-items: center; gap: 8px; }
+    .topbar-kicker { color: var(--text-4); font-size: 11px; }
+    .topbar-sep { color: var(--text-4); }
+    .topbar-title { font-size: 12px; font-weight: 650; white-space: nowrap; }
+    .topbar-spacer { flex: 1; }
+
+    .command-trigger {
+      width: min(430px, 34vw);
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 8px 0 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--glass), var(--surface);
+      color: var(--text-3);
+      cursor: pointer;
+      transition: border-color .14s var(--ease), background .14s var(--ease);
+    }
+    .command-trigger:hover { border-color: var(--border-strong); color: var(--text-2); }
+    .command-trigger span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11.5px; }
+    .command-trigger kbd { margin-left: auto; }
+
+    kbd {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      height: 20px;
+      padding: 0 5px;
+      border: 1px solid var(--border-strong);
+      border-bottom-color: color-mix(in oklab, var(--border-strong) 140%, black);
+      border-radius: 6px;
+      color: var(--text-3);
+      background: color-mix(in oklab, var(--surface-2) 88%, transparent);
+      font-family: var(--font-sans);
+      font-size: 9.5px;
+      line-height: 1;
+      box-shadow: 0 1px 0 rgba(255,255,255,.035) inset;
+    }
+
+    .top-actions { display: flex; align-items: center; gap: 7px; }
+    .health-pill {
+      height: 30px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 10px;
+      border: 1px solid color-mix(in oklab, var(--accent) 22%, var(--border));
+      border-radius: 99px;
+      color: var(--text-2);
+      background: var(--accent-soft-2);
+      font-size: 10.5px;
+      white-space: nowrap;
+    }
+    .health-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px color-mix(in oklab, var(--accent) 52%, transparent); }
+    .icon-btn {
+      width: 34px; height: 34px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      display: grid; place-items: center;
+      color: var(--text-3);
+      background: transparent;
+      cursor: pointer;
+      transition: color .14s var(--ease), background .14s var(--ease), border-color .14s var(--ease);
+    }
+    .icon-btn:hover { color: var(--text); background: var(--surface); border-color: var(--border); }
+    .profile-btn { width: 30px; height: 30px; border-radius: 10px; border: 1px solid var(--border-strong); background: linear-gradient(145deg, var(--violet-soft), var(--blue-soft)); color: var(--text); font-weight: 760; font-size: 10px; cursor: pointer; }
+
+    .main-scroll { overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
+    .main-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+    .main-scroll::-webkit-scrollbar-thumb { background: var(--surface-3); border: 3px solid transparent; background-clip: padding-box; border-radius: 99px; }
+    .view {
+      width: min(1440px, 100%);
+      margin: 0 auto;
+      padding: 30px 32px 46px;
+      animation: view-in .28s var(--ease) both;
+    }
+    @keyframes view-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin: 0 0 20px; }
+    .eyebrow { display: flex; align-items: center; gap: 7px; color: var(--text-3); font-size: 10.5px; font-weight: 650; letter-spacing: .055em; text-transform: uppercase; }
+    .eyebrow .signal { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+    .page-title { margin: 5px 0 0; font-size: clamp(24px, 2.4vw, 34px); line-height: 1.12; letter-spacing: -.035em; font-weight: 730; }
+    .page-subtitle { margin: 7px 0 0; color: var(--text-3); max-width: 660px; font-size: 12.5px; }
+    .page-actions { display: flex; gap: 8px; align-items: center; }
+
+    .button {
+      min-height: 36px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 13px;
+      color: var(--text-2);
+      background: var(--glass), var(--surface);
+      cursor: pointer;
+      font-size: 11.5px;
+      font-weight: 630;
+      letter-spacing: -.005em;
+      transition: transform .14s var(--ease), border-color .14s var(--ease), background .14s var(--ease), color .14s var(--ease), box-shadow .14s var(--ease);
+    }
+    .button:hover { color: var(--text); border-color: var(--border-strong); background-color: var(--surface-hover); }
+    .button:active { transform: translateY(1px) scale(.995); }
+    .button.primary {
+      color: oklch(17% .025 270);
+      border-color: color-mix(in oklab, var(--accent) 75%, white 10%);
+      background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 92%, white), var(--accent-strong));
+      box-shadow: 0 9px 28px color-mix(in oklab, var(--accent) 20%, transparent), 0 1px 0 rgba(255,255,255,.5) inset;
+    }
+    .button.primary:hover { color: oklch(12% .025 270); box-shadow: 0 12px 34px color-mix(in oklab, var(--accent) 26%, transparent), 0 1px 0 rgba(255,255,255,.62) inset; }
+    .button.ghost { background: transparent; border-color: transparent; }
+    .button.ghost:hover { background: var(--surface); border-color: var(--border); }
+    .button.small { min-height: 30px; padding: 0 10px; font-size: 10.5px; }
+    .button.danger { color: var(--red); background: var(--red-soft); border-color: color-mix(in oklab, var(--red) 20%, var(--border)); }
+    .button:disabled { opacity: .52; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    .card {
+      position: relative;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--glass), var(--surface);
+      box-shadow: var(--shadow-1);
+      overflow: hidden;
+    }
+    .card::after {
+      content: "";
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: linear-gradient(125deg, rgba(255,255,255,.025), transparent 22%, transparent 78%, rgba(255,255,255,.018));
+    }
+    .card-header { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 16px 12px; }
+    .card-title { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 680; letter-spacing: -.01em; }
+    .card-sub { color: var(--text-4); font-size: 10.5px; margin-top: 2px; }
+    .card-body { position: relative; z-index: 1; padding: 0 16px 16px; }
+    .card-link { display: flex; align-items: center; gap: 4px; border: 0; padding: 0; color: var(--text-3); background: transparent; cursor: pointer; font-size: 10.5px; }
+    .card-link:hover { color: var(--text); }
+
+    .continue-hero {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(300px, .78fr);
+      min-height: 312px;
+      margin-bottom: 16px;
+      border-color: color-mix(in oklab, var(--accent) 19%, var(--border));
+      background:
+        radial-gradient(500px 250px at 12% 10%, var(--accent-soft), transparent 68%),
+        radial-gradient(420px 240px at 96% 100%, var(--violet-soft), transparent 75%),
+        var(--glass), var(--surface);
+    }
+    .continue-hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background-image: radial-gradient(circle at center, var(--border-strong) 1px, transparent 1.1px);
+      background-size: 18px 18px;
+      opacity: .12;
+      mask-image: linear-gradient(90deg, black, transparent 72%);
+    }
+    .hero-main { position: relative; z-index: 2; padding: 27px 28px 24px; display: flex; flex-direction: column; min-width: 0; }
+    .hero-status-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .status-chip {
+      min-height: 25px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px;
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      color: var(--text-3);
+      background: color-mix(in oklab, var(--surface-2) 72%, transparent);
+      font-size: 9.8px;
+      font-weight: 620;
+      white-space: nowrap;
+    }
+    .status-chip.success { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 25%, var(--border)); background: var(--accent-soft-2); }
+    .status-chip.attention { color: var(--amber); border-color: color-mix(in oklab, var(--amber) 24%, var(--border)); background: var(--amber-soft); }
+    .status-chip.info { color: var(--blue); border-color: color-mix(in oklab, var(--blue) 24%, var(--border)); background: var(--blue-soft); }
+    .status-chip.violet { color: var(--violet); border-color: color-mix(in oklab, var(--violet) 24%, var(--border)); background: var(--violet-soft); }
+    .chip-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+    .project-lockup { margin-top: 21px; min-width: 0; }
+    .project-overline { color: var(--text-3); font-size: 11px; font-weight: 590; }
+    .project-title {
+      margin: 4px 0 0;
+      font-size: clamp(27px, 3vw, 40px);
+      line-height: 1.05;
+      font-weight: 760;
+      letter-spacing: -.047em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .project-branch { display: flex; align-items: center; gap: 7px; margin-top: 9px; color: var(--text-3); font-family: var(--font-mono); font-size: 11px; min-width: 0; }
+    .project-branch span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hero-description { max-width: 670px; margin: 15px 0 0; color: var(--text-2); font-size: 12.5px; }
+    .hero-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 22px; }
+    .hero-actions .button.primary { min-height: 42px; padding: 0 17px; font-size: 12.5px; }
+    .hero-footnote { display: flex; align-items: center; gap: 6px; margin-top: 11px; color: var(--text-4); font-size: 10px; }
+
+    .hero-route {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      padding: 20px 20px 19px;
+      border-left: 1px solid var(--border);
+      background: color-mix(in oklab, var(--surface-2) 50%, transparent);
+      backdrop-filter: blur(12px);
+    }
+    .route-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .route-title { font-size: 11px; font-weight: 680; }
+    .route-mode { color: var(--accent); font-family: var(--font-mono); font-size: 9.5px; }
+    .route-map { flex: 1; display: grid; align-content: center; gap: 10px; margin: 12px 0; }
+    .route-node {
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: color-mix(in oklab, var(--surface) 82%, transparent);
+    }
+    .route-node.active { border-color: color-mix(in oklab, var(--accent) 27%, var(--border)); background: linear-gradient(90deg, var(--accent-soft-2), transparent); }
+    .device-glyph {
+      width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center;
+      color: var(--text-2); border: 1px solid var(--border); background: var(--surface-2);
+    }
+    .device-glyph.mac { color: var(--violet); background: var(--violet-soft); }
+    .device-glyph.linux { color: var(--accent); background: var(--accent-soft); }
+    .device-glyph.win { color: var(--blue); background: var(--blue-soft); }
+    .route-node-title { font-size: 11px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .route-node-sub { margin-top: 2px; color: var(--text-4); font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .route-badge { color: var(--text-3); font-size: 9.5px; }
+    .route-line { height: 23px; display: grid; place-items: center; position: relative; }
+    .route-line::before { content: ""; width: 1px; height: 100%; background: linear-gradient(var(--violet), var(--accent)); opacity: .44; }
+    .route-line span { position: absolute; padding: 2px 7px; border: 1px solid var(--border); border-radius: 99px; color: var(--text-4); background: var(--surface-solid); font-family: var(--font-mono); font-size: 8.5px; }
+    .route-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .route-stat { padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: color-mix(in oklab, var(--surface) 72%, transparent); }
+    .route-stat strong { display: block; font-family: var(--font-mono); font-size: 11px; font-weight: 650; }
+    .route-stat span { color: var(--text-4); font-size: 8.8px; }
+
+    .bento {
+      display: grid;
+      grid-template-columns: minmax(0, 1.32fr) minmax(320px, .78fr);
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .bento-left { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .82fr); gap: 16px; }
+    .bento-right { display: grid; gap: 16px; }
+
+    .device-list { display: grid; gap: 6px; }
+    .device-row {
+      display: grid;
+      grid-template-columns: minmax(110px, 1.2fr) minmax(62px, .55fr) minmax(62px, .55fr) auto;
+      align-items: center;
+      gap: 8px;
+      min-height: 58px;
+      padding: 8px 9px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      transition: background .14s var(--ease), border-color .14s var(--ease);
+    }
+    .device-row:hover { border-color: var(--border); background: var(--accent-soft-2); }
+    .device-main { min-width: 0; display: flex; align-items: center; gap: 10px; }
+    .device-main .device-glyph { width: 32px; height: 32px; border-radius: 10px; }
+    .device-name { font-size: 11px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .device-meta { color: var(--text-4); font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+    .meter-stack { min-width: 0; }
+    .meter-label { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 5px; color: var(--text-4); font-size: 9px; }
+    .meter-label strong { color: var(--text-3); font-family: var(--font-mono); font-weight: 560; }
+    .meter { height: 4px; border-radius: 99px; overflow: hidden; background: var(--surface-3); }
+    .meter > span { display: block; width: var(--value, 50%); height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--blue)); }
+    .meter.warm > span { background: linear-gradient(90deg, var(--violet), var(--accent)); }
+    .device-state { justify-self: end; }
+
+    .scheduler {
+      min-height: 100%;
+      background:
+        radial-gradient(260px 170px at 105% -5%, var(--violet-soft), transparent 72%),
+        var(--glass), var(--surface);
+    }
+    .scheduler-score { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 4px 0 15px; border-bottom: 1px solid var(--border); }
+    .score-number { font-family: var(--font-mono); font-size: 31px; line-height: 1; font-weight: 670; letter-spacing: -.04em; }
+    .score-number small { font-size: 12px; color: var(--text-4); font-weight: 500; }
+    .score-caption { color: var(--text-3); font-size: 10px; margin-top: 5px; }
+    .recommend-badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-size: 9.5px; font-weight: 700; }
+    .reason-list { display: grid; gap: 8px; margin: 14px 0; }
+    .reason { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 10.5px; }
+    .reason .check { width: 17px; height: 17px; border-radius: 6px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+    .estimate { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: color-mix(in oklab, var(--surface-2) 66%, transparent); }
+    .estimate strong { display: block; font-family: var(--font-mono); font-size: 11.5px; }
+    .estimate span { color: var(--text-4); font-size: 9px; }
+    .estimate-arrow { color: var(--text-4); }
+    .scheduler-actions { display: flex; gap: 7px; margin-top: 12px; }
+    .scheduler-actions .button { flex: 1; }
+
+    .spark-card .card-body { padding-top: 4px; }
+    .spark-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .spark-value { font-family: var(--font-mono); font-size: 23px; line-height: 1.1; font-weight: 650; }
+    .spark-note { margin-top: 4px; color: var(--text-4); font-size: 9.5px; }
+    .sparkline { width: 100%; height: 72px; margin-top: 8px; overflow: visible; }
+    .sparkline .area { fill: url(#sparkGradient); }
+    .sparkline .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .sparkline .gridline { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 4; }
+
+    .protection-list { display: grid; gap: 9px; }
+    .protection-item { display: grid; grid-template-columns: 24px minmax(0,1fr) auto; align-items: center; gap: 9px; }
+    .protection-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 8px; color: var(--accent); background: var(--accent-soft); }
+    .protection-title { font-size: 10.5px; font-weight: 620; }
+    .protection-sub { color: var(--text-4); font-size: 9px; margin-top: 1px; }
+    .protection-value { color: var(--text-3); font-family: var(--font-mono); font-size: 9.5px; }
+
+    .table-card { margin-bottom: 16px; }
+    .data-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .data-table th {
+      height: 34px;
+      padding: 0 12px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      color: var(--text-4);
+      font-size: 9.5px;
+      font-weight: 620;
+      letter-spacing: .035em;
+      text-align: left;
+      text-transform: uppercase;
+    }
+    .data-table td { height: 52px; padding: 0 12px; border-bottom: 1px solid var(--border); color: var(--text-3); font-size: 10.5px; vertical-align: middle; }
+    .data-table tr:last-child td { border-bottom: 0; }
+    .data-table tbody tr { transition: background .14s var(--ease); }
+    .data-table tbody tr:hover { background: var(--accent-soft-2); }
+    .project-cell { display: flex; align-items: center; min-width: 0; gap: 9px; }
+    .project-icon { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); color: var(--text-3); }
+    .project-cell-title { color: var(--text); font-size: 11px; font-weight: 630; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .project-cell-sub { margin-top: 1px; color: var(--text-4); font-family: var(--font-mono); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .device-inline { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .tiny-os { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 6px; background: var(--surface-3); }
+    .device-inline span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row-actions { display: flex; justify-content: flex-end; gap: 4px; }
+    .row-action { width: 28px; height: 28px; border: 1px solid transparent; border-radius: 8px; display: grid; place-items: center; color: var(--text-4); background: transparent; cursor: pointer; }
+    .row-action:hover { color: var(--text); border-color: var(--border); background: var(--surface); }
+
+    .footer-note { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 3px; color: var(--text-4); font-size: 9.5px; }
+    .footer-note a:hover { color: var(--text-2); }
+
+    /* Secondary views */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .segmented { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+    .segment { min-height: 27px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--text-3); background: transparent; cursor: pointer; font-size: 10px; }
+    .segment.active { color: var(--text); background: var(--surface-3); box-shadow: 0 1px 0 rgba(255,255,255,.035) inset; }
+    .filter-input { min-width: 220px; height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-3); }
+    .filter-input input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 11px; }
+    .filter-input input::placeholder { color: var(--text-4); }
+
+    .project-grid { display: grid; grid-template-columns: repeat(3, minmax(250px, 1fr)); gap: 14px; }
+    .project-card { padding: 16px; min-height: 190px; display: flex; flex-direction: column; cursor: pointer; transition: transform .16s var(--ease), border-color .16s var(--ease), box-shadow .16s var(--ease); }
+    .project-card:hover { transform: translateY(-2px); border-color: var(--border-strong); box-shadow: var(--shadow-2); }
+    .project-card-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+    .project-card-icon { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); border: 1px solid color-mix(in oklab, var(--accent) 20%, var(--border)); }
+    .project-card h3 { margin: 14px 0 0; font-size: 15px; letter-spacing: -.02em; }
+    .project-card .branch { margin-top: 4px; color: var(--text-3); font-family: var(--font-mono); font-size: 10px; }
+    .project-card-state { margin-top: 12px; color: var(--text-3); font-size: 10.5px; }
+    .project-card-footer { margin-top: auto; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 15px; }
+    .device-dots { display: flex; }
+    .device-dots span { width: 23px; height: 23px; margin-left: -5px; border: 2px solid var(--surface-solid); border-radius: 8px; display: grid; place-items: center; color: var(--text-3); background: var(--surface-3); }
+    .device-dots span:first-child { margin-left: 0; }
+
+    .devices-grid { display: grid; grid-template-columns: repeat(2, minmax(320px, 1fr)); gap: 14px; }
+    .device-card { min-height: 255px; padding: 17px; }
+    .device-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .device-card-id { display: flex; align-items: center; gap: 11px; min-width: 0; }
+    .device-card-id .device-glyph { width: 42px; height: 42px; border-radius: 13px; }
+    .device-card h3 { margin: 0; font-size: 13px; letter-spacing: -.015em; }
+    .device-card .device-meta { margin-top: 3px; }
+    .resource-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 17px; }
+    .resource-tile { padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: color-mix(in oklab, var(--surface-2) 66%, transparent); }
+    .resource-tile .label { color: var(--text-4); font-size: 9px; }
+    .resource-tile strong { display: block; margin-top: 4px; font-family: var(--font-mono); font-size: 12px; }
+    .capability-row { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 13px; }
+    .capability { padding: 4px 7px; border: 1px solid var(--border); border-radius: 7px; color: var(--text-3); background: var(--surface); font-size: 9px; }
+    .device-card-actions { display: flex; gap: 7px; margin-top: 16px; }
+
+    .runs-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(300px, .62fr); gap: 14px; }
+    .run-list { display: grid; gap: 8px; }
+    .run-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 11px; align-items: center; padding: 11px; border: 1px solid var(--border); border-radius: var(--radius-md); background: color-mix(in oklab, var(--surface) 74%, transparent); }
+    .run-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; color: var(--accent); background: var(--accent-soft); }
+    .run-icon.pending { color: var(--amber); background: var(--amber-soft); }
+    .run-icon.failed { color: var(--red); background: var(--red-soft); }
+    .run-title { font-size: 10.5px; font-weight: 640; }
+    .run-sub { color: var(--text-4); font-size: 9px; margin-top: 2px; }
+    .run-result { text-align: right; }
+    .run-result strong { display: block; font-family: var(--font-mono); font-size: 10px; }
+    .run-result span { color: var(--text-4); font-size: 8.5px; }
+    .queue-visual { display: grid; gap: 8px; }
+    .queue-device { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+    .queue-device-name { display: flex; align-items: center; gap: 8px; font-size: 10.5px; }
+    .queue-device-score { font-family: var(--font-mono); color: var(--text-3); font-size: 9.5px; }
+
+    .activity-feed { display: grid; }
+    .activity-item { position: relative; display: grid; grid-template-columns: 32px minmax(0,1fr) auto; gap: 11px; min-height: 66px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .activity-item:last-child { border-bottom: 0; }
+    .activity-icon { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; color: var(--text-3); background: var(--surface-2); }
+    .activity-title { font-size: 10.5px; font-weight: 630; }
+    .activity-sub { color: var(--text-4); font-size: 9.5px; margin-top: 3px; }
+    .activity-time { color: var(--text-4); font-family: var(--font-mono); font-size: 9px; }
+
+    .settings-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; }
+    .settings-nav { padding: 7px; align-self: start; }
+    .settings-nav button { width: 100%; height: 34px; border: 0; border-radius: 8px; padding: 0 9px; text-align: left; color: var(--text-3); background: transparent; cursor: pointer; font-size: 10.5px; }
+    .settings-nav button.active { color: var(--text); background: var(--surface-3); }
+    .settings-panel { padding: 18px; }
+    .setting-section + .setting-section { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--border); }
+    .setting-section h3 { margin: 0; font-size: 12px; }
+    .setting-section p { margin: 5px 0 13px; color: var(--text-3); font-size: 10.5px; }
+    .radio-stack { display: grid; gap: 7px; }
+    .radio-card { position: relative; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 11px; border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; background: var(--surface); }
+    .radio-card.selected { border-color: color-mix(in oklab, var(--accent) 31%, var(--border)); background: var(--accent-soft-2); }
+    .radio-dot { width: 16px; height: 16px; border: 1px solid var(--border-strong); border-radius: 50%; display: grid; place-items: center; }
+    .radio-card.selected .radio-dot::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+    .radio-title { font-size: 10.5px; font-weight: 630; }
+    .radio-sub { color: var(--text-4); font-size: 9px; margin-top: 2px; }
+    .radio-badge { color: var(--accent); font-size: 9px; }
+
+    /* Dialogs */
+    dialog {
+      width: min(560px, calc(100vw - 28px));
+      max-height: min(760px, calc(100vh - 40px));
+      margin: auto;
+      padding: 0;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-xl);
+      color: var(--text);
+      background: color-mix(in oklab, var(--surface-solid) 94%, transparent);
+      box-shadow: var(--shadow-2);
+      overflow: hidden;
+      backdrop-filter: blur(28px) saturate(135%);
+    }
+    dialog::backdrop { background: rgba(5,7,12,.64); backdrop-filter: blur(6px); }
+    .dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 16px; border-bottom: 1px solid var(--border); }
+    .dialog-title { font-size: 12px; font-weight: 690; }
+    .dialog-body { padding: 17px; }
+    .dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 13px 16px; border-top: 1px solid var(--border); background: color-mix(in oklab, var(--surface-2) 60%, transparent); }
+
+    .command-dialog { width: min(650px, calc(100vw - 24px)); transform: translateY(-9vh); }
+    .command-search { height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+    .command-search input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 14px; }
+    .command-search input::placeholder { color: var(--text-4); }
+    .command-results { max-height: 390px; overflow: auto; padding: 8px; }
+    .command-group-label { padding: 8px 9px 5px; color: var(--text-4); font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+    .command-item { width: 100%; min-height: 43px; display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 5px 8px; border: 0; border-radius: var(--radius-sm); color: var(--text-2); background: transparent; cursor: pointer; text-align: left; }
+    .command-item:hover, .command-item.selected { color: var(--text); background: var(--accent-soft-2); }
+    .command-item-icon { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); }
+    .command-item-title { font-size: 11px; font-weight: 620; }
+    .command-item-sub { color: var(--text-4); font-size: 9px; margin-top: 1px; }
+    .command-empty { padding: 36px 16px; color: var(--text-4); text-align: center; font-size: 11px; }
+    .command-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--border); color: var(--text-4); font-size: 9px; }
+    .key-help { display: flex; align-items: center; gap: 7px; }
+
+    .handoff-summary {
+      display: grid;
+      grid-template-columns: 54px minmax(0,1fr);
+      gap: 13px;
+      padding: 13px;
+      border: 1px solid color-mix(in oklab, var(--accent) 22%, var(--border));
+      border-radius: var(--radius-lg);
+      background: linear-gradient(100deg, var(--accent-soft-2), transparent);
+    }
+    .handoff-glyph { width: 54px; height: 54px; border-radius: 16px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); border: 1px solid color-mix(in oklab, var(--accent) 20%, var(--border)); }
+    .handoff-summary h3 { margin: 2px 0 4px; font-size: 14px; letter-spacing: -.02em; }
+    .handoff-summary p { margin: 0; color: var(--text-3); font-size: 10.5px; }
+    .checklist { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 14px; }
+    .check-item { min-height: 49px; display: flex; align-items: center; gap: 9px; padding: 9px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+    .check-icon { width: 23px; height: 23px; display: grid; place-items: center; border-radius: 8px; color: var(--accent); background: var(--accent-soft); }
+    .check-title { font-size: 10px; font-weight: 620; }
+    .check-sub { color: var(--text-4); font-size: 8.8px; margin-top: 1px; }
+    .handoff-warning { display: flex; gap: 8px; margin-top: 12px; padding: 10px; border: 1px solid color-mix(in oklab, var(--amber) 20%, var(--border)); border-radius: var(--radius-md); color: var(--text-3); background: var(--amber-soft); font-size: 9.5px; }
+    .progress-panel { margin-top: 15px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+    .progress-top { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+    .progress-title { font-size: 10.5px; font-weight: 650; }
+    .progress-percent { color: var(--text-3); font-family: var(--font-mono); font-size: 9.5px; }
+    .progress-track { height: 5px; margin: 10px 0 13px; overflow: hidden; border-radius: 99px; background: var(--surface-3); }
+    .progress-track span { display: block; width: 0%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--violet), var(--accent)); transition: width .42s var(--ease); }
+    .progress-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .progress-step { display: flex; align-items: center; gap: 6px; color: var(--text-4); font-size: 8.8px; }
+    .progress-step .step-dot { width: 7px; height: 7px; border: 1px solid var(--border-strong); border-radius: 50%; background: var(--surface-3); }
+    .progress-step.active { color: var(--text-2); }
+    .progress-step.active .step-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .progress-step.done { color: var(--accent); }
+    .progress-step.done .step-dot { border-color: var(--accent); background: var(--accent); }
+
+    .toast-region { position: fixed; z-index: 100; right: 18px; bottom: 18px; display: grid; gap: 8px; width: min(370px, calc(100vw - 28px)); pointer-events: none; }
+    .toast { display: grid; grid-template-columns: 31px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 10px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: color-mix(in oklab, var(--surface-solid) 93%, transparent); box-shadow: var(--shadow-2); backdrop-filter: blur(22px); pointer-events: auto; animation: toast-in .26s var(--ease) both; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+    .toast-icon { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 10px; color: var(--accent); background: var(--accent-soft); }
+    .toast-title { font-size: 10.5px; font-weight: 650; }
+    .toast-sub { color: var(--text-4); font-size: 9px; margin-top: 2px; }
+    .toast-close { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 8px; color: var(--text-4); background: transparent; cursor: pointer; }
+    .toast-close:hover { color: var(--text); background: var(--surface-3); }
+
+    .mobile-nav { display: none; }
+
+    @media (max-width: 1180px) {
+      .continue-hero { grid-template-columns: minmax(0, 1.3fr) minmax(285px, .72fr); }
+      .bento { grid-template-columns: 1fr; }
+      .bento-right { grid-template-columns: 1fr 1fr; }
+      .project-grid { grid-template-columns: repeat(2, minmax(250px, 1fr)); }
+    }
+
+    @media (max-width: 960px) {
+      :root { --topbar-h: 58px; }
+      body { overflow: hidden; }
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .view { padding: 24px 20px 90px; }
+      .topbar { padding: 0 16px; }
+      .topbar-context { display: none; }
+      .command-trigger { width: min(500px, 54vw); }
+      .health-pill span:last-child { display: none; }
+      .mobile-nav {
+        position: fixed;
+        z-index: 25;
+        left: 50%;
+        bottom: 12px;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        padding: 5px;
+        border: 1px solid var(--border-strong);
+        border-radius: 17px;
+        background: color-mix(in oklab, var(--surface-solid) 88%, transparent);
+        box-shadow: var(--shadow-2);
+        backdrop-filter: blur(24px) saturate(130%);
+      }
+      .mobile-nav button { width: 48px; height: 43px; border: 0; border-radius: 12px; display: grid; place-items: center; color: var(--text-4); background: transparent; cursor: pointer; }
+      .mobile-nav button.active { color: var(--accent); background: var(--accent-soft); }
+      .settings-layout { grid-template-columns: 1fr; }
+      .settings-nav { display: flex; overflow: auto; }
+      .settings-nav button { width: auto; white-space: nowrap; }
+    }
+
+    @media (max-width: 760px) {
+      .topbar { gap: 7px; }
+      .command-trigger { flex: 1; width: auto; }
+      .command-trigger span { display: none; }
+      .command-trigger kbd { margin-left: auto; }
+      .health-pill { display: none; }
+      .view { padding: 20px 14px 86px; }
+      .page-head { align-items: flex-start; flex-direction: column; }
+      .page-actions { width: 100%; }
+      .page-actions .button { flex: 1; }
+      .continue-hero { grid-template-columns: 1fr; }
+      .hero-route { border-left: 0; border-top: 1px solid var(--border); }
+      .hero-main { padding: 22px 18px 20px; }
+      .hero-route { padding: 17px; }
+      .project-title { white-space: normal; }
+      .route-map { grid-template-columns: 1fr 32px 1fr; align-items: center; }
+      .route-line { height: auto; }
+      .route-line::before { width: 100%; height: 1px; background: linear-gradient(90deg, var(--violet), var(--accent)); }
+      .route-node { grid-template-columns: 32px minmax(0,1fr); }
+      .route-node .route-badge { display: none; }
+      .route-stats { margin-top: 6px; }
+      .bento-left, .bento-right { grid-template-columns: 1fr; }
+      .device-row { grid-template-columns: minmax(130px,1fr) minmax(100px,.7fr) auto; }
+      .device-row .meter-stack:nth-of-type(3) { display: none; }
+      .data-table th:nth-child(3), .data-table td:nth-child(3), .data-table th:nth-child(4), .data-table td:nth-child(4) { display: none; }
+      .project-grid, .devices-grid { grid-template-columns: 1fr; }
+      .runs-layout { grid-template-columns: 1fr; }
+      .checklist { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 500px) {
+      .topbar { padding: 0 10px; }
+      .top-actions { gap: 2px; }
+      .profile-btn { display: none; }
+      .hero-actions { align-items: stretch; }
+      .hero-actions .button { width: 100%; }
+      .route-stats { grid-template-columns: 1fr; }
+      .device-row { grid-template-columns: minmax(0,1fr) auto; }
+      .device-row .meter-stack { display: none; }
+      .toolbar { align-items: stretch; flex-direction: column; }
+      .filter-input { width: 100%; }
+      .resource-grid { grid-template-columns: 1fr 1fr; }
+      .resource-grid .resource-tile:last-child { grid-column: 1 / -1; }
+      .command-dialog { transform: none; }
+      .mobile-nav button { width: 43px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .001ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="ambient"></div>
+  <div class="noise"></div>
+
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
+    <symbol id="i-relay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 7h9.5a3.5 3.5 0 1 1 0 7H8"/><path d="m11 4-4 3 4 3"/><path d="m13 17 4-3-4-3"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5 11 7-11 7z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1v.08h-4v-.08a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4h-.08v-4H3a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1v-.08h4V3a1.7 1.7 0 0 0 1.1 1.6 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.1.38.31.73.6 1 .29.27.64.41 1 .4h.08v4H21c-.39 0-.75.14-1 .4-.29.27-.5.62-.6 1z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-arrow-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="19" r="2"/><path d="M6 7v10M8 7c5 0 4-1 8-1M8 17c5 0 4-7 8-9"/></symbol>
+    <symbol id="i-files" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v12"/><path d="M14 2v6h6"/><path d="M20 8v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6z"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 15v4h14v-4"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M5 19h14"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v5c0 5.5 3.4 8.6 8 10 4.6-1.4 8-4.5 8-10V6z"/><path d="m9 12 2 2 4-5"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+    <symbol id="i-memory" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h2v4H7zM12 10h2v4h-2zM17 10h1v4h-1zM6 3v3M10 3v3M14 3v3M18 3v3M6 18v3M10 18v3M14 18v3M18 18v3"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.6a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 20h.01M2 9a14.3 14.3 0 0 1 20 0"/></symbol>
+    <symbol id="i-battery" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="18" height="10" rx="2"/><path d="M22 10v4"/><path d="M6 10h8v4H6z"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></symbol>
+    <symbol id="i-laptop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="11" rx="2"/><path d="M2 19h20M9 19h6"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5z"/><path d="m3 7 9 5 9-5v10l-9 5-9-5z"/><path d="M12 12v10"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/></symbol>
+    <symbol id="i-git-commit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="주요 탐색">
+      <div class="brand">
+        <div class="brand-mark"><svg class="icon icon-lg"><use href="#i-relay"></use></svg></div>
+        <div class="brand-copy">
+          <div class="brand-name">DevRelay</div>
+          <div class="brand-meta">Personal Development Fabric</div>
+        </div>
+      </div>
+
+      <button class="fabric-switch" type="button" aria-label="Fabric 전환">
+        <span class="fabric-left">
+          <span class="fabric-dot"></span>
+          <span>
+            <span class="fabric-title">ChiSung Home Fabric</span>
+            <span class="fabric-sub">4 devices · anchor online</span>
+          </span>
+        </span>
+        <svg class="icon"><use href="#i-chevron"></use></svg>
+      </button>
+
+      <nav>
+        <div class="nav-group">
+          <div class="nav-label">Workspace</div>
+          <div class="nav-list">
+            <button class="nav-item active" type="button" data-view-target="continue">
+              <svg class="icon"><use href="#i-relay"></use></svg><span class="nav-text">Continue</span><kbd>C</kbd>
+            </button>
+            <button class="nav-item" type="button" data-view-target="projects">
+              <svg class="icon"><use href="#i-folder"></use></svg><span class="nav-text">Projects</span><span class="nav-count">8</span>
+            </button>
+            <button class="nav-item" type="button" data-view-target="devices">
+              <svg class="icon"><use href="#i-monitor"></use></svg><span class="nav-text">Devices</span><span class="nav-count">4</span>
+            </button>
+            <button class="nav-item" type="button" data-view-target="runs">
+              <svg class="icon"><use href="#i-play"></use></svg><span class="nav-text">Runs</span><span class="nav-count">2</span>
+            </button>
+          </div>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">System</div>
+          <div class="nav-list">
+            <button class="nav-item" type="button" data-view-target="activity">
+              <svg class="icon"><use href="#i-pulse"></use></svg><span class="nav-text">Activity</span>
+            </button>
+            <button class="nav-item" type="button" data-view-target="settings">
+              <svg class="icon"><use href="#i-settings"></use></svg><span class="nav-text">Settings</span>
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <div class="sidebar-spacer"></div>
+
+      <div class="active-mini">
+        <div class="active-mini-top">
+          <div class="active-mini-title">payments-api</div>
+          <div class="live-pulse"><span class="pulse-dot"></span>live</div>
+        </div>
+        <div class="active-mini-branch">feature/refund</div>
+        <div class="active-mini-row">
+          <span>Anchor</span><div class="mini-line"><span></span></div><span class="mono">8s</span>
+        </div>
+      </div>
+
+      <div class="anchor-status">
+        <div class="avatar">CS</div>
+        <div class="anchor-copy">
+          <div class="anchor-title">Home Anchor</div>
+          <div class="anchor-sub">linux-mini · 2.5 GbE</div>
+        </div>
+        <span class="fabric-dot" aria-label="온라인"></span>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div class="topbar-context" aria-live="polite">
+          <span class="topbar-kicker">ChiSung Home Fabric</span>
+          <span class="topbar-sep">/</span>
+          <span class="topbar-title" id="topbarTitle">Continue</span>
+        </div>
+        <div class="topbar-spacer"></div>
+        <button class="command-trigger" id="commandTrigger" type="button" aria-haspopup="dialog">
+          <svg class="icon"><use href="#i-search"></use></svg>
+          <span>프로젝트, 장치 또는 명령 검색</span>
+          <kbd>⌘ K</kbd>
+        </button>
+        <div class="top-actions">
+          <div class="health-pill" title="모든 장치와 Anchor가 정상입니다">
+            <span class="dot"></span><span>All systems healthy</span>
+          </div>
+          <button class="icon-btn" type="button" aria-label="알림"><svg class="icon"><use href="#i-bell"></use></svg></button>
+          <button class="icon-btn" id="themeToggle" type="button" aria-label="테마 전환"><svg class="icon" id="themeIcon"><use href="#i-sun"></use></svg></button>
+          <button class="profile-btn" type="button" aria-label="계정">CS</button>
+        </div>
+      </header>
+
+      <div class="main-scroll" id="mainScroll">
+        <!-- CONTINUE -->
+        <main class="view" data-view="continue">
+          <div class="page-head">
+            <div>
+              <div class="eyebrow"><span class="signal"></span>Current device · Linux Workstation</div>
+              <h1 class="page-title">이어서 작업할 준비가 됐습니다.</h1>
+              <p class="page-subtitle">가장 최근의 검증된 개발 세션을 선택한 장치에서 그대로 이어가세요. 파일 폴더가 아니라 Git 상태와 작업 문맥을 넘깁니다.</p>
+            </div>
+            <div class="page-actions">
+              <button class="button" type="button" data-action="checkpoint"><svg class="icon"><use href="#i-shield"></use></svg>체크포인트</button>
+              <button class="button" type="button" data-action="run-task"><svg class="icon"><use href="#i-play"></use></svg>다른 곳에서 실행</button>
+            </div>
+          </div>
+
+          <section class="card continue-hero" aria-labelledby="continue-title">
+            <div class="hero-main">
+              <div class="hero-status-row">
+                <span class="status-chip success" id="writerChip"><span class="chip-dot"></span>Mac Studio에서 작업 중</span>
+                <span class="status-chip info"><svg class="icon" style="width:12px;height:12px"><use href="#i-shield"></use></svg>8초 전 검증됨</span>
+                <span class="status-chip violet"><svg class="icon" style="width:12px;height:12px"><use href="#i-box"></use></svg>환경 준비됨</span>
+              </div>
+              <div class="project-lockup">
+                <div class="project-overline">계속하던 작업</div>
+                <h2 class="project-title" id="continue-title">payments-api</h2>
+                <div class="project-branch"><svg class="icon"><use href="#i-branch"></use></svg><span>feature/refund · 9d3fa82</span></div>
+              </div>
+              <p class="hero-description" id="heroDescription">Mac Studio의 최신 체크포인트에는 staged 3개, unstaged 4개, untracked 1개와 push하지 않은 commit 2개가 있습니다. Linux 환경과 VS Code 문맥은 이미 준비되어 있습니다.</p>
+              <div class="hero-actions">
+                <button class="button primary" id="continueHereButton" type="button"><svg class="icon icon-lg"><use href="#i-download"></use></svg><span id="continueButtonLabel">이 컴퓨터에서 계속</span><kbd>↵</kbd></button>
+                <button class="button" type="button" data-action="continue-elsewhere"><svg class="icon"><use href="#i-monitor"></use></svg>다른 컴퓨터에서 계속</button>
+                <button class="button ghost" type="button" data-view-target="projects">세부 정보 보기<svg class="icon"><use href="#i-arrow-right"></use></svg></button>
+              </div>
+              <div class="hero-footnote"><svg class="icon" style="width:13px;height:13px"><use href="#i-lock"></use></svg>대상에 변경이 있으면 먼저 별도 작업으로 안전하게 보관합니다.</div>
+            </div>
+
+            <aside class="hero-route" aria-label="전송 경로">
+              <div class="route-head"><span class="route-title">Continuation route</span><span class="route-mode">DIRECT · LAN</span></div>
+              <div class="route-map">
+                <div class="route-node">
+                  <div class="device-glyph mac"><svg class="icon icon-lg"><use href="#i-monitor"></use></svg></div>
+                  <div><div class="route-node-title">Mac Studio</div><div class="route-node-sub">Source · active writer</div></div>
+                  <div class="route-badge">M4 Max</div>
+                </div>
+                <div class="route-line"><span>12 ms · 184 MB</span></div>
+                <div class="route-node active">
+                  <div class="device-glyph linux"><svg class="icon icon-lg"><use href="#i-server"></use></svg></div>
+                  <div><div class="route-node-title">Linux Workstation</div><div class="route-node-sub">This device · fully warm</div></div>
+                  <div class="route-badge">Ready</div>
+                </div>
+              </div>
+              <div class="route-stats">
+                <div class="route-stat"><strong>8s</strong><span>checkpoint age</span></div>
+                <div class="route-stat"><strong>2.4s</strong><span>estimated open</span></div>
+                <div class="route-stat"><strong>100%</strong><span>verified state</span></div>
+              </div>
+            </aside>
+          </section>
+
+          <section class="bento">
+            <div class="bento-left">
+              <article class="card">
+                <div class="card-header">
+                  <div><div class="card-title"><svg class="icon"><use href="#i-monitor"></use></svg>Compute fabric</div><div class="card-sub">장치 상태와 현재 자원 여유</div></div>
+                  <button class="card-link" type="button" data-view-target="devices">모두 보기<svg class="icon"><use href="#i-chevron"></use></svg></button>
+                </div>
+                <div class="card-body">
+                  <div class="device-list">
+                    <div class="device-row">
+                      <div class="device-main"><div class="device-glyph mac"><svg class="icon"><use href="#i-monitor"></use></svg></div><div><div class="device-name">Mac Studio</div><div class="device-meta">active · AC · macOS 26</div></div></div>
+                      <div class="meter-stack"><div class="meter-label"><span>CPU</span><strong>18%</strong></div><div class="meter" style="--value:18%"><span></span></div></div>
+                      <div class="meter-stack"><div class="meter-label"><span>Memory</span><strong>42 / 64G</strong></div><div class="meter warm" style="--value:66%"><span></span></div></div>
+                      <span class="status-chip success">Writer</span>
+                    </div>
+                    <div class="device-row">
+                      <div class="device-main"><div class="device-glyph linux"><svg class="icon"><use href="#i-server"></use></svg></div><div><div class="device-name">Linux Workstation</div><div class="device-meta">this device · idle · Nix warm</div></div></div>
+                      <div class="meter-stack"><div class="meter-label"><span>CPU</span><strong>4%</strong></div><div class="meter" style="--value:4%"><span></span></div></div>
+                      <div class="meter-stack"><div class="meter-label"><span>Memory</span><strong>19 / 96G</strong></div><div class="meter warm" style="--value:20%"><span></span></div></div>
+                      <span class="status-chip success">Ready</span>
+                    </div>
+                    <div class="device-row">
+                      <div class="device-main"><div class="device-glyph win"><svg class="icon"><use href="#i-laptop"></use></svg></div><div><div class="device-name">Windows / WSL</div><div class="device-meta">online · battery 68% · env cold</div></div></div>
+                      <div class="meter-stack"><div class="meter-label"><span>CPU</span><strong>9%</strong></div><div class="meter" style="--value:9%"><span></span></div></div>
+                      <div class="meter-stack"><div class="meter-label"><span>Memory</span><strong>11 / 32G</strong></div><div class="meter warm" style="--value:34%"><span></span></div></div>
+                      <span class="status-chip attention">Available</span>
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="card scheduler">
+                <div class="card-header">
+                  <div><div class="card-title"><svg class="icon"><use href="#i-zap"></use></svg>Smart scheduler</div><div class="card-sub">다음 테스트의 최적 실행 위치</div></div>
+                  <span class="recommend-badge"><svg class="icon" style="width:12px;height:12px"><use href="#i-check"></use></svg>추천</span>
+                </div>
+                <div class="card-body">
+                  <div class="scheduler-score">
+                    <div><div class="score-number">92<small>/100</small></div><div class="score-caption">Linux Workstation 적합도</div></div>
+                    <div class="device-glyph linux"><svg class="icon icon-lg"><use href="#i-server"></use></svg></div>
+                  </div>
+                  <div class="reason-list">
+                    <div class="reason"><span class="check"><svg class="icon" style="width:12px;height:12px"><use href="#i-check"></use></svg></span>Nix 환경 cache 97% warm</div>
+                    <div class="reason"><span class="check"><svg class="icon" style="width:12px;height:12px"><use href="#i-check"></use></svg></span>현재 idle, AC 전원, thermal normal</div>
+                    <div class="reason"><span class="check"><svg class="icon" style="width:12px;height:12px"><use href="#i-check"></use></svg></span>최근 동일 테스트 평균 41초</div>
+                  </div>
+                  <div class="estimate">
+                    <div><strong>2m 14s</strong><span>Mac Studio local</span></div>
+                    <svg class="icon estimate-arrow"><use href="#i-arrow-right"></use></svg>
+                    <div><strong>41s</strong><span>Linux remote</span></div>
+                  </div>
+                  <div class="scheduler-actions"><button class="button primary small" type="button" data-action="run-task"><svg class="icon"><use href="#i-play"></use></svg>테스트 실행</button><button class="button small" type="button" data-view-target="runs">큐 보기</button></div>
+                </div>
+              </article>
+            </div>
+
+            <div class="bento-right">
+              <article class="card spark-card">
+                <div class="card-header">
+                  <div><div class="card-title"><svg class="icon"><use href="#i-upload"></use></svg>Protection health</div><div class="card-sub">최근 24시간 체크포인트</div></div>
+                  <span class="status-chip success">99.98%</span>
+                </div>
+                <div class="card-body">
+                  <div class="spark-head"><div><div class="spark-value">1,284</div><div class="spark-note">검증된 체크포인트 · 실패 0</div></div><span class="mono muted" style="font-size:9px">p95 640ms</span></div>
+                  <svg class="sparkline" viewBox="0 0 320 72" preserveAspectRatio="none" aria-label="체크포인트 성공 추세">
+                    <defs><linearGradient id="sparkGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
+                    <path class="gridline" d="M0 54H320M0 28H320"/>
+                    <path class="area" d="M0 56 C15 50 24 54 38 46 S64 43 78 39 S107 49 122 34 S148 33 164 30 S188 42 205 26 S234 24 248 20 S274 28 288 16 S307 18 320 10 L320 72 L0 72 Z"/>
+                    <path class="line" d="M0 56 C15 50 24 54 38 46 S64 43 78 39 S107 49 122 34 S148 33 164 30 S188 42 205 26 S234 24 248 20 S274 28 288 16 S307 18 320 10"/>
+                  </svg>
+                </div>
+              </article>
+
+              <article class="card">
+                <div class="card-header">
+                  <div><div class="card-title"><svg class="icon"><use href="#i-shield"></use></svg>Safety envelope</div><div class="card-sub">조용히 보호되는 상태</div></div>
+                </div>
+                <div class="card-body">
+                  <div class="protection-list">
+                    <div class="protection-item"><div class="protection-icon"><svg class="icon"><use href="#i-git-commit"></use></svg></div><div><div class="protection-title">Git state verified</div><div class="protection-sub">HEAD · index · work tree</div></div><div class="protection-value">8s</div></div>
+                    <div class="protection-item"><div class="protection-icon"><svg class="icon"><use href="#i-database"></use></svg></div><div><div class="protection-title">Anchor replicated</div><div class="protection-sub">Home Anchor · encrypted</div></div><div class="protection-value">184MB</div></div>
+                    <div class="protection-item"><div class="protection-icon"><svg class="icon"><use href="#i-lock"></use></svg></div><div><div class="protection-title">Secrets excluded</div><div class="protection-sub">1Password references only</div></div><div class="protection-value">4 refs</div></div>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="card table-card">
+            <div class="card-header">
+              <div><div class="card-title"><svg class="icon"><use href="#i-history"></use></svg>Recent sessions</div><div class="card-sub">최근 작업과 다음으로 가능한 행동</div></div>
+              <button class="card-link" type="button" data-view-target="projects">모든 프로젝트<svg class="icon"><use href="#i-chevron"></use></svg></button>
+            </div>
+            <div style="overflow:auto;position:relative;z-index:1">
+              <table class="data-table">
+                <thead><tr><th style="width:28%">Project</th><th style="width:21%">Writer / state</th><th style="width:18%">Checkpoint</th><th style="width:19%">Availability</th><th style="width:14%;text-align:right">Action</th></tr></thead>
+                <tbody>
+                  <tr><td><div class="project-cell"><div class="project-icon"><svg class="icon"><use href="#i-code"></use></svg></div><div><div class="project-cell-title">web-console</div><div class="project-cell-sub">feat/command-palette</div></div></div></td><td><div class="device-inline"><span class="tiny-os"><svg class="icon" style="width:12px;height:12px"><use href="#i-server"></use></svg></span><span>Linux Workstation</span></div></td><td><span class="status-chip success"><span class="chip-dot"></span>12초 전</span></td><td>Mac · Ready</td><td><div class="row-actions"><button class="button small" type="button">열기</button><button class="row-action" type="button" aria-label="더보기"><svg class="icon"><use href="#i-more"></use></svg></button></div></td></tr>
+                  <tr><td><div class="project-cell"><div class="project-icon"><svg class="icon"><use href="#i-box"></use></svg></div><div><div class="project-cell-title">mobile-shell</div><div class="project-cell-sub">main</div></div></div></td><td><div class="device-inline"><span class="tiny-os"><svg class="icon" style="width:12px;height:12px"><use href="#i-laptop"></use></svg></span><span>Windows / WSL</span></div></td><td><span class="status-chip">2시간 전</span></td><td>Linux · Env cold</td><td><div class="row-actions"><button class="button small" type="button">준비</button><button class="row-action" type="button" aria-label="더보기"><svg class="icon"><use href="#i-more"></use></svg></button></div></td></tr>
+                  <tr><td><div class="project-cell"><div class="project-icon"><svg class="icon"><use href="#i-terminal"></use></svg></div><div><div class="project-cell-title">infra</div><div class="project-cell-sub">chore/nix-cache</div></div></div></td><td><div class="device-inline"><span class="tiny-os"><svg class="icon" style="width:12px;height:12px"><use href="#i-monitor"></use></svg></span><span>Mac Studio</span></div></td><td><span class="status-chip success"><span class="chip-dot"></span>6분 전</span></td><td>Anchor · Safe</td><td><div class="row-actions"><button class="button small" type="button">계속</button><button class="row-action" type="button" aria-label="더보기"><svg class="icon"><use href="#i-more"></use></svg></button></div></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="footer-note"><span>DevRelay prototype · local-only demo data</span><span><a href="#" data-action="open-command">⌘K 명령 팔레트</a> · <a href="#" data-view-target="activity">진단 보기</a></span></div>
+        </main>
+
+        <!-- PROJECTS -->
+        <main class="view" data-view="projects" hidden>
+          <div class="page-head">
+            <div><div class="eyebrow"><span class="signal"></span>8 registered projects</div><h1 class="page-title">Projects</h1><p class="page-subtitle">프로젝트별 현재 writer, 체크포인트, 환경 준비 상태를 한눈에 확인합니다.</p></div>
+            <div class="page-actions"><button class="button"><svg class="icon"><use href="#i-search"></use></svg>디렉터리 검색</button><button class="button primary"><svg class="icon"><use href="#i-folder"></use></svg>프로젝트 추가</button></div>
+          </div>
+          <div class="toolbar"><div class="segmented"><button class="segment active">All 8</button><button class="segment">Active 3</button><button class="segment">Needs attention 1</button></div><label class="filter-input"><svg class="icon"><use href="#i-search"></use></svg><input type="search" placeholder="프로젝트 필터" /></label></div>
+          <section class="project-grid">
+            <article class="card project-card" data-action="handoff"><div class="project-card-head"><div class="project-card-icon"><svg class="icon icon-lg"><use href="#i-code"></use></svg></div><span class="status-chip success"><span class="chip-dot"></span>Active</span></div><h3>payments-api</h3><div class="branch">feature/refund</div><div class="project-card-state">Mac Studio에서 작업 중 · 체크포인트 8초 전</div><div class="project-card-footer"><div class="device-dots"><span><svg class="icon" style="width:12px"><use href="#i-monitor"></use></svg></span><span><svg class="icon" style="width:12px"><use href="#i-server"></use></svg></span><span><svg class="icon" style="width:12px"><use href="#i-laptop"></use></svg></span></div><button class="button small primary">여기서 계속</button></div></article>
+            <article class="card project-card"><div class="project-card-head"><div class="project-card-icon" style="color:var(--violet);background:var(--violet-soft)"><svg class="icon icon-lg"><use href="#i-folder"></use></svg></div><span class="status-chip info">Ready</span></div><h3>web-console</h3><div class="branch">feat/command-palette</div><div class="project-card-state">Linux Workstation에서 작업 중 · Mac 준비됨</div><div class="project-card-footer"><div class="device-dots"><span><svg class="icon" style="width:12px"><use href="#i-server"></use></svg></span><span><svg class="icon" style="width:12px"><use href="#i-monitor"></use></svg></span></div><button class="button small">세부 정보</button></div></article>
+            <article class="card project-card"><div class="project-card-head"><div class="project-card-icon" style="color:var(--blue);background:var(--blue-soft)"><svg class="icon icon-lg"><use href="#i-box"></use></svg></div><span class="status-chip attention">Env cold</span></div><h3>mobile-shell</h3><div class="branch">main</div><div class="project-card-state">Windows / WSL · 430 MB 환경 준비 필요</div><div class="project-card-footer"><div class="device-dots"><span><svg class="icon" style="width:12px"><use href="#i-laptop"></use></svg></span></div><button class="button small">미리 준비</button></div></article>
+            <article class="card project-card"><div class="project-card-head"><div class="project-card-icon"><svg class="icon icon-lg"><use href="#i-terminal"></use></svg></div><span class="status-chip success">Safe</span></div><h3>infra</h3><div class="branch">chore/nix-cache</div><div class="project-card-state">Mac Studio · Anchor에 안전하게 보관됨</div><div class="project-card-footer"><div class="device-dots"><span><svg class="icon" style="width:12px"><use href="#i-monitor"></use></svg></span><span><svg class="icon" style="width:12px"><use href="#i-server"></use></svg></span></div><button class="button small">열기</button></div></article>
+            <article class="card project-card"><div class="project-card-head"><div class="project-card-icon" style="color:var(--amber);background:var(--amber-soft)"><svg class="icon icon-lg"><use href="#i-database"></use></svg></div><span class="status-chip">Paused</span></div><h3>data-pipeline</h3><div class="branch">experiment/duckdb</div><div class="project-card-state">어제 중단 · pinned checkpoint 2개</div><div class="project-card-footer"><div class="device-dots"><span><svg class="icon" style="width:12px"><use href="#i-server"></use></svg></span></div><button class="button small">복구</button></div></article>
+            <article class="card project-card"><div class="project-card-head"><div class="project-card-icon" style="color:var(--red);background:var(--red-soft)"><svg class="icon icon-lg"><use href="#i-shield"></use></svg></div><span class="status-chip attention">Check</span></div><h3>legacy-admin</h3><div class="branch">hotfix/session</div><div class="project-card-state">Windows path portability 확인 필요</div><div class="project-card-footer"><div class="device-dots"><span><svg class="icon" style="width:12px"><use href="#i-laptop"></use></svg></span></div><button class="button small">Doctor</button></div></article>
+          </section>
+        </main>
+
+        <!-- DEVICES -->
+        <main class="view" data-view="devices" hidden>
+          <div class="page-head"><div><div class="eyebrow"><span class="signal"></span>4 trusted devices</div><h1 class="page-title">Devices</h1><p class="page-subtitle">물리 머신과 WSL을 독립된 실행 노드로 관리하고, foreground 작업을 침해하지 않도록 자원 정책을 적용합니다.</p></div><div class="page-actions"><button class="button"><svg class="icon"><use href="#i-sliders"></use></svg>자원 정책</button><button class="button primary"><svg class="icon"><use href="#i-relay"></use></svg>장치 연결</button></div></div>
+          <section class="devices-grid">
+            <article class="card device-card"><div class="device-card-top"><div class="device-card-id"><div class="device-glyph mac"><svg class="icon icon-lg"><use href="#i-monitor"></use></svg></div><div><h3>Mac Studio</h3><div class="device-meta">macOS 26 · arm64 · M4 Max</div></div></div><span class="status-chip success"><span class="chip-dot"></span>Active writer</span></div><div class="resource-grid"><div class="resource-tile"><div class="label">CPU</div><strong>18% · 16C</strong></div><div class="resource-tile"><div class="label">Memory</div><strong>42 / 64 GB</strong></div><div class="resource-tile"><div class="label">Disk free</div><strong>612 GB</strong></div></div><div class="capability-row"><span class="capability">Darwin builds</span><span class="capability">Nix</span><span class="capability">Anchor backup</span><span class="capability">AC power</span></div><div class="device-card-actions"><button class="button small">세부 정보</button><button class="button small" data-action="run-task">작업 실행</button></div></article>
+            <article class="card device-card"><div class="device-card-top"><div class="device-card-id"><div class="device-glyph linux"><svg class="icon icon-lg"><use href="#i-server"></use></svg></div><div><h3>Linux Workstation</h3><div class="device-meta">NixOS · x86_64 · Ryzen 9950X</div></div></div><span class="status-chip success"><span class="chip-dot"></span>This device</span></div><div class="resource-grid"><div class="resource-tile"><div class="label">CPU</div><strong>4% · 32T</strong></div><div class="resource-tile"><div class="label">Memory</div><strong>19 / 96 GB</strong></div><div class="resource-tile"><div class="label">Disk free</div><strong>1.8 TB</strong></div></div><div class="capability-row"><span class="capability">Linux builds</span><span class="capability">Nix cache 97%</span><span class="capability">Docker</span><span class="capability">RTX 5090</span></div><div class="device-card-actions"><button class="button small">세부 정보</button><button class="button small primary" data-action="run-task">추천 실행</button></div></article>
+            <article class="card device-card"><div class="device-card-top"><div class="device-card-id"><div class="device-glyph win"><svg class="icon icon-lg"><use href="#i-laptop"></use></svg></div><div><h3>Windows Native</h3><div class="device-meta">Windows 11 · x86_64 · desktop</div></div></div><span class="status-chip info">Online</span></div><div class="resource-grid"><div class="resource-tile"><div class="label">CPU</div><strong>9% · 24T</strong></div><div class="resource-tile"><div class="label">Memory</div><strong>11 / 32 GB</strong></div><div class="resource-tile"><div class="label">Battery</div><strong>68%</strong></div></div><div class="capability-row"><span class="capability">Windows builds</span><span class="capability">PowerShell</span><span class="capability">Battery policy</span></div><div class="device-card-actions"><button class="button small">세부 정보</button><button class="button small">미리 준비</button></div></article>
+            <article class="card device-card"><div class="device-card-top"><div class="device-card-id"><div class="device-glyph linux"><svg class="icon icon-lg"><use href="#i-server"></use></svg></div><div><h3>Windows / WSL</h3><div class="device-meta">Ubuntu 24.04 · x86_64 · WSL 2</div></div></div><span class="status-chip info">Online</span></div><div class="resource-grid"><div class="resource-tile"><div class="label">CPU</div><strong>2% · shared</strong></div><div class="resource-tile"><div class="label">Memory</div><strong>6 / 16 GB</strong></div><div class="resource-tile"><div class="label">Disk free</div><strong>244 GB</strong></div></div><div class="capability-row"><span class="capability">Linux builds</span><span class="capability">Nix</span><span class="capability">WSL filesystem</span></div><div class="device-card-actions"><button class="button small">세부 정보</button><button class="button small">환경 준비</button></div></article>
+          </section>
+        </main>
+
+        <!-- RUNS -->
+        <main class="view" data-view="runs" hidden>
+          <div class="page-head"><div><div class="eyebrow"><span class="signal"></span>Distributed task runner</div><h1 class="page-title">Runs</h1><p class="page-subtitle">검증된 snapshot을 입력으로 빌드, 테스트, benchmark, agent 작업을 가장 적합한 장치에서 실행합니다.</p></div><div class="page-actions"><button class="button"><svg class="icon"><use href="#i-history"></use></svg>캐시 기록</button><button class="button primary" data-action="run-task"><svg class="icon"><use href="#i-play"></use></svg>새 작업 실행</button></div></div>
+          <section class="runs-layout">
+            <article class="card"><div class="card-header"><div><div class="card-title"><svg class="icon"><use href="#i-play"></use></svg>Recent runs</div><div class="card-sub">immutable snapshot 기반 실행 기록</div></div><span class="status-chip success">Cache hit 71%</span></div><div class="card-body"><div class="run-list" id="runList"><div class="run-row"><div class="run-icon"><svg class="icon"><use href="#i-check"></use></svg></div><div><div class="run-title">payments-api · test:unit</div><div class="run-sub">Linux Workstation · snapshot S184 · 184 tests passed</div></div><div class="run-result"><strong>41.2s</strong><span>2분 전</span></div></div><div class="run-row"><div class="run-icon"><svg class="icon"><use href="#i-check"></use></svg></div><div><div class="run-title">web-console · build</div><div class="run-sub">Mac Studio · Darwin artifact · cache hit</div></div><div class="run-result"><strong>18.8s</strong><span>14분 전</span></div></div><div class="run-row"><div class="run-icon pending"><svg class="icon"><use href="#i-clock"></use></svg></div><div><div class="run-title">mobile-shell · lint</div><div class="run-sub">Windows / WSL · environment hydrating</div></div><div class="run-result"><strong>43%</strong><span>running</span></div></div><div class="run-row"><div class="run-icon failed"><svg class="icon"><use href="#i-x"></use></svg></div><div><div class="run-title">legacy-admin · build</div><div class="run-sub">Windows Native · path portability check failed</div></div><div class="run-result"><strong>exit 2</strong><span>어제</span></div></div></div></div></article>
+            <aside class="card"><div class="card-header"><div><div class="card-title"><svg class="icon"><use href="#i-zap"></use></svg>Scheduler ranking</div><div class="card-sub">현재 unit test 기준</div></div></div><div class="card-body"><div class="queue-visual"><div class="queue-device"><div class="queue-device-name"><div class="device-glyph linux" style="width:28px;height:28px;border-radius:8px"><svg class="icon"><use href="#i-server"></use></svg></div>Linux Workstation</div><div class="queue-device-score">92</div></div><div class="queue-device"><div class="queue-device-name"><div class="device-glyph mac" style="width:28px;height:28px;border-radius:8px"><svg class="icon"><use href="#i-monitor"></use></svg></div>Mac Studio</div><div class="queue-device-score">61</div></div><div class="queue-device"><div class="queue-device-name"><div class="device-glyph win" style="width:28px;height:28px;border-radius:8px"><svg class="icon"><use href="#i-laptop"></use></svg></div>Windows / WSL</div><div class="queue-device-score">48</div></div></div><div class="reason-list" style="margin-top:16px"><div class="reason"><span class="check"><svg class="icon" style="width:12px;height:12px"><use href="#i-check"></use></svg></span>cache warmth +30</div><div class="reason"><span class="check"><svg class="icon" style="width:12px;height:12px"><use href="#i-check"></use></svg></span>idle CPU +19</div><div class="reason"><span class="check"><svg class="icon" style="width:12px;height:12px"><use href="#i-check"></use></svg></span>data locality +9</div></div></div></aside>
+          </section>
+        </main>
+
+        <!-- ACTIVITY -->
+        <main class="view" data-view="activity" hidden>
+          <div class="page-head"><div><div class="eyebrow"><span class="signal"></span>Local audit trail</div><h1 class="page-title">Activity</h1><p class="page-subtitle">체크포인트, handoff, 환경 준비, 원격 실행과 안전 관련 이벤트만 로컬에 기록합니다.</p></div><div class="page-actions"><button class="button"><svg class="icon"><use href="#i-download"></use></svg>진단 번들</button><button class="button">필터</button></div></div>
+          <section class="card"><div class="card-header"><div><div class="card-title"><svg class="icon"><use href="#i-pulse"></use></svg>Today</div><div class="card-sub">정상 background checkpoint는 요약해서 표시</div></div><span class="status-chip success">No incidents</span></div><div class="activity-feed"><div class="activity-item"><div class="activity-icon" style="color:var(--accent);background:var(--accent-soft)"><svg class="icon"><use href="#i-shield"></use></svg></div><div><div class="activity-title">payments-api 체크포인트 검증 완료</div><div class="activity-sub">HEAD, index, work tree hash 일치 · Anchor replicated</div></div><div class="activity-time">14:32:08</div></div><div class="activity-item"><div class="activity-icon" style="color:var(--blue);background:var(--blue-soft)"><svg class="icon"><use href="#i-download"></use></svg></div><div><div class="activity-title">Linux Workstation에 project prefetch 완료</div><div class="activity-sub">Git objects 184 MB · Nix environment already warm</div></div><div class="activity-time">14:31:54</div></div><div class="activity-item"><div class="activity-icon" style="color:var(--violet);background:var(--violet-soft)"><svg class="icon"><use href="#i-play"></use></svg></div><div><div class="activity-title">test:unit 원격 실행 완료</div><div class="activity-sub">Linux Workstation · 184 passed · result cached</div></div><div class="activity-time">14:29:41</div></div><div class="activity-item"><div class="activity-icon"><svg class="icon"><use href="#i-upload"></use></svg></div><div><div class="activity-title">Adaptive background publish</div><div class="activity-sub">17 snapshots coalesced · 12.8 MB transferred direct</div></div><div class="activity-time">14:26:12</div></div><div class="activity-item"><div class="activity-icon" style="color:var(--amber);background:var(--amber-soft)"><svg class="icon"><use href="#i-battery"></use></svg></div><div><div class="activity-title">Windows / WSL prewarm 일시 중지</div><div class="activity-sub">Battery mode detected · explicit handoff remains available</div></div><div class="activity-time">13:58:04</div></div></div></section>
+        </main>
+
+        <!-- SETTINGS -->
+        <main class="view" data-view="settings" hidden>
+          <div class="page-head"><div><div class="eyebrow"><span class="signal"></span>Fabric policy</div><h1 class="page-title">Settings</h1><p class="page-subtitle">평상시에는 추천값을 유지하고, 필요할 때만 네트워크·저장공간·배터리·보안 정책을 세밀하게 조정합니다.</p></div><div class="page-actions"><button class="button">변경 되돌리기</button><button class="button primary">저장</button></div></div>
+          <section class="settings-layout"><nav class="card settings-nav" aria-label="설정 범주"><button class="active">Background behavior</button><button>Storage & cache</button><button>Network</button><button>Security</button><button>Editor context</button><button>Advanced</button></nav><article class="card settings-panel"><div class="setting-section"><h3>Background behavior</h3><p>사용 중인 장치의 반응성을 우선하면서 체크포인트와 prewarm 빈도를 조절합니다.</p><div class="radio-stack"><div class="radio-card selected" tabindex="0"><div class="radio-dot"></div><div><div class="radio-title">Adaptive</div><div class="radio-sub">작업 중에는 조용히, idle·AC일 때 미리 준비</div></div><div class="radio-badge">Recommended</div></div><div class="radio-card" tabindex="0"><div class="radio-dot"></div><div><div class="radio-title">Instant</div><div class="radio-sub">선택한 장치에 최대한 빠르게 prefetch</div></div><div class="quiet mono">≤80% LAN</div></div><div class="radio-card" tabindex="0"><div class="radio-dot"></div><div><div class="radio-title">Eco</div><div class="radio-sub">handoff 때만 큰 전송, battery와 disk write 절약</div></div><div class="quiet mono">low power</div></div><div class="radio-card" tabindex="0"><div class="radio-dot"></div><div><div class="radio-title">Custom</div><div class="radio-sub">대역폭, cache quota, maintenance window 직접 설정</div></div><div class="quiet">Advanced</div></div></div></div><div class="setting-section"><h3>Default standby target</h3><p>프로젝트당 최대 한 장치만 full prefetch합니다.</p><div class="radio-stack"><div class="radio-card selected"><div class="radio-dot"></div><div><div class="radio-title">자동 선택</div><div class="radio-sub">최근 handoff, cache warmth, 전원 상태와 여유 공간 기준</div></div><div class="radio-badge">Linux Workstation</div></div><div class="radio-card"><div class="radio-dot"></div><div><div class="radio-title">항상 직접 선택</div><div class="radio-sub">프로젝트별 standby target을 수동 지정</div></div></div></div></div></article></section>
+        </main>
+      </div>
+    </section>
+  </div>
+
+  <nav class="mobile-nav" aria-label="모바일 탐색">
+    <button class="active" data-view-target="continue" aria-label="Continue"><svg class="icon icon-lg"><use href="#i-relay"></use></svg></button>
+    <button data-view-target="projects" aria-label="Projects"><svg class="icon icon-lg"><use href="#i-folder"></use></svg></button>
+    <button data-view-target="devices" aria-label="Devices"><svg class="icon icon-lg"><use href="#i-monitor"></use></svg></button>
+    <button data-view-target="runs" aria-label="Runs"><svg class="icon icon-lg"><use href="#i-play"></use></svg></button>
+    <button data-view-target="settings" aria-label="Settings"><svg class="icon icon-lg"><use href="#i-settings"></use></svg></button>
+  </nav>
+
+  <dialog class="command-dialog" id="commandDialog" aria-label="명령 팔레트">
+    <div class="command-search"><svg class="icon icon-lg"><use href="#i-search"></use></svg><input id="commandInput" type="search" autocomplete="off" placeholder="무엇을 하시겠어요?" aria-label="명령 검색"/><kbd>esc</kbd></div>
+    <div class="command-results" id="commandResults"></div>
+    <div class="command-footer"><span>프로젝트, 장치, 명령을 한 곳에서 검색</span><div class="key-help"><kbd>↑↓</kbd><span>이동</span><kbd>↵</kbd><span>실행</span></div></div>
+  </dialog>
+
+  <dialog id="handoffDialog" aria-labelledby="handoffTitle">
+    <div class="dialog-head"><div class="dialog-title" id="handoffTitle">Linux Workstation에서 계속</div><button class="icon-btn" id="closeHandoff" type="button" aria-label="닫기"><svg class="icon"><use href="#i-x"></use></svg></button></div>
+    <div class="dialog-body">
+      <div class="handoff-summary"><div class="handoff-glyph"><svg class="icon icon-xl"><use href="#i-relay"></use></svg></div><div><h3>payments-api · feature/refund</h3><p>Mac Studio의 최신 상태를 이 장치에 적용하고 writer 제어권을 안전하게 옮깁니다.</p></div></div>
+      <div class="checklist">
+        <div class="check-item"><div class="check-icon"><svg class="icon"><use href="#i-check"></use></svg></div><div><div class="check-title">코드 상태</div><div class="check-sub">8초 전 · hash verified</div></div></div>
+        <div class="check-item"><div class="check-icon"><svg class="icon"><use href="#i-files"></use></svg></div><div><div class="check-title">미커밋 변경 8개</div><div class="check-sub">staged 3 · unstaged 4 · untracked 1</div></div></div>
+        <div class="check-item"><div class="check-icon"><svg class="icon"><use href="#i-git-commit"></use></svg></div><div><div class="check-title">Push하지 않은 commit</div><div class="check-sub">2개 · required objects ready</div></div></div>
+        <div class="check-item"><div class="check-icon"><svg class="icon"><use href="#i-box"></use></svg></div><div><div class="check-title">환경과 에디터</div><div class="check-sub">Nix warm · VS Code context ready</div></div></div>
+      </div>
+      <div class="handoff-warning"><svg class="icon" style="color:var(--amber);flex:0 0 auto"><use href="#i-shield"></use></svg><span>이 컴퓨터에 독자적인 변경이 발견되면 먼저 별도 작업으로 pin한 뒤 진행합니다. 조용히 덮어쓰지 않습니다.</span></div>
+      <div class="progress-panel" id="handoffProgress" hidden>
+        <div class="progress-top"><span class="progress-title" id="progressTitle">작업 상태 저장 중…</span><span class="progress-percent" id="progressPercent">0%</span></div>
+        <div class="progress-track"><span id="progressBar"></span></div>
+        <div class="progress-steps"><div class="progress-step active" data-step="1"><span class="step-dot"></span>상태 저장</div><div class="progress-step" data-step="2"><span class="step-dot"></span>장치 준비</div><div class="progress-step" data-step="3"><span class="step-dot"></span>제어권 이동</div></div>
+      </div>
+    </div>
+    <div class="dialog-footer"><button class="button" id="cancelHandoff" type="button">취소</button><button class="button" type="button" id="newSessionButton">새 세션으로 열기</button><button class="button primary" id="confirmHandoff" type="button"><svg class="icon"><use href="#i-relay"></use></svg>계속하기</button></div>
+  </dialog>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
+
+  <script>
+    (() => {
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+      const html = document.documentElement;
+      const titleMap = { continue: 'Continue', projects: 'Projects', devices: 'Devices', runs: 'Runs', activity: 'Activity', settings: 'Settings' };
+      let currentView = 'continue';
+      let selectedCommandIndex = 0;
+      let handoffInProgress = false;
+
+      const setView = (view) => {
+        if (!titleMap[view]) return;
+        currentView = view;
+        $$('[data-view]').forEach((el) => { el.hidden = el.dataset.view !== view; });
+        $$('[data-view-target]').forEach((el) => el.classList.toggle('active', el.dataset.viewTarget === view));
+        $('#topbarTitle').textContent = titleMap[view];
+        $('#mainScroll').scrollTo({ top: 0, behavior: 'instant' });
+        history.replaceState(null, '', `#${view}`);
+      };
+
+      $$('[data-view-target]').forEach((button) => {
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          setView(button.dataset.viewTarget);
+        });
+      });
+
+      const safeStorage = {
+        get(key) { try { return window.localStorage.getItem(key); } catch { return null; } },
+        set(key, value) { try { window.localStorage.setItem(key, value); } catch {} }
+      };
+      const storedTheme = safeStorage.get('devrelay-theme');
+      if (storedTheme === 'light' || storedTheme === 'dark') html.dataset.theme = storedTheme;
+      else html.dataset.theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+
+      const updateThemeIcon = () => {
+        $('#themeIcon use').setAttribute('href', html.dataset.theme === 'dark' ? '#i-sun' : '#i-moon');
+        $('#themeToggle').setAttribute('aria-label', html.dataset.theme === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환');
+      };
+      updateThemeIcon();
+
+      const toggleTheme = () => {
+        html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+        safeStorage.set('devrelay-theme', html.dataset.theme);
+        updateThemeIcon();
+      };
+      $('#themeToggle').addEventListener('click', toggleTheme);
+
+      const showToast = (title, subtitle, icon = '#i-check') => {
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.innerHTML = `<div class="toast-icon"><svg class="icon"><use href="${icon}"></use></svg></div><div><div class="toast-title">${title}</div><div class="toast-sub">${subtitle}</div></div><button class="toast-close" type="button" aria-label="알림 닫기"><svg class="icon"><use href="#i-x"></use></svg></button>`;
+        $('#toastRegion').append(toast);
+        const close = () => toast.remove();
+        $('.toast-close', toast).addEventListener('click', close);
+        setTimeout(close, 5200);
+      };
+
+      const openHandoff = () => {
+        if (handoffInProgress) return;
+        $('#handoffProgress').hidden = true;
+        $('#confirmHandoff').disabled = false;
+        $('#cancelHandoff').disabled = false;
+        $('#newSessionButton').disabled = false;
+        $('#progressBar').style.width = '0%';
+        $('#progressPercent').textContent = '0%';
+        $('#progressTitle').textContent = '작업 상태 저장 중…';
+        $$('.progress-step').forEach((el, i) => {
+          el.classList.toggle('active', i === 0);
+          el.classList.remove('done');
+        });
+        $('#handoffDialog').showModal();
+      };
+
+      $('#continueHereButton').addEventListener('click', openHandoff);
+      $$('[data-action="handoff"]').forEach((el) => el.addEventListener('click', openHandoff));
+      $('#closeHandoff').addEventListener('click', () => { if (!handoffInProgress) $('#handoffDialog').close(); });
+      $('#cancelHandoff').addEventListener('click', () => { if (!handoffInProgress) $('#handoffDialog').close(); });
+      $('#newSessionButton').addEventListener('click', () => {
+        $('#handoffDialog').close();
+        showToast('새 세션을 만들었습니다', '현재 상태를 linux-experiment로 분리해 열었습니다.', '#i-branch');
+      });
+
+      const setProgressStep = (step, percent, title) => {
+        $('#progressBar').style.width = `${percent}%`;
+        $('#progressPercent').textContent = `${percent}%`;
+        $('#progressTitle').textContent = title;
+        $$('.progress-step').forEach((el, i) => {
+          const n = i + 1;
+          el.classList.toggle('active', n === step);
+          el.classList.toggle('done', n < step || percent === 100);
+        });
+      };
+
+      $('#confirmHandoff').addEventListener('click', async () => {
+        if (handoffInProgress) return;
+        handoffInProgress = true;
+        $('#handoffProgress').hidden = false;
+        $('#confirmHandoff').disabled = true;
+        $('#cancelHandoff').disabled = true;
+        $('#newSessionButton').disabled = true;
+
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        setProgressStep(1, 14, 'Mac Studio의 최종 상태 저장 중…');
+        await wait(650);
+        setProgressStep(1, 34, '체크포인트 hash 검증 중…');
+        await wait(650);
+        setProgressStep(2, 58, 'Linux Workstation에 상태 적용 중…');
+        await wait(760);
+        setProgressStep(2, 76, '에디터 문맥과 환경 확인 중…');
+        await wait(660);
+        setProgressStep(3, 91, 'Writer 제어권을 옮기는 중…');
+        await wait(620);
+        setProgressStep(3, 100, '준비 완료');
+        await wait(480);
+
+        $('#handoffDialog').close();
+        handoffInProgress = false;
+        $('#writerChip').innerHTML = '<span class="chip-dot"></span>이 컴퓨터에서 작업 중';
+        $('#continueButtonLabel').textContent = 'VS Code 열기';
+        $('#continueHereButton svg use').setAttribute('href', '#i-arrow-up-right');
+        $('#heroDescription').textContent = 'Linux Workstation이 이 세션의 active writer입니다. 최신 상태가 검증되었고 Mac Studio는 standby target으로 안전하게 전환되었습니다.';
+        showToast('작업을 이어왔습니다', 'payments-api가 Linux Workstation에서 열릴 준비가 됐습니다.', '#i-relay');
+      });
+
+      const commands = [
+        { group: 'Continue', title: 'payments-api를 이 컴퓨터에서 계속', sub: 'Mac Studio → Linux Workstation', icon: '#i-relay', keys: '↵', run: openHandoff },
+        { group: 'Continue', title: '다른 컴퓨터에서 계속', sub: '준비 상태를 비교하고 target 선택', icon: '#i-monitor', run: () => showToast('Target 선택기를 열었습니다', 'Linux, Windows/WSL, Mac 장치를 비교합니다.', '#i-monitor') },
+        { group: 'Navigate', title: 'Projects로 이동', sub: '모든 프로젝트와 세션 보기', icon: '#i-folder', keys: 'G P', run: () => setView('projects') },
+        { group: 'Navigate', title: 'Devices로 이동', sub: '자원, cache, capability 보기', icon: '#i-monitor', keys: 'G D', run: () => setView('devices') },
+        { group: 'Navigate', title: 'Runs로 이동', sub: '원격 빌드와 테스트 기록', icon: '#i-play', keys: 'G R', run: () => setView('runs') },
+        { group: 'Actions', title: '안전 체크포인트 만들기', sub: '현재 Git 상태를 검증해 Anchor에 보관', icon: '#i-shield', keys: '⇧ C', run: () => checkpoint() },
+        { group: 'Actions', title: 'Unit test를 최적 장치에서 실행', sub: '추천: Linux Workstation · 예상 41초', icon: '#i-zap', run: () => runTask() },
+        { group: 'Appearance', title: '테마 전환', sub: 'Dark / Light', icon: '#i-sun', run: toggleTheme }
+      ];
+
+      const renderCommands = () => {
+        const query = $('#commandInput').value.trim().toLowerCase();
+        const filtered = commands.filter((c) => `${c.title} ${c.sub} ${c.group}`.toLowerCase().includes(query));
+        selectedCommandIndex = Math.min(selectedCommandIndex, Math.max(0, filtered.length - 1));
+        const root = $('#commandResults');
+        root.innerHTML = '';
+        if (!filtered.length) {
+          root.innerHTML = '<div class="command-empty">일치하는 명령이 없습니다.</div>';
+          return;
+        }
+        let lastGroup = '';
+        filtered.forEach((command, index) => {
+          if (command.group !== lastGroup) {
+            const label = document.createElement('div');
+            label.className = 'command-group-label';
+            label.textContent = command.group;
+            root.append(label);
+            lastGroup = command.group;
+          }
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = `command-item${index === selectedCommandIndex ? ' selected' : ''}`;
+          item.dataset.commandIndex = String(commands.indexOf(command));
+          item.innerHTML = `<span class="command-item-icon"><svg class="icon"><use href="${command.icon}"></use></svg></span><span><span class="command-item-title">${command.title}</span><span class="command-item-sub">${command.sub}</span></span>${command.keys ? `<kbd>${command.keys}</kbd>` : '<span></span>'}`;
+          item.addEventListener('mouseenter', () => { selectedCommandIndex = index; $$('.command-item', root).forEach((el, i) => el.classList.toggle('selected', i === index)); });
+          item.addEventListener('click', () => { $('#commandDialog').close(); command.run(); });
+          root.append(item);
+        });
+        root.dataset.filtered = JSON.stringify(filtered.map((c) => commands.indexOf(c)));
+      };
+
+      const openCommand = () => {
+        selectedCommandIndex = 0;
+        $('#commandInput').value = '';
+        renderCommands();
+        $('#commandDialog').showModal();
+        requestAnimationFrame(() => $('#commandInput').focus());
+      };
+      $('#commandTrigger').addEventListener('click', openCommand);
+      $$('[data-action="open-command"]').forEach((el) => el.addEventListener('click', (e) => { e.preventDefault(); openCommand(); }));
+      $('#commandInput').addEventListener('input', () => { selectedCommandIndex = 0; renderCommands(); });
+      $('#commandInput').addEventListener('keydown', (event) => {
+        const indexes = JSON.parse($('#commandResults').dataset.filtered || '[]');
+        if (event.key === 'ArrowDown') { event.preventDefault(); selectedCommandIndex = Math.min(indexes.length - 1, selectedCommandIndex + 1); renderCommands(); }
+        if (event.key === 'ArrowUp') { event.preventDefault(); selectedCommandIndex = Math.max(0, selectedCommandIndex - 1); renderCommands(); }
+        if (event.key === 'Enter' && indexes.length) { event.preventDefault(); $('#commandDialog').close(); commands[indexes[selectedCommandIndex]].run(); }
+      });
+
+      const checkpoint = () => {
+        showToast('체크포인트를 만들고 있습니다', 'Git 상태를 검증한 뒤 Home Anchor에 보관합니다.', '#i-shield');
+        setTimeout(() => showToast('안전하게 보관했습니다', '9d3fa82 · index/work tree verified · 8.4 MB', '#i-check'), 1150);
+      };
+      const runTask = () => {
+        showToast('테스트를 Linux Workstation에 배치했습니다', '환경 cache 97% · 예상 완료 41초', '#i-play');
+        const runList = $('#runList');
+        if (runList && !$('#demoRun')) {
+          const row = document.createElement('div');
+          row.className = 'run-row';
+          row.id = 'demoRun';
+          row.innerHTML = '<div class="run-icon pending"><svg class="icon"><use href="#i-clock"></use></svg></div><div><div class="run-title">payments-api · test:unit</div><div class="run-sub">Linux Workstation · scheduler score 92 · queued now</div></div><div class="run-result"><strong>queued</strong><span>방금</span></div>';
+          runList.prepend(row);
+        }
+      };
+      $$('[data-action="checkpoint"]').forEach((el) => el.addEventListener('click', checkpoint));
+      $$('[data-action="run-task"]').forEach((el) => el.addEventListener('click', runTask));
+      $$('[data-action="continue-elsewhere"]').forEach((el) => el.addEventListener('click', () => showToast('다른 장치를 선택하세요', 'Windows / WSL은 430 MB 환경 준비가 필요합니다.', '#i-monitor')));
+
+      $$('.radio-card').forEach((card) => {
+        card.addEventListener('click', () => {
+          const stack = card.closest('.radio-stack');
+          $$('.radio-card', stack).forEach((el) => el.classList.remove('selected'));
+          card.classList.add('selected');
+        });
+        card.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); card.click(); } });
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#commandDialog').open ? $('#commandDialog').close() : openCommand(); }
+        if (event.key === 'Escape' && $('#handoffDialog').open && !handoffInProgress) $('#handoffDialog').close();
+        if (!event.metaKey && !event.ctrlKey && !event.altKey && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+          if (event.key.toLowerCase() === 'c') setView('continue');
+        }
+      });
+
+      const initialHash = location.hash.replace('#', '');
+      if (titleMap[initialHash]) setView(initialHash);
+    })();
+  </script>
+</body>
+</html>

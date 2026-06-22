@@ -1,0 +1,71 @@
+schema = 1
+project_id = "0196d6a8-49f3-7a4f-baf5-71aa8c9f0d21"
+name = "payments-api"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+large_file_threshold_mib = 32
+preserve_editor_context = true
+preserve_unsaved_buffers = true
+
+[workspace.exclude]
+patterns = [
+  "node_modules/**",
+  ".venv/**",
+  "target/**",
+  "dist/**",
+  ".next/**",
+  "*.sqlite-wal",
+  "*.pid",
+  "*.sock"
+]
+
+[environment.profiles.posix]
+kind = "nix"
+targets = ["linux-*", "darwin-*", "wsl2-*"]
+command = ["nix", "develop"]
+fingerprint_files = ["flake.nix", "flake.lock"]
+healthcheck = ["bash", "-lc", "command -v git && command -v node"]
+
+[environment.profiles.windows]
+kind = "script"
+targets = ["windows-*-native"]
+command = ["pwsh", "-NoProfile", "-File", ".dev/bootstrap.ps1"]
+fingerprint_files = [".dev/bootstrap.ps1", "package-lock.json"]
+healthcheck = ["pwsh", "-NoProfile", "-Command", "node --version"]
+
+[secrets.database_url]
+target = ".env.local"
+required = true
+
+[tasks.test]
+profile = "posix"
+command = ["bash", "-lc", "pytest -q"]
+platforms = ["linux-*", "darwin-*"]
+cpu = 4
+memory_mib = 4096
+interactive = false
+cache = "read-write"
+outputs = ["test-results/**"]
+
+[tasks.build_windows]
+profile = "windows"
+command = ["pwsh", "-NoProfile", "-File", ".dev/build.ps1"]
+platforms = ["windows-*-native"]
+cpu = 8
+memory_mib = 8192
+interactive = false
+cache = "read"
+outputs = ["artifacts/windows/**"]
+
+[sync]
+mode = "adaptive"
+checkpoint_quiet_ms = 2500
+publish_quiet_ms = 10000
+max_publish_interval_s = 120
+
+[handoff]
+restore_editor = true
+restore_terminals = "layout-only"
+open_editor = true

@@ -1,0 +1,34 @@
+use std::path::PathBuf;
+
+#[derive(Debug, thiserror::Error)]
+pub enum DevRelayError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("TOML parse error: {0}")]
+    Toml(#[from] toml::de::Error),
+
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("glob pattern error: {0}")]
+    Glob(#[from] globset::Error),
+
+    #[error("manifest validation failed: {0}")]
+    Manifest(String),
+
+    #[error("git command failed in {cwd}: git {args}\n{stderr}")]
+    GitCommand {
+        cwd: PathBuf,
+        args: String,
+        stderr: String,
+    },
+
+    #[error("target workspace is dirty: {0}")]
+    TargetDirty(String),
+
+    #[error("snapshot verification failed: {0}")]
+    Verification(String),
+}
+
+pub type Result<T> = std::result::Result<T, DevRelayError>;

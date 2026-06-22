@@ -1,0 +1,17 @@
+[package]
+name = "devrelay-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "devrelay"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+devrelay-core = { path = "../devrelay-core" }
+serde_json.workspace = true
