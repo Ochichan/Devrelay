@@ -88,9 +88,7 @@ fn main() -> anyhow::Result<()> {
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "project": manifest.name,
-                        "head": status.head_oid,
-                        "branch": status.branch,
-                        "counts": status.counts,
+                        "status": status.summary(),
                         "untracked_policy": classified,
                     }))?
                 );

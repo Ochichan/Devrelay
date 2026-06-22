@@ -107,29 +107,29 @@ Conventions:
 
 ### M0.3 Git Status Parser
 
-- [ ] Parse branch OID header.
-- [ ] Parse branch head header.
-- [ ] Parse detached HEAD correctly.
-- [ ] Parse upstream header.
-- [ ] Ignore unknown headers.
-- [ ] Parse ordinary changed entries.
-- [ ] Parse staged add entries.
-- [ ] Parse staged modify entries.
-- [ ] Parse staged delete entries.
-- [ ] Parse unstaged modify entries.
-- [ ] Parse unstaged delete entries.
-- [ ] Parse rename entries.
-- [ ] Parse copy entries if reported by Git.
-- [ ] Parse untracked entries.
-- [ ] Parse ignored entries.
-- [ ] Parse unmerged entries into a blocked state for M0.
-- [ ] Preserve NUL-delimited paths exactly as UTF-8 lossless policy allows.
-- [ ] Add test for spaces in paths.
-- [ ] Add test for tab characters in paths if Git emits them safely.
-- [ ] Add test for Unicode paths.
-- [ ] Add test for unknown porcelain v2 header.
-- [ ] Add test for initial repository with no commits and define behavior.
-- [ ] Add stable status summary struct for CLI JSON output.
+- [x] Parse branch OID header.
+- [x] Parse branch head header.
+- [x] Parse detached HEAD correctly.
+- [x] Parse upstream header.
+- [x] Ignore unknown headers.
+- [x] Parse ordinary changed entries.
+- [x] Parse staged add entries.
+- [x] Parse staged modify entries.
+- [x] Parse staged delete entries.
+- [x] Parse unstaged modify entries.
+- [x] Parse unstaged delete entries.
+- [x] Parse rename entries.
+- [x] Parse copy entries if reported by Git.
+- [x] Parse untracked entries.
+- [x] Parse ignored entries.
+- [x] Parse unmerged entries into a blocked state for M0.
+- [x] Preserve NUL-delimited paths exactly as UTF-8 lossless policy allows.
+- [x] Add test for spaces in paths.
+- [x] Add test for tab characters in paths if Git emits them safely.
+- [x] Add test for Unicode paths.
+- [x] Add test for unknown porcelain v2 header.
+- [x] Add test for initial repository with no commits and define behavior.
+- [x] Add stable status summary struct for CLI JSON output.
 
 ### M0.4 Snapshot Metadata Schema
 

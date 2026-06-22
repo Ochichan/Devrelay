@@ -39,6 +39,7 @@ pub struct StatusEntry {
 pub enum StatusEntryKind {
     Ordinary,
     Renamed,
+    Copied,
     Unmerged,
     Untracked,
     Ignored,
@@ -53,12 +54,26 @@ pub struct StatusCounts {
     pub unmerged: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StatusSummary {
+    pub head_oid: String,
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub counts: StatusCounts,
+    pub clean: bool,
+    pub initial: bool,
+}
+
 impl GitStatus {
     pub fn is_clean(&self) -> bool {
         self.counts.staged == 0
             && self.counts.unstaged == 0
             && self.counts.untracked == 0
             && self.counts.unmerged == 0
+    }
+
+    pub fn is_initial(&self) -> bool {
+        self.head_oid == "(initial)"
     }
 
     pub fn untracked_paths(&self) -> impl Iterator<Item = &str> {
@@ -73,6 +88,17 @@ impl GitStatus {
             "{} staged, {} unstaged, {} untracked, {} unmerged",
             self.counts.staged, self.counts.unstaged, self.counts.untracked, self.counts.unmerged
         )
+    }
+
+    pub fn summary(&self) -> StatusSummary {
+        StatusSummary {
+            head_oid: self.head_oid.clone(),
+            branch: self.branch.clone(),
+            upstream: self.upstream.clone(),
+            counts: self.counts.clone(),
+            clean: self.is_clean(),
+            initial: self.is_initial(),
+        }
     }
 }
 
@@ -207,23 +233,20 @@ fn parse_status(raw: &str) -> Result<GitStatus> {
         }
 
         if record.starts_with("1 ") || record.starts_with("2 ") {
-            let kind = if record.starts_with("2 ") {
-                StatusEntryKind::Renamed
-            } else {
-                StatusEntryKind::Ordinary
-            };
+            let kind = changed_entry_kind(record);
             let xy = record.split_whitespace().nth(1).ok_or_else(|| {
                 DevRelayError::Manifest(format!("invalid git status record: {record}"))
             })?;
             add_xy_counts(xy, &mut counts);
-            let path = parse_path_from_ordinary_record(record).unwrap_or_default();
-            let original_path = if kind == StatusEntryKind::Renamed {
-                let original = records.get(index + 1).map(|value| (*value).to_string());
-                index += 1;
-                original
-            } else {
-                None
-            };
+            let path = parse_path_from_changed_record(record, kind).unwrap_or_default();
+            let original_path =
+                if matches!(kind, StatusEntryKind::Renamed | StatusEntryKind::Copied) {
+                    let original = records.get(index + 1).map(|value| (*value).to_string());
+                    index += 1;
+                    original
+                } else {
+                    None
+                };
             entries.push(StatusEntry {
                 kind,
                 xy: Some(xy.to_string()),
@@ -236,11 +259,7 @@ fn parse_status(raw: &str) -> Result<GitStatus> {
 
         if record.starts_with("u ") {
             counts.unmerged += 1;
-            let path = record
-                .split(' ')
-                .next_back()
-                .unwrap_or_default()
-                .to_string();
+            let path = parse_path_after_fields(record, 10).unwrap_or_default();
             entries.push(StatusEntry {
                 kind: StatusEntryKind::Unmerged,
                 xy: None,
@@ -283,9 +302,30 @@ fn add_xy_counts(xy: &str, counts: &mut StatusCounts) {
     }
 }
 
-fn parse_path_from_ordinary_record(record: &str) -> Option<String> {
-    let mut parts = record.splitn(9, ' ');
-    for _ in 0..8 {
+fn changed_entry_kind(record: &str) -> StatusEntryKind {
+    if !record.starts_with("2 ") {
+        return StatusEntryKind::Ordinary;
+    }
+    match record.split_whitespace().nth(8) {
+        Some(score) if score.starts_with('C') => StatusEntryKind::Copied,
+        _ => StatusEntryKind::Renamed,
+    }
+}
+
+fn parse_path_from_changed_record(record: &str, kind: StatusEntryKind) -> Option<String> {
+    let fields_before_path = match kind {
+        StatusEntryKind::Ordinary => 8,
+        StatusEntryKind::Renamed | StatusEntryKind::Copied => 9,
+        StatusEntryKind::Unmerged | StatusEntryKind::Untracked | StatusEntryKind::Ignored => {
+            return None;
+        }
+    };
+    parse_path_after_fields(record, fields_before_path)
+}
+
+fn parse_path_after_fields(record: &str, fields_before_path: usize) -> Option<String> {
+    let mut parts = record.splitn(fields_before_path + 1, ' ');
+    for _ in 0..fields_before_path {
         parts.next()?;
     }
     parts.next().map(ToString::to_string)
@@ -296,17 +336,152 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_porcelain_v2_counts() {
+    fn parses_branch_headers_and_summary() {
         let raw = concat!(
             "# branch.oid abc\0",
             "# branch.head main\0",
+            "# branch.upstream origin/main\0",
+            "# branch.ab +1 -0\0",
             "1 .M N... 100644 100644 100644 a b src/lib.rs\0",
             "? notes.md\0",
         );
         let status = parse_status(raw).expect("status should parse");
         assert_eq!(status.head_oid, "abc");
         assert_eq!(status.branch.as_deref(), Some("main"));
+        assert_eq!(status.upstream.as_deref(), Some("origin/main"));
         assert_eq!(status.counts.unstaged, 1);
         assert_eq!(status.counts.untracked, 1);
+
+        let summary = status.summary();
+        assert_eq!(summary.branch.as_deref(), Some("main"));
+        assert!(!summary.clean);
+        assert!(!summary.initial);
+    }
+
+    #[test]
+    fn parses_detached_head() {
+        let raw = concat!(
+            "# branch.oid abc\0",
+            "# branch.head (detached)\0",
+            "# branch.upstream origin/main\0",
+        );
+        let status = parse_status(raw).expect("status should parse");
+        assert_eq!(status.head_oid, "abc");
+        assert_eq!(status.branch, None);
+        assert_eq!(status.upstream.as_deref(), Some("origin/main"));
+    }
+
+    #[test]
+    fn parses_changed_entry_kinds_and_counts() {
+        let raw = concat!(
+            "# branch.oid abc\0",
+            "# branch.head main\0",
+            "1 A. N... 000000 100644 100644 0 a staged-add.rs\0",
+            "1 M. N... 100644 100644 100644 a b staged-mod.rs\0",
+            "1 D. N... 100644 000000 000000 a 0 staged-del.rs\0",
+            "1 .M N... 100644 100644 100644 a a unstaged-mod.rs\0",
+            "1 .D N... 100644 100644 000000 a a unstaged-del.rs\0",
+        );
+        let status = parse_status(raw).expect("status should parse");
+        assert_eq!(status.counts.staged, 3);
+        assert_eq!(status.counts.unstaged, 2);
+        assert_eq!(
+            status
+                .entries
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "staged-add.rs",
+                "staged-mod.rs",
+                "staged-del.rs",
+                "unstaged-mod.rs",
+                "unstaged-del.rs"
+            ]
+        );
+        assert!(
+            status
+                .entries
+                .iter()
+                .all(|entry| entry.kind == StatusEntryKind::Ordinary)
+        );
+    }
+
+    #[test]
+    fn parses_rename_and_copy_entries() {
+        let raw = concat!(
+            "# branch.oid abc\0",
+            "# branch.head main\0",
+            "2 R. N... 100644 100644 100644 a b R100 new name.rs\0",
+            "old name.rs\0",
+            "2 C. N... 100644 100644 100644 a b C100 copied.rs\0",
+            "source.rs\0",
+        );
+        let status = parse_status(raw).expect("status should parse");
+        assert_eq!(status.entries[0].kind, StatusEntryKind::Renamed);
+        assert_eq!(status.entries[0].path, "new name.rs");
+        assert_eq!(
+            status.entries[0].original_path.as_deref(),
+            Some("old name.rs")
+        );
+        assert_eq!(status.entries[1].kind, StatusEntryKind::Copied);
+        assert_eq!(status.entries[1].path, "copied.rs");
+        assert_eq!(
+            status.entries[1].original_path.as_deref(),
+            Some("source.rs")
+        );
+    }
+
+    #[test]
+    fn parses_untracked_ignored_and_unmerged_entries() {
+        let raw = concat!(
+            "# branch.oid abc\0",
+            "# branch.head main\0",
+            "? notes.md\0",
+            "! target/debug/devrelay\0",
+            "u UU N... 100644 100644 100644 100644 a b c conflicted path.rs\0",
+        );
+        let status = parse_status(raw).expect("status should parse");
+        assert_eq!(status.counts.untracked, 1);
+        assert_eq!(status.counts.ignored, 1);
+        assert_eq!(status.counts.unmerged, 1);
+        assert_eq!(status.entries[0].kind, StatusEntryKind::Untracked);
+        assert_eq!(status.entries[1].kind, StatusEntryKind::Ignored);
+        assert_eq!(status.entries[2].kind, StatusEntryKind::Unmerged);
+        assert_eq!(status.entries[2].path, "conflicted path.rs");
+    }
+
+    #[test]
+    fn preserves_valid_utf8_paths_from_nul_records() {
+        let raw = concat!(
+            "# branch.oid abc\0",
+            "# branch.head main\0",
+            "1 .M N... 100644 100644 100644 a b path with spaces.rs\0",
+            "1 .M N... 100644 100644 100644 a b path\twith\ttabs.rs\0",
+            "1 .M N... 100644 100644 100644 a b 유니코드.rs\0",
+        );
+        let status = parse_status(raw).expect("status should parse");
+        assert_eq!(
+            status
+                .entries
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["path with spaces.rs", "path\twith\ttabs.rs", "유니코드.rs"]
+        );
+    }
+
+    #[test]
+    fn defines_initial_repository_behavior() {
+        let raw = concat!(
+            "# branch.oid (initial)\0",
+            "# branch.head main\0",
+            "? first.txt\0",
+        );
+        let status = parse_status(raw).expect("initial status should parse");
+        assert_eq!(status.head_oid, "(initial)");
+        assert_eq!(status.branch.as_deref(), Some("main"));
+        assert!(status.is_initial());
+        assert!(status.summary().initial);
     }
 }
