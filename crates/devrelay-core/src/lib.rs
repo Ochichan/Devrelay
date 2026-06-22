@@ -66,12 +66,14 @@ pub use manifest::{
 };
 pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
 pub use rpc::{
-    CheckpointCreateParams, CheckpointCreateResult, METHOD_AGENT_HEALTH, METHOD_CHECKPOINT_CREATE,
-    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_SHOW, METHOD_RPC_NEGOTIATE,
-    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, ProjectResult, ProjectsAddParams, ProjectsListResult,
-    ProjectsShowParams, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcError, RpcId, RpcRequest,
-    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, SnapshotsListParams,
-    SnapshotsListResult, StatusGetParams, StatusGetResult,
+    CheckpointCreateParams, CheckpointCreateResult, DiagnosticsExportParams,
+    DiagnosticsExportResult, METHOD_AGENT_HEALTH, METHOD_CHECKPOINT_CREATE,
+    METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_SHOW,
+    METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, ProjectResult,
+    ProjectsAddParams, ProjectsListResult, ProjectsShowParams, RPC_JSONRPC_VERSION,
+    RPC_PROTOCOL_VERSION, RpcError, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
+    RpcVersionNegotiationResult, SnapshotsListParams, SnapshotsListResult, StatusGetParams,
+    StatusGetResult,
 };
 pub use snapshot::{
     ApplyPlan, VerificationDetails, apply_snapshot, create_snapshot, plan_apply_snapshot,

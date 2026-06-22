@@ -315,6 +315,47 @@ fn foreground_serves_checkpoint_create_and_snapshots_list_rpc() {
 }
 
 #[cfg(unix)]
+#[test]
+fn foreground_serves_diagnostics_export_rpc() {
+    use devrelay_core::{IpcLimits, UnixIpcConnection};
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-diagnostics-rpc-test");
+    let out = running.root.join("diagnostics").join("bundle.json");
+
+    let exported = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "diagnostics-1",
+            "method": "diagnostics.export",
+            "params": { "out": out }
+        }),
+    );
+
+    assert_eq!(exported["id"], "diagnostics-1");
+    assert_eq!(
+        exported["result"]["path"].as_str(),
+        Some(out.to_str().unwrap())
+    );
+    assert_eq!(exported["result"]["source_code_included"], false);
+    assert_eq!(exported["result"]["snapshot_objects_included"], false);
+    let bundle: serde_json::Value = serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
+    assert_eq!(bundle["health"]["status"], "ok");
+    assert_eq!(bundle["source_code_included"], false);
+    assert_eq!(bundle["snapshot_objects_included"], false);
+    assert!(
+        bundle["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method == "diagnostics.export")
+    );
+
+    running.stop();
+}
+
+#[cfg(unix)]
 fn rpc_call(
     connection: &mut devrelay_core::UnixIpcConnection,
     request: serde_json::Value,

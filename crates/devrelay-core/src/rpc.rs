@@ -20,6 +20,7 @@ pub const METHOD_PROJECTS_LIST: &str = "projects.list";
 pub const METHOD_PROJECTS_SHOW: &str = "projects.show";
 pub const METHOD_CHECKPOINT_CREATE: &str = "checkpoint.create";
 pub const METHOD_SNAPSHOTS_LIST: &str = "snapshots.list";
+pub const METHOD_DIAGNOSTICS_EXPORT: &str = "diagnostics.export";
 
 pub const RPC_PARSE_ERROR: i64 = -32700;
 pub const RPC_INVALID_REQUEST: i64 = -32600;
@@ -231,6 +232,21 @@ pub struct SnapshotsListResult {
     pub snapshots: Vec<StoredSnapshot>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticsExportParams {
+    pub out: Option<PathBuf>,
+    #[serde(default)]
+    pub include_sensitive_paths: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticsExportResult {
+    pub path: PathBuf,
+    pub include_sensitive_paths: bool,
+    pub source_code_included: bool,
+    pub snapshot_objects_included: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,5 +354,13 @@ mod tests {
 
         assert!(!params.pin);
         assert_eq!(params.label.as_deref(), Some("manual"));
+    }
+
+    #[test]
+    fn diagnostics_export_defaults_to_redacted_paths() {
+        let params: DiagnosticsExportParams = serde_json::from_value(json!({})).unwrap();
+
+        assert_eq!(params.out, None);
+        assert!(!params.include_sensitive_paths);
     }
 }

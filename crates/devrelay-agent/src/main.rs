@@ -2,18 +2,18 @@ use anyhow::Context;
 use clap::{Parser, ValueEnum};
 #[cfg(unix)]
 use devrelay_core::{
-    CheckpointCreateParams, CheckpointCreateResult, GitRepo, IpcConnection, IpcLimits,
-    IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
-    ProjectsListResult, ProjectsShowParams, RPC_PROTOCOL_VERSION, RpcError, RpcRequest,
-    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, SnapshotStore,
-    SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult, UnixIpcConnection,
-    UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, classify_untracked_paths,
-    workspace_id_for,
+    CheckpointCreateParams, CheckpointCreateResult, DiagnosticsExportParams,
+    DiagnosticsExportResult, GitRepo, IpcConnection, IpcLimits, IpcTransport, Manifest,
+    ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsShowParams,
+    RPC_PROTOCOL_VERSION, RpcError, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
+    RpcVersionNegotiationResult, SnapshotStore, SnapshotsListParams, SnapshotsListResult,
+    StatusGetParams, StatusGetResult, UnixIpcConnection, UnixIpcListener, WorkspaceRegistryEntry,
+    WorkspaceState, classify_untracked_paths, workspace_id_for,
 };
 use devrelay_core::{
-    DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_CHECKPOINT_CREATE, METHOD_PROJECTS_ADD,
-    METHOD_PROJECTS_LIST, METHOD_PROJECTS_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST,
-    METHOD_STATUS_GET, MetadataDb,
+    DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_CHECKPOINT_CREATE,
+    METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_SHOW,
+    METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -27,6 +27,8 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Duration;
+#[cfg(unix)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Parser)]
 #[command(name = "devrelay-agent")]
@@ -106,6 +108,7 @@ impl AgentState {
             METHOD_PROJECTS_SHOW.to_string(),
             METHOD_CHECKPOINT_CREATE.to_string(),
             METHOD_SNAPSHOTS_LIST.to_string(),
+            METHOD_DIAGNOSTICS_EXPORT.to_string(),
         ]
     }
 }
@@ -232,6 +235,7 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_PROJECTS_SHOW => handle_projects_show(id, request.params, state),
         METHOD_CHECKPOINT_CREATE => handle_checkpoint_create(id, request.params, state),
         METHOD_SNAPSHOTS_LIST => handle_snapshots_list(id, request.params, state),
+        METHOD_DIAGNOSTICS_EXPORT => handle_diagnostics_export(id, request.params, state),
         method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
     }
 }
@@ -351,6 +355,79 @@ fn handle_snapshots_list(
     };
 
     match serde_json::to_value(SnapshotsListResult { snapshots }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_diagnostics_export(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: DiagnosticsExportParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let path = params.out.unwrap_or_else(|| {
+        state
+            .home
+            .diagnostics_dir()
+            .join(format!("diagnostics-{}.json", unix_seconds()))
+    });
+    let config = match state.config.lock() {
+        Ok(config) => {
+            if params.include_sensitive_paths {
+                match serde_json::to_value(&*config) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+                    }
+                }
+            } else {
+                match serde_json::to_value(config.redacted_for_diagnostics()) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+                    }
+                }
+            }
+        }
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let bundle = serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "protocol_version": RPC_PROTOCOL_VERSION,
+        "generated_at_unix_seconds": unix_seconds(),
+        "health": state.health(),
+        "config": config,
+        "methods": AgentState::supported_methods(),
+        "include_sensitive_paths": params.include_sensitive_paths,
+        "source_code_included": false,
+        "snapshot_objects_included": false,
+    });
+
+    if let Some(parent) = path.parent()
+        && let Err(err) = std::fs::create_dir_all(parent)
+    {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    let bytes = match serde_json::to_vec_pretty(&bundle) {
+        Ok(bytes) => bytes,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    if let Err(err) = std::fs::write(&path, bytes) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    let result = DiagnosticsExportResult {
+        path,
+        include_sensitive_paths: params.include_sensitive_paths,
+        source_code_included: false,
+        snapshot_objects_included: false,
+    };
+
+    match serde_json::to_value(result) {
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }
@@ -600,6 +677,14 @@ fn current_platform_profile() -> String {
 fn hash_text(value: &str) -> String {
     let digest = blake3::hash(value.as_bytes());
     digest.to_hex()[..16].to_string()
+}
+
+#[cfg(unix)]
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn install_shutdown_handler() -> anyhow::Result<Arc<AtomicBool>> {

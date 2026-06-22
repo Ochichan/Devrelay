@@ -522,7 +522,7 @@ Conventions:
 - [x] Add `snapshots.list`.
 - [ ] Add `recover.open`.
 - [ ] Add `apply.snapshot`.
-- [ ] Add `diagnostics.export`.
+- [x] Add `diagnostics.export`.
 - [x] Add RPC schema tests.
 - [x] Add backwards compatibility policy.
 
