@@ -479,18 +479,18 @@ Conventions:
 
 ### M2.1 Agent Binary
 
-- [ ] Add `crates/devrelay-agent`.
-- [ ] Add agent CLI flags.
-- [ ] Add `--foreground`.
-- [ ] Add `--config`.
-- [ ] Add `--socket-path`.
-- [ ] Add `--log-level`.
-- [ ] Add graceful shutdown handler.
-- [ ] Add startup config load.
-- [ ] Add startup database migration.
-- [ ] Add startup project registry load.
-- [ ] Add health endpoint.
-- [ ] Add agent unit tests.
+- [x] Add `crates/devrelay-agent`.
+- [x] Add agent CLI flags.
+- [x] Add `--foreground`.
+- [x] Add `--config`.
+- [x] Add `--socket-path`.
+- [x] Add `--log-level`.
+- [x] Add graceful shutdown handler.
+- [x] Add startup config load.
+- [x] Add startup database migration.
+- [x] Add startup project registry load.
+- [x] Add health endpoint.
+- [x] Add agent unit tests.
 
 ### M2.2 Local IPC Transport
 
