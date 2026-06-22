@@ -382,22 +382,22 @@ Conventions:
 
 ### M1.6 Snapshot Store
 
-- [ ] Create per-project bare snapshot repo.
-- [ ] Initialize bare repo lazily.
-- [ ] Store synthetic snapshot refs in snapshot repo where feasible.
-- [ ] Add object import/export helper.
-- [ ] Keep main repo refs minimal.
-- [ ] Persist snapshot metadata in SQLite.
-- [ ] Persist parent snapshot ID.
-- [ ] Persist sequence number.
-- [ ] Persist pinned flag.
-- [ ] Persist label.
-- [ ] Add `checkpoint --label`.
-- [ ] Add `checkpoint --pin`.
-- [ ] Add snapshot list query.
-- [ ] Add snapshot show query.
-- [ ] Add snapshot JSON export.
-- [ ] Add snapshot store tests.
+- [x] Create per-project bare snapshot repo.
+- [x] Initialize bare repo lazily.
+- [x] Store synthetic snapshot refs in snapshot repo where feasible.
+- [x] Add object import/export helper.
+- [x] Keep main repo refs minimal.
+- [x] Persist snapshot metadata in SQLite.
+- [x] Persist parent snapshot ID.
+- [x] Persist sequence number.
+- [x] Persist pinned flag.
+- [x] Persist label.
+- [x] Add `checkpoint --label`.
+- [x] Add `checkpoint --pin`.
+- [x] Add snapshot list query.
+- [x] Add snapshot show query.
+- [x] Add snapshot JSON export.
+- [x] Add snapshot store tests.
 
 ### M1.7 Recovery CLI
 

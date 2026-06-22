@@ -415,6 +415,144 @@ fn project_add_appends_workspaces_and_workspace_remove_handles_stale_paths() {
 }
 
 #[test]
+fn checkpoint_persists_snapshot_store_and_exports_json() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-snapshot-store-test-{}-{}",
+        std::process::id(),
+        "repo"
+    ));
+    let home = std::env::temp_dir().join(format!(
+        "devrelay-snapshot-store-test-{}-{}",
+        std::process::id(),
+        "home"
+    ));
+    let out = std::env::temp_dir().join(format!(
+        "devrelay-snapshot-store-test-{}-{}.json",
+        std::process::id(),
+        "checkpoint"
+    ));
+    let export = std::env::temp_dir().join(format!(
+        "devrelay-snapshot-store-test-{}-{}.json",
+        std::process::id(),
+        "export"
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_file(&out);
+    let _ = std::fs::remove_file(&export);
+    std::fs::create_dir(&root).unwrap();
+    init_git_repo(&root);
+    write_manifest(&root, "cli-store-project", "CLI Store Project");
+    std::fs::write(root.join("README.md"), "changed\n").unwrap();
+
+    let checkpoint = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "checkpoint",
+            "--repo",
+            root.to_str().unwrap(),
+            "--manifest",
+            root.join("devrelay.toml").to_str().unwrap(),
+            "--label",
+            "first",
+            "--pin",
+            "--out",
+            out.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(checkpoint.status.success());
+    let checkpoint_json: serde_json::Value = serde_json::from_slice(&checkpoint.stdout).unwrap();
+    let stored = &checkpoint_json["checkpoint"];
+    let snapshot_id = stored["snapshot_id"].as_str().unwrap();
+    assert_eq!(stored["sequence_number"].as_i64(), Some(1));
+    assert_eq!(stored["pinned"].as_bool(), Some(true));
+    assert_eq!(stored["label"].as_str(), Some("first"));
+    assert!(out.exists());
+    assert!(
+        home.join("projects")
+            .join("cli-store-project")
+            .join("snapshots.git")
+            .join("HEAD")
+            .exists()
+    );
+    assert!(
+        home.join("projects")
+            .join("cli-store-project")
+            .join("metadata.sqlite")
+            .exists()
+    );
+
+    let source_index_ref = stored["metadata"]["index_ref"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("refs/devrelay/snapshots/{snapshot_id}/index"));
+    let source_ref = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["rev-parse", "--verify", &source_index_ref])
+        .output()
+        .unwrap();
+    assert!(!source_ref.status.success());
+
+    let list = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "snapshot",
+            "list",
+            "--project",
+            "cli-store-project",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(list.status.success());
+    let list_json: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(list_json.as_array().unwrap().len(), 1);
+    assert_eq!(list_json[0]["snapshot_id"].as_str(), Some(snapshot_id));
+
+    let show = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "snapshot",
+            "show",
+            snapshot_id,
+            "--project",
+            "cli-store-project",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    let show_json: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(show_json["snapshot_id"].as_str(), Some(snapshot_id));
+    assert_eq!(show_json["label"].as_str(), Some("first"));
+
+    let exported = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "snapshot",
+            "export",
+            snapshot_id,
+            "--project",
+            "cli-store-project",
+            "--out",
+            export.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(exported.status.success());
+    assert!(export.exists());
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(home);
+    let _ = std::fs::remove_file(out);
+    let _ = std::fs::remove_file(export);
+}
+
+#[test]
 fn project_add_rejects_non_git_path() {
     let root = std::env::temp_dir().join(format!("devrelay-not-git-test-{}", std::process::id()));
     let config =

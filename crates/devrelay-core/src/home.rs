@@ -59,6 +59,10 @@ impl DevRelayHome {
         self.project_data_dir(project_id).join("snapshots.git")
     }
 
+    pub fn metadata_db_path(&self, project_id: &str) -> PathBuf {
+        self.project_data_dir(project_id).join("metadata.sqlite")
+    }
+
     pub fn cas_dir(&self, project_id: &str) -> PathBuf {
         self.project_data_dir(project_id).join("cas")
     }
@@ -209,6 +213,10 @@ mod tests {
         assert_eq!(
             home.snapshot_bare_repo_path("project123"),
             PathBuf::from("/tmp/devrelay-test/projects/project123/snapshots.git")
+        );
+        assert_eq!(
+            home.metadata_db_path("project123"),
+            PathBuf::from("/tmp/devrelay-test/projects/project123/metadata.sqlite")
         );
         assert_eq!(
             home.cas_dir("project123"),

@@ -40,17 +40,21 @@ leases, device pairing, and UI surfaces come after this correctness gate.
 devrelay manifest check <path>
 devrelay manifest check <path> --json
 devrelay status --repo <path> --manifest <path> [--json]
-devrelay checkpoint --repo <path> --manifest <path> [--out <snapshot.json>]
+devrelay checkpoint --repo <path> --manifest <path> [--label <label>] [--pin] [--out <snapshot.json>]
+devrelay snapshot list --project <project-id> [--json]
+devrelay snapshot show <snapshot-id> --project <project-id> [--json]
+devrelay snapshot export <snapshot-id> --project <project-id> --out <snapshot.json> [--json]
 devrelay apply --repo <target> --source <source> --snapshot <snapshot.json> [--dry-run] [--json]
 ```
 
 `apply` refuses dirty targets by default. That matches the product promise that
 DevRelay never quietly overwrites local work.
 
-`checkpoint` writes snapshot metadata to
-`.devrelay/snapshots/<snapshot-id>.json` unless `--out` is supplied. `apply
---dry-run` validates that the target is clean and the source snapshot refs are
-available without mutating the target.
+`checkpoint` stores snapshot refs in the per-project bare repo under
+`DEVRELAY_HOME` and persists queryable metadata in SQLite. Use `--out` or
+`snapshot export` when a standalone snapshot metadata JSON file is needed.
+`apply --dry-run` validates that the target is clean and the source snapshot refs
+are available without mutating the target.
 
 ## Core API Boundary
 

@@ -6,20 +6,25 @@
 devrelay manifest check devrelay_spec_bundle/devrelay.toml
 devrelay manifest check devrelay_spec_bundle/devrelay.toml --json
 devrelay status --repo . --manifest devrelay.toml --json
-devrelay checkpoint --repo . --manifest devrelay.toml --json
+devrelay checkpoint --repo . --manifest devrelay.toml --label "before refactor" --pin --json
+devrelay snapshot list --project <project-id> --json
+devrelay snapshot show <snapshot-id> --project <project-id> --json
+devrelay snapshot export <snapshot-id> --project <project-id> --out snapshot.json --json
 devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --dry-run
 devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --json
 ```
 
-## Snapshot Output
+## Snapshot Store
 
-`checkpoint` writes snapshot metadata to:
+`checkpoint` stores synthetic snapshot refs in:
 
 ```text
-.devrelay/snapshots/<snapshot-id>.json
+$DEVRELAY_HOME/projects/<project-id>/snapshots.git
 ```
 
-Use `--out <path>` to choose a different file.
+Snapshot metadata is persisted in the per-project SQLite database under the same
+project data directory. Use `--out <path>` on `checkpoint`, or `snapshot export`,
+to write a portable metadata JSON file.
 
 ## Exit Codes
 

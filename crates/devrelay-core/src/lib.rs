@@ -43,6 +43,7 @@ pub mod manifest;
 mod policy;
 mod snapshot;
 mod snapshot_schema;
+mod snapshot_store;
 mod storage;
 
 pub use config::{
@@ -64,4 +65,5 @@ pub use snapshot::{
     read_snapshot_file, verify_snapshot, write_snapshot_file,
 };
 pub use snapshot_schema::SnapshotMetadata;
+pub use snapshot_store::{SnapshotStore, StoredSnapshot};
 pub use storage::MetadataDb;

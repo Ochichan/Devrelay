@@ -7,10 +7,9 @@
 use anyhow::{Context, Error};
 use clap::{Parser, Subcommand};
 use devrelay_core::{
-    DevRelayError, DevRelayHome, GitRepo, LocalConfig, Manifest, PathDecision,
+    DevRelayError, DevRelayHome, GitRepo, LocalConfig, Manifest, PathDecision, SnapshotStore,
     WorkspaceRegistryEntry, WorkspaceState, apply_snapshot, classify_untracked_paths,
-    create_snapshot, plan_apply_snapshot, read_snapshot_file, workspace_id_for,
-    write_snapshot_file,
+    plan_apply_snapshot, read_snapshot_file, workspace_id_for, write_snapshot_file,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -48,6 +47,10 @@ enum Command {
         #[command(subcommand)]
         command: ProjectsCommand,
     },
+    Snapshot {
+        #[command(subcommand)]
+        command: SnapshotCommand,
+    },
     Workspace {
         #[command(subcommand)]
         command: WorkspaceCommand,
@@ -67,6 +70,10 @@ enum Command {
         manifest: PathBuf,
         #[arg(long)]
         out: Option<PathBuf>,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        pin: bool,
         #[arg(long)]
         json: bool,
     },
@@ -154,6 +161,32 @@ enum WorkspaceCommand {
         id_or_path: String,
         #[arg(long)]
         config: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SnapshotCommand {
+    List {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Show {
+        snapshot_id: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Export {
+        snapshot_id: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        out: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -383,6 +416,75 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         },
+        Command::Snapshot { command } => match command {
+            SnapshotCommand::List { project, json } => {
+                let home = DevRelayHome::resolve()?;
+                let store = SnapshotStore::open(&home, &project)?;
+                let snapshots = store.list_snapshots()?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&snapshots)?);
+                } else {
+                    for snapshot in snapshots {
+                        println!(
+                            "{} #{}{}",
+                            snapshot.snapshot_id,
+                            snapshot.sequence_number,
+                            if snapshot.pinned { " pinned" } else { "" }
+                        );
+                        if let Some(label) = snapshot.label {
+                            println!("  label: {label}");
+                        }
+                    }
+                }
+            }
+            SnapshotCommand::Show {
+                snapshot_id,
+                project,
+                json,
+            } => {
+                let home = DevRelayHome::resolve()?;
+                let store = SnapshotStore::open(&home, &project)?;
+                let snapshot = store.get_snapshot(&snapshot_id)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&snapshot)?);
+                } else {
+                    println!(
+                        "snapshot: {} #{}",
+                        snapshot.snapshot_id, snapshot.sequence_number
+                    );
+                    println!("  project: {}", snapshot.project_id);
+                    println!("  pinned: {}", snapshot.pinned);
+                    if let Some(label) = snapshot.label {
+                        println!("  label: {label}");
+                    }
+                    if let Some(parent) = snapshot.parent_snapshot_id {
+                        println!("  parent: {parent}");
+                    }
+                }
+            }
+            SnapshotCommand::Export {
+                snapshot_id,
+                project,
+                out,
+                json,
+            } => {
+                let home = DevRelayHome::resolve()?;
+                let store = SnapshotStore::open(&home, &project)?;
+                let snapshot = store.export_snapshot_json(&snapshot_id, &out)?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "exported": snapshot,
+                            "path": out,
+                        }))?
+                    );
+                } else {
+                    println!("exported snapshot: {}", snapshot.snapshot_id);
+                    println!("  path: {}", out.display());
+                }
+            }
+        },
         Command::Status {
             repo,
             manifest,
@@ -441,30 +543,47 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             repo,
             manifest,
             out,
+            label,
+            pin,
             json,
         } => {
             let manifest = Manifest::load(&manifest)
                 .with_context(|| format!("failed to load {}", manifest.display()))?;
             let repo = GitRepo::new(repo);
-            let snapshot = create_snapshot(&repo, &manifest)?;
-            let out = out.unwrap_or_else(|| {
-                PathBuf::from(".devrelay")
-                    .join("snapshots")
-                    .join(format!("{}.json", snapshot.snapshot_id))
-            });
-            write_snapshot_file(&out, &snapshot)?;
+            let home = DevRelayHome::resolve()?;
+            home.create_base_dirs()?;
+            let mut store = SnapshotStore::open(&home, &manifest.project_id)?;
+            let stored = store.checkpoint(&repo, &manifest, pin, label)?;
+            if let Some(out) = &out {
+                write_snapshot_file(out, &stored.metadata)?;
+            }
             if json {
-                println!("{}", serde_json::to_string_pretty(&snapshot)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "checkpoint": stored,
+                        "snapshot_file": out,
+                        "snapshot_repo": store.snapshot_repo_path(),
+                    }))?
+                );
             } else {
-                println!("checkpoint: {}", snapshot.snapshot_id);
-                println!("  head: {}", snapshot.head_oid);
-                println!("  index: {}", snapshot.index_tree_oid);
-                println!("  work: {}", snapshot.work_tree_oid);
+                println!("checkpoint: {}", stored.snapshot_id);
+                println!("  sequence: {}", stored.sequence_number);
+                println!("  pinned: {}", stored.pinned);
+                if let Some(label) = &stored.label {
+                    println!("  label: {label}");
+                }
+                println!("  head: {}", stored.metadata.head_oid);
+                println!("  index: {}", stored.metadata.index_tree_oid);
+                println!("  work: {}", stored.metadata.work_tree_oid);
                 println!(
                     "  included untracked: {}",
-                    snapshot.included_untracked.len()
+                    stored.metadata.included_untracked.len()
                 );
-                println!("  snapshot file: {}", out.display());
+                println!("  snapshot repo: {}", store.snapshot_repo_path().display());
+                if let Some(out) = &out {
+                    println!("  snapshot file: {}", out.display());
+                }
             }
         }
         Command::Apply {
