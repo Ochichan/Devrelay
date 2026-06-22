@@ -65,6 +65,8 @@ pub use manifest::{
     SyncConfig, SyncMode, TaskCacheMode, TaskConfig, TaskSandbox, UntrackedPolicy, WorkspaceConfig,
 };
 pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
+#[cfg(unix)]
+pub use rpc::AgentRpcClient;
 pub use rpc::{
     ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
     DiagnosticsExportParams, DiagnosticsExportResult, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,

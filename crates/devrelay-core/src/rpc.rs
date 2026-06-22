@@ -4,14 +4,20 @@
 //! transport. Notifications are intentionally unsupported for M2 so every
 //! request has a stable ID that can be echoed in success and error responses.
 
+#[cfg(unix)]
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
     ApplyPlan, ClassifiedPath, ProjectRegistryEntry, StatusEntry, StatusSummary, StoredSnapshot,
     VerificationDetails, WorkspaceRegistryEntry,
 };
+#[cfg(unix)]
+use crate::{DevRelayError, IpcConnection, IpcLimits, Result, UnixIpcConnection};
 
 pub const RPC_JSONRPC_VERSION: &str = "2.0";
 pub const RPC_PROTOCOL_VERSION: u32 = 1;
@@ -287,6 +293,80 @@ pub struct DiagnosticsExportResult {
     pub snapshot_objects_included: bool,
 }
 
+#[cfg(unix)]
+static NEXT_RPC_ID: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+pub struct AgentRpcClient {
+    socket_path: PathBuf,
+    limits: IpcLimits,
+}
+
+#[cfg(unix)]
+impl AgentRpcClient {
+    pub fn new(socket_path: impl Into<PathBuf>) -> Self {
+        Self {
+            socket_path: socket_path.into(),
+            limits: IpcLimits::default(),
+        }
+    }
+
+    pub fn with_limits(socket_path: impl Into<PathBuf>, limits: IpcLimits) -> Self {
+        Self {
+            socket_path: socket_path.into(),
+            limits,
+        }
+    }
+
+    pub fn socket_path(&self) -> &std::path::Path {
+        &self.socket_path
+    }
+
+    pub fn call<P, R>(&self, method: &str, params: P) -> Result<R>
+    where
+        P: Serialize,
+        R: DeserializeOwned,
+    {
+        let id = RpcId::String(format!(
+            "client-{}-{}",
+            std::process::id(),
+            NEXT_RPC_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let request = RpcRequest {
+            jsonrpc: RPC_JSONRPC_VERSION.to_string(),
+            id: Some(id.clone()),
+            method: method.to_string(),
+            params: serde_json::to_value(params)?,
+        };
+        let mut connection = UnixIpcConnection::connect(&self.socket_path, self.limits)?;
+        let request_bytes = serde_json::to_vec(&request)?;
+        connection.write_message(&request_bytes, self.limits)?;
+        let response_bytes = connection.read_message(self.limits)?;
+        let response: RpcResponse = serde_json::from_slice(&response_bytes)?;
+
+        if response.jsonrpc != RPC_JSONRPC_VERSION {
+            return Err(DevRelayError::Ipc(format!(
+                "agent returned unsupported jsonrpc version {}",
+                response.jsonrpc
+            )));
+        }
+        if response.id.as_ref() != Some(&id) {
+            return Err(DevRelayError::Ipc("agent response ID mismatch".to_string()));
+        }
+        if let Some(error) = response.error {
+            return Err(DevRelayError::Ipc(format!(
+                "agent RPC error {}: {}",
+                error.code, error.message
+            )));
+        }
+        let result = response
+            .result
+            .ok_or_else(|| DevRelayError::Ipc("agent response missing result".to_string()))?;
+        Ok(serde_json::from_value(result)?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,5 +507,38 @@ mod tests {
 
         assert_eq!(params.out, None);
         assert!(!params.include_sensitive_paths);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_rpc_client_round_trips_success_response() {
+        use crate::{IpcConnection, IpcTransport, UnixIpcListener};
+        use std::thread;
+
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("agent.sock");
+        let listener = UnixIpcListener::bind(&socket).unwrap();
+        let handle = thread::spawn(move || {
+            let mut connection = listener.accept().unwrap();
+            let request_bytes = connection.read_message(IpcLimits::default()).unwrap();
+            let request = RpcRequest::parse(&request_bytes).unwrap();
+            assert_eq!(request.method, METHOD_AGENT_HEALTH);
+            let response =
+                RpcResponse::success(request.required_id().unwrap(), json!({ "status": "ok" }));
+            connection
+                .write_message(
+                    &serde_json::to_vec(&response).unwrap(),
+                    IpcLimits::default(),
+                )
+                .unwrap();
+        });
+
+        let client = AgentRpcClient::new(&socket);
+        let response: serde_json::Value = client
+            .call(METHOD_AGENT_HEALTH, json!({ "probe": true }))
+            .unwrap();
+
+        assert_eq!(response["status"], "ok");
+        handle.join().unwrap();
     }
 }

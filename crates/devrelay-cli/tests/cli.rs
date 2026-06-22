@@ -67,6 +67,16 @@ fn prints_version() {
 }
 
 #[test]
+fn exposes_agent_routing_global_flags() {
+    let output = devrelay().arg("--help").output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("--direct"));
+    assert!(stdout.contains("--agent-socket"));
+}
+
+#[test]
 fn manifest_check_supports_json() {
     let output = devrelay()
         .args([

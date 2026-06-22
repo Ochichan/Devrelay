@@ -28,6 +28,10 @@ use std::process::ExitCode;
 struct Cli {
     #[arg(long, global = true)]
     json_errors: bool,
+    #[arg(long, global = true)]
+    direct: bool,
+    #[arg(long, global = true)]
+    agent_socket: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -283,7 +287,15 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> anyhow::Result<()> {
-    match cli.command {
+    let Cli {
+        json_errors: _,
+        direct,
+        agent_socket,
+        command,
+    } = cli;
+    let _agent_options = (direct, agent_socket);
+
+    match command {
         Command::Continue {
             source,
             target,
