@@ -44,6 +44,9 @@ devrelay checkpoint --repo <path> --manifest <path> [--label <label>] [--pin] [-
 devrelay snapshot list --project <project-id> [--json]
 devrelay snapshot show <snapshot-id> --project <project-id> [--json]
 devrelay snapshot export <snapshot-id> --project <project-id> --out <snapshot.json> [--json]
+devrelay recover list [--project <project-id>] [--json]
+devrelay recover show <snapshot-id> [--project <project-id>] [--json]
+devrelay recover open <snapshot-id> --path <new-workspace> [--register] [--name <name>] [--json]
 devrelay apply --repo <target> --source <source> --snapshot <snapshot.json> [--dry-run] [--json]
 ```
 
@@ -53,6 +56,8 @@ DevRelay never quietly overwrites local work.
 `checkpoint` stores snapshot refs in the per-project bare repo under
 `DEVRELAY_HOME` and persists queryable metadata in SQLite. Use `--out` or
 `snapshot export` when a standalone snapshot metadata JSON file is needed.
+`recover open` creates or reuses a clean recovery workspace, applies the selected
+snapshot from the local store, and can register the recovered workspace.
 `apply --dry-run` validates that the target is clean and the source snapshot refs
 are available without mutating the target.
 

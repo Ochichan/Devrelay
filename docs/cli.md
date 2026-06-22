@@ -10,6 +10,9 @@ devrelay checkpoint --repo . --manifest devrelay.toml --label "before refactor" 
 devrelay snapshot list --project <project-id> --json
 devrelay snapshot show <snapshot-id> --project <project-id> --json
 devrelay snapshot export <snapshot-id> --project <project-id> --out snapshot.json --json
+devrelay recover list --json
+devrelay recover show <snapshot-id> --json
+devrelay recover open <snapshot-id> --path ../recovery --register --name review --json
 devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --dry-run
 devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --json
 ```

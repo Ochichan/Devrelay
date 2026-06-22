@@ -553,6 +553,320 @@ fn checkpoint_persists_snapshot_store_and_exports_json() {
 }
 
 #[test]
+fn recover_list_show_and_open_restores_snapshot_without_touching_source() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-recover-test-{}-{}",
+        std::process::id(),
+        "source"
+    ));
+    let target = std::env::temp_dir().join(format!(
+        "devrelay-recover-test-{}-{}",
+        std::process::id(),
+        "target"
+    ));
+    let home = std::env::temp_dir().join(format!(
+        "devrelay-recover-test-{}-{}",
+        std::process::id(),
+        "home"
+    ));
+    let config = std::env::temp_dir().join(format!(
+        "devrelay-recover-test-{}-{}.toml",
+        std::process::id(),
+        "config"
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&target);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_file(&config);
+    std::fs::create_dir(&root).unwrap();
+    init_git_repo(&root);
+    write_manifest(&root, "recover-project", "Recover Project");
+
+    let add = devrelay()
+        .args([
+            "project",
+            "add",
+            root.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(add.status.success());
+
+    std::fs::write(root.join("README.md"), "source changed\n").unwrap();
+    std::fs::write(root.join("notes.md"), "recover me\n").unwrap();
+    let checkpoint = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "checkpoint",
+            "--repo",
+            root.to_str().unwrap(),
+            "--manifest",
+            root.join("devrelay.toml").to_str().unwrap(),
+            "--label",
+            "recoverable",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(checkpoint.status.success());
+    let checkpoint_json: serde_json::Value = serde_json::from_slice(&checkpoint.stdout).unwrap();
+    let snapshot_id = checkpoint_json["checkpoint"]["snapshot_id"]
+        .as_str()
+        .unwrap();
+    let source_readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+
+    let list_all = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "recover",
+            "list",
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(list_all.status.success());
+    let list_all_json: serde_json::Value = serde_json::from_slice(&list_all.stdout).unwrap();
+    assert_eq!(list_all_json.as_array().unwrap().len(), 1);
+
+    let list_project = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "recover",
+            "list",
+            "--project",
+            "recover-project",
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(list_project.status.success());
+
+    let show = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "recover",
+            "show",
+            snapshot_id,
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    let show_json: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(show_json["snapshot_id"].as_str(), Some(snapshot_id));
+
+    let open = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "recover",
+            "open",
+            snapshot_id,
+            "--path",
+            target.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--register",
+            "--name",
+            "review-copy",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(open.status.success());
+    let open_json: serde_json::Value = serde_json::from_slice(&open.stdout).unwrap();
+    assert_eq!(open_json["name"].as_str(), Some("review-copy"));
+    assert!(
+        open_json["registered"]["workspace_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("w_"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("README.md")).unwrap(),
+        "source changed\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("notes.md")).unwrap(),
+        "recover me\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("README.md")).unwrap(),
+        source_readme
+    );
+
+    let project = devrelay()
+        .args([
+            "project",
+            "show",
+            "recover-project",
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(project.status.success());
+    let project_json: serde_json::Value = serde_json::from_slice(&project.stdout).unwrap();
+    assert_eq!(project_json["workspaces"].as_object().unwrap().len(), 2);
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(target);
+    let _ = std::fs::remove_dir_all(home);
+    let _ = std::fs::remove_file(config);
+}
+
+#[test]
+fn recover_show_reports_missing_snapshot() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-recover-missing-test-{}-{}",
+        std::process::id(),
+        "source"
+    ));
+    let home = std::env::temp_dir().join(format!(
+        "devrelay-recover-missing-test-{}-{}",
+        std::process::id(),
+        "home"
+    ));
+    let config = std::env::temp_dir().join(format!(
+        "devrelay-recover-missing-test-{}-{}.toml",
+        std::process::id(),
+        "config"
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_file(&config);
+    std::fs::create_dir(&root).unwrap();
+    init_git_repo(&root);
+    write_manifest(&root, "recover-missing-project", "Recover Missing Project");
+    let add = devrelay()
+        .args([
+            "project",
+            "add",
+            root.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(add.status.success());
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "--json-errors",
+            "recover",
+            "show",
+            "s1_000000000000000000000000",
+            "--config",
+            config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("DR-CONFIG"));
+    assert!(stderr.contains("unknown snapshot"));
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(home);
+    let _ = std::fs::remove_file(config);
+}
+
+#[test]
+fn recover_open_refuses_dirty_target() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-recover-dirty-test-{}-{}",
+        std::process::id(),
+        "source"
+    ));
+    let target = std::env::temp_dir().join(format!(
+        "devrelay-recover-dirty-test-{}-{}",
+        std::process::id(),
+        "target"
+    ));
+    let home = std::env::temp_dir().join(format!(
+        "devrelay-recover-dirty-test-{}-{}",
+        std::process::id(),
+        "home"
+    ));
+    let config = std::env::temp_dir().join(format!(
+        "devrelay-recover-dirty-test-{}-{}.toml",
+        std::process::id(),
+        "config"
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&target);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_file(&config);
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&target).unwrap();
+    init_git_repo(&root);
+    init_git_repo(&target);
+    write_manifest(&root, "recover-dirty-project", "Recover Dirty Project");
+    let add = devrelay()
+        .args([
+            "project",
+            "add",
+            root.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(add.status.success());
+    std::fs::write(root.join("README.md"), "source changed\n").unwrap();
+    let checkpoint = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "checkpoint",
+            "--repo",
+            root.to_str().unwrap(),
+            "--manifest",
+            root.join("devrelay.toml").to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(checkpoint.status.success());
+    let checkpoint_json: serde_json::Value = serde_json::from_slice(&checkpoint.stdout).unwrap();
+    let snapshot_id = checkpoint_json["checkpoint"]["snapshot_id"]
+        .as_str()
+        .unwrap();
+    std::fs::write(target.join("dirty.txt"), "local\n").unwrap();
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "--json-errors",
+            "recover",
+            "open",
+            snapshot_id,
+            "--path",
+            target.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("DR-APPLY-DIRTY-TARGET"));
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(target);
+    let _ = std::fs::remove_dir_all(home);
+    let _ = std::fs::remove_file(config);
+}
+
+#[test]
 fn project_add_rejects_non_git_path() {
     let root = std::env::temp_dir().join(format!("devrelay-not-git-test-{}", std::process::id()));
     let config =

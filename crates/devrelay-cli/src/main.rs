@@ -7,11 +7,13 @@
 use anyhow::{Context, Error};
 use clap::{Parser, Subcommand};
 use devrelay_core::{
-    DevRelayError, DevRelayHome, GitRepo, LocalConfig, Manifest, PathDecision, SnapshotStore,
-    WorkspaceRegistryEntry, WorkspaceState, apply_snapshot, classify_untracked_paths,
-    plan_apply_snapshot, read_snapshot_file, workspace_id_for, write_snapshot_file,
+    DevRelayError, DevRelayHome, GitRepo, LocalConfig, Manifest, PathDecision,
+    ProjectRegistryEntry, SnapshotStore, StoredSnapshot, WorkspaceRegistryEntry, WorkspaceState,
+    apply_snapshot, classify_untracked_paths, plan_apply_snapshot, read_snapshot_file,
+    workspace_id_for, write_snapshot_file,
 };
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -46,6 +48,10 @@ enum Command {
     Projects {
         #[command(subcommand)]
         command: ProjectsCommand,
+    },
+    Recover {
+        #[command(subcommand)]
+        command: RecoverCommand,
     },
     Snapshot {
         #[command(subcommand)]
@@ -187,6 +193,42 @@ enum SnapshotCommand {
         project: String,
         #[arg(long)]
         out: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RecoverCommand {
+    List {
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    Show {
+        snapshot_id: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    Open {
+        snapshot_id: String,
+        #[arg(long)]
+        path: PathBuf,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        register: bool,
+        #[arg(long)]
+        name: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -413,6 +455,100 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                         "removed workspace: {} ({})",
                         removed.workspace_id, project_id
                     );
+                }
+            }
+        },
+        Command::Recover { command } => match command {
+            RecoverCommand::List {
+                project,
+                config,
+                json,
+            } => {
+                let (_, local_config) = load_or_default_config(config)?;
+                let home = DevRelayHome::resolve()?;
+                let snapshots = recover_list_snapshots(&home, &local_config, project.as_deref())?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&snapshots)?);
+                } else {
+                    for snapshot in snapshots {
+                        println!(
+                            "{} {} #{}",
+                            snapshot.project_id, snapshot.snapshot_id, snapshot.sequence_number
+                        );
+                    }
+                }
+            }
+            RecoverCommand::Show {
+                snapshot_id,
+                project,
+                config,
+                json,
+            } => {
+                let (_, local_config) = load_or_default_config(config)?;
+                let home = DevRelayHome::resolve()?;
+                let (_, _, snapshot) =
+                    find_recovery_snapshot(&home, &local_config, project.as_deref(), &snapshot_id)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&snapshot)?);
+                } else {
+                    println!(
+                        "snapshot: {} #{}",
+                        snapshot.snapshot_id, snapshot.sequence_number
+                    );
+                    println!("  project: {}", snapshot.project_id);
+                    if let Some(label) = snapshot.label {
+                        println!("  label: {label}");
+                    }
+                }
+            }
+            RecoverCommand::Open {
+                snapshot_id,
+                path,
+                project,
+                config,
+                register,
+                name,
+                json,
+            } => {
+                let (config_path, mut local_config) = load_or_default_config(config)?;
+                let home = DevRelayHome::resolve()?;
+                let (project_entry, store, snapshot) =
+                    find_recovery_snapshot(&home, &local_config, project.as_deref(), &snapshot_id)?;
+                let source_path = recovery_source_path(&project_entry)?;
+                let target = prepare_recovery_workspace(&path, &source_path)?;
+                let snapshot_source = GitRepo::new(store.snapshot_repo_path());
+                let verification = apply_snapshot(&target, &snapshot_source, &snapshot.metadata)?;
+                let registered_workspace = if register {
+                    let workspace = register_recovery_workspace(
+                        &mut local_config,
+                        &project_entry.project_id,
+                        target.path(),
+                    )?;
+                    local_config.save(&config_path)?;
+                    Some(workspace)
+                } else {
+                    None
+                };
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "recovered": snapshot,
+                            "path": target.path(),
+                            "name": name,
+                            "registered": registered_workspace,
+                            "verification": verification,
+                        }))?
+                    );
+                } else {
+                    println!("recovered snapshot: {}", snapshot.snapshot_id);
+                    println!("  path: {}", target.path().display());
+                    if let Some(name) = name {
+                        println!("  name: {name}");
+                    }
+                    if registered_workspace.is_some() {
+                        println!("  registered: true");
+                    }
                 }
             }
         },
@@ -831,6 +967,137 @@ fn workspace_lookup_paths(id_or_path: &str) -> Vec<PathBuf> {
         }
     }
     paths
+}
+
+fn recover_list_snapshots(
+    home: &DevRelayHome,
+    config: &LocalConfig,
+    project: Option<&str>,
+) -> anyhow::Result<Vec<StoredSnapshot>> {
+    if let Some(project) = project {
+        let entry = find_project(config, project)?;
+        let store = SnapshotStore::open(home, &entry.project_id)?;
+        return Ok(store.list_snapshots()?);
+    }
+
+    let mut snapshots = Vec::new();
+    for project in config.project_registry.projects.values() {
+        let store = SnapshotStore::open(home, &project.project_id)?;
+        snapshots.extend(store.list_snapshots()?);
+    }
+    snapshots.sort_by(|left, right| {
+        left.project_id
+            .cmp(&right.project_id)
+            .then(left.sequence_number.cmp(&right.sequence_number))
+    });
+    Ok(snapshots)
+}
+
+fn find_recovery_snapshot(
+    home: &DevRelayHome,
+    config: &LocalConfig,
+    project: Option<&str>,
+    snapshot_id: &str,
+) -> anyhow::Result<(ProjectRegistryEntry, SnapshotStore, StoredSnapshot)> {
+    if let Some(project) = project {
+        let entry = find_project(config, project)?.clone();
+        let store = SnapshotStore::open(home, &entry.project_id)?;
+        let snapshot = store.get_snapshot(snapshot_id)?;
+        return Ok((entry, store, snapshot));
+    }
+
+    for project in config.project_registry.projects.values() {
+        let store = SnapshotStore::open(home, &project.project_id)?;
+        if let Ok(snapshot) = store.get_snapshot(snapshot_id) {
+            return Ok((project.clone(), store, snapshot));
+        }
+    }
+
+    Err(DevRelayError::Config(format!("unknown snapshot {snapshot_id}")).into())
+}
+
+fn recovery_source_path(project: &ProjectRegistryEntry) -> anyhow::Result<PathBuf> {
+    if let Some(workspace) = project.workspaces.values().find(|workspace| {
+        workspace.local_path.exists() && workspace.state == WorkspaceState::Active
+    }) {
+        return Ok(workspace.local_path.clone());
+    }
+    if project.local_path.exists() {
+        return Ok(project.local_path.clone());
+    }
+    Err(DevRelayError::Config(format!(
+        "no existing source workspace for project {}",
+        project.project_id
+    ))
+    .into())
+}
+
+fn prepare_recovery_workspace(path: &Path, source_path: &Path) -> anyhow::Result<GitRepo> {
+    if path.join(".git").exists() {
+        let target = GitRepo::new(path);
+        let status = target.status()?;
+        if !status.is_clean() {
+            return Err(DevRelayError::TargetDirty(status.short_summary()).into());
+        }
+        return Ok(target);
+    }
+
+    if path.exists() && fs::read_dir(path)?.next().is_some() {
+        return Err(DevRelayError::Config(format!(
+            "{} exists and is not an empty recovery directory",
+            path.display()
+        ))
+        .into());
+    }
+
+    fs::create_dir_all(path)?;
+    clone_repository(source_path, path)?;
+    Ok(GitRepo::new(path))
+}
+
+fn clone_repository(source_path: &Path, target_path: &Path) -> anyhow::Result<()> {
+    let output = std::process::Command::new("git")
+        .arg("clone")
+        .arg(source_path)
+        .arg(target_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(DevRelayError::GitCommand {
+            cwd: source_path.to_path_buf(),
+            args: format!("clone {} {}", source_path.display(), target_path.display()),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
+fn register_recovery_workspace(
+    config: &mut LocalConfig,
+    project_id: &str,
+    path: &Path,
+) -> anyhow::Result<WorkspaceRegistryEntry> {
+    let root = resolve_git_root(path)?;
+    ensure_workspace_not_registered(config, &root)?;
+    let workspace_id = workspace_id_for(project_id, &config.device_id, &root);
+    let repo = GitRepo::new(&root);
+    let workspace = WorkspaceRegistryEntry {
+        workspace_id: workspace_id.clone(),
+        project_id: project_id.to_string(),
+        device_id: config.device_id.clone(),
+        local_path: root,
+        platform_profile: current_platform_profile(),
+        state: WorkspaceState::Active,
+        last_seen_head: head_oid(&repo),
+        last_checkpoint_id: None,
+    };
+    let project = config
+        .project_registry
+        .projects
+        .get_mut(project_id)
+        .ok_or_else(|| DevRelayError::Config(format!("unknown project {project_id}")))?;
+    project.workspaces.insert(workspace_id, workspace.clone());
+    Ok(workspace)
 }
 
 fn find_project<'a>(

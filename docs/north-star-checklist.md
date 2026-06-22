@@ -401,20 +401,20 @@ Conventions:
 
 ### M1.7 Recovery CLI
 
-- [ ] Add `devrelay recover list`.
-- [ ] Add `devrelay recover list --project`.
-- [ ] Add `devrelay recover show <snapshot-id>`.
-- [ ] Add `devrelay recover open <snapshot-id> --path <new-workspace>`.
-- [ ] Refuse recovery into existing dirty path.
-- [ ] Create new workspace directory if missing.
-- [ ] Clone/fetch base repository into recovery workspace.
-- [ ] Apply snapshot to recovery workspace.
-- [ ] Register recovery workspace if requested.
-- [ ] Add `--name` for recovery session.
-- [ ] Add JSON output.
-- [ ] Add tests for non-destructive recovery.
-- [ ] Add tests for missing snapshot.
-- [ ] Add tests for dirty recovery target.
+- [x] Add `devrelay recover list`.
+- [x] Add `devrelay recover list --project`.
+- [x] Add `devrelay recover show <snapshot-id>`.
+- [x] Add `devrelay recover open <snapshot-id> --path <new-workspace>`.
+- [x] Refuse recovery into existing dirty path.
+- [x] Create new workspace directory if missing.
+- [x] Clone/fetch base repository into recovery workspace.
+- [x] Apply snapshot to recovery workspace.
+- [x] Register recovery workspace if requested.
+- [x] Add `--name` for recovery session.
+- [x] Add JSON output.
+- [x] Add tests for non-destructive recovery.
+- [x] Add tests for missing snapshot.
+- [x] Add tests for dirty recovery target.
 
 ### M1.8 Dirty Target Backup
 
