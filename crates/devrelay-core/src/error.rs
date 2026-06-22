@@ -36,6 +36,9 @@ pub enum DevRelayError {
     #[error("snapshot metadata validation failed: {0}")]
     SnapshotMetadata(String),
 
+    #[error("unsupported repository state: {0}")]
+    UnsupportedRepositoryState(String),
+
     #[error("snapshot verification failed: {0}")]
     Verification(String),
 }

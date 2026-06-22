@@ -199,22 +199,22 @@ Conventions:
 
 ### M0.7 Synthetic Snapshot Creation
 
-- [ ] Confirm checkpoint does not alter working tree.
-- [ ] Confirm checkpoint does not alter source index.
-- [ ] Write index tree from current index.
-- [ ] Create synthetic index commit parented by HEAD.
-- [ ] Build temporary index for work tree.
-- [ ] Stage unstaged tracked changes into temporary index.
-- [ ] Stage accepted untracked files into temporary index.
-- [ ] Preserve staged/unstaged split.
-- [ ] Create synthetic work commit parented by index commit.
-- [ ] Store refs under `refs/devrelay/snapshots/<id>/index`.
-- [ ] Store refs under `refs/devrelay/snapshots/<id>/work`.
-- [ ] Add guard for unmerged index in M0.
-- [ ] Add guard for unsupported rebase/sequencer state in M0.
-- [ ] Add guard for missing HEAD or unborn branch.
-- [ ] Add cleanup for temporary index files.
-- [ ] Add test proving temporary files are removed.
+- [x] Confirm checkpoint does not alter working tree.
+- [x] Confirm checkpoint does not alter source index.
+- [x] Write index tree from current index.
+- [x] Create synthetic index commit parented by HEAD.
+- [x] Build temporary index for work tree.
+- [x] Stage unstaged tracked changes into temporary index.
+- [x] Stage accepted untracked files into temporary index.
+- [x] Preserve staged/unstaged split.
+- [x] Create synthetic work commit parented by index commit.
+- [x] Store refs under `refs/devrelay/snapshots/<id>/index`.
+- [x] Store refs under `refs/devrelay/snapshots/<id>/work`.
+- [x] Add guard for unmerged index in M0.
+- [x] Add guard for unsupported rebase/sequencer state in M0.
+- [x] Add guard for missing HEAD or unborn branch.
+- [x] Add cleanup for temporary index files.
+- [x] Add test proving temporary files are removed.
 
 ### M0.8 Apply And Verification
 

@@ -16,6 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMetadata> {
     let status = repo.status()?;
+    ensure_checkpoint_supported(repo, &status)?;
     let classified = classify_untracked_paths(repo.path(), manifest, status.untracked_paths())?;
     let mut included_untracked = classified
         .iter()
@@ -185,17 +186,32 @@ fn fetch_snapshot_refs(
 }
 
 fn write_work_tree(repo: &GitRepo, included_untracked: &[String]) -> Result<String> {
-    let temp_dir = tempfile::tempdir()?;
+    let temp_parent = repo.git_dir()?.join("devrelay-tmp");
+    fs::create_dir_all(&temp_parent)?;
+    let temp_dir = tempfile::Builder::new()
+        .prefix("work-index-")
+        .tempdir_in(&temp_parent)?;
     let temp_index = temp_dir.path().join("index");
-    copy_current_index(repo, &temp_index)?;
+    let tree = write_work_tree_with_temp_index(repo, included_untracked, &temp_index);
+    drop(temp_dir);
+    let _ = fs::remove_dir(&temp_parent);
+    tree
+}
 
-    git_with_index(repo, &temp_index, ["add", "-u", "--"])?;
+fn write_work_tree_with_temp_index(
+    repo: &GitRepo,
+    included_untracked: &[String],
+    temp_index: &Path,
+) -> Result<String> {
+    copy_current_index(repo, temp_index)?;
+
+    git_with_index(repo, temp_index, ["add", "-u", "--"])?;
     if !included_untracked.is_empty() {
         let mut args = vec![OsString::from("add"), OsString::from("--")];
         args.extend(included_untracked.iter().map(OsString::from));
         repo.run_with_env(args, &[("GIT_INDEX_FILE", temp_index.as_os_str())])?;
     }
-    git_with_index(repo, &temp_index, ["write-tree"])
+    git_with_index(repo, temp_index, ["write-tree"])
 }
 
 fn copy_current_index(repo: &GitRepo, target: &Path) -> Result<()> {
@@ -257,6 +273,47 @@ fn snapshot_id(status: &GitStatus, index_tree_oid: &str, work_tree_oid: &str) ->
     format!("{}{}", SNAPSHOT_ID_PREFIX, &digest.to_hex()[..24])
 }
 
+fn ensure_checkpoint_supported(repo: &GitRepo, status: &GitStatus) -> Result<()> {
+    ensure_status_supports_checkpoint(status)?;
+    if let Some(state) = unsupported_operation_state(repo)? {
+        return Err(DevRelayError::UnsupportedRepositoryState(state));
+    }
+    Ok(())
+}
+
+fn ensure_status_supports_checkpoint(status: &GitStatus) -> Result<()> {
+    if status.is_initial() {
+        return Err(DevRelayError::UnsupportedRepositoryState(
+            "repository has no HEAD commit".to_string(),
+        ));
+    }
+    if status.counts.unmerged > 0 {
+        return Err(DevRelayError::UnsupportedRepositoryState(
+            "unmerged index entries are not supported in M0".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn unsupported_operation_state(repo: &GitRepo) -> Result<Option<String>> {
+    let git_dir = repo.git_dir()?;
+    for (name, relative_path) in [
+        ("rebase-merge", "rebase-merge"),
+        ("rebase-apply", "rebase-apply"),
+        ("sequencer", "sequencer"),
+        ("merge", "MERGE_HEAD"),
+        ("cherry-pick", "CHERRY_PICK_HEAD"),
+        ("revert", "REVERT_HEAD"),
+    ] {
+        if git_dir.join(relative_path).exists() {
+            return Ok(Some(format!(
+                "{name} state is not supported for checkpoint in M0"
+            )));
+        }
+    }
+    Ok(None)
+}
+
 fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -274,7 +331,7 @@ fn unix_nanos() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::Manifest;
+    use crate::{StatusCounts, manifest::Manifest};
     use std::fs;
 
     fn manifest() -> Manifest {
@@ -292,20 +349,28 @@ portable_paths = "strict"
         .unwrap()
     }
 
+    fn init_repo(path: &Path) -> GitRepo {
+        fs::create_dir(path).unwrap();
+        let repo = GitRepo::new(path);
+        repo.run(&["init", "-b", "main"]).unwrap();
+        repo.run(&["config", "user.name", "DevRelay Test"]).unwrap();
+        repo.run(&["config", "user.email", "devrelay-test@example.local"])
+            .unwrap();
+        repo
+    }
+
+    fn commit_base(repo: &GitRepo, path: &Path) {
+        fs::write(path.join("tracked.txt"), "base\n").unwrap();
+        repo.run(&["add", "."]).unwrap();
+        repo.run(&["commit", "-m", "base"]).unwrap();
+    }
+
     #[test]
     fn creates_and_applies_snapshot_round_trip() {
         let temp = tempfile::tempdir().unwrap();
         let source_path = temp.path().join("source");
         let target_path = temp.path().join("target");
-        fs::create_dir(&source_path).unwrap();
-        let source = GitRepo::new(&source_path);
-        source.run(&["init", "-b", "main"]).unwrap();
-        source
-            .run(&["config", "user.name", "DevRelay Test"])
-            .unwrap();
-        source
-            .run(&["config", "user.email", "devrelay-test@example.local"])
-            .unwrap();
+        let source = init_repo(&source_path);
         fs::write(source_path.join("tracked.txt"), "base\n").unwrap();
         fs::write(source_path.join("staged.txt"), "old\n").unwrap();
         source.run(&["add", "."]).unwrap();
@@ -320,6 +385,7 @@ portable_paths = "strict"
         let snapshot = create_snapshot(&source, &manifest()).unwrap();
         assert_eq!(snapshot.included_untracked, vec!["notes.md"]);
         assert!(snapshot.excluded.iter().any(|item| item.path == ".env"));
+        assert!(!source.git_dir().unwrap().join("devrelay-tmp").exists());
 
         source
             .run_with_env(
@@ -347,18 +413,8 @@ portable_paths = "strict"
         let temp = tempfile::tempdir().unwrap();
         let source_path = temp.path().join("source");
         let target_path = temp.path().join("target");
-        fs::create_dir(&source_path).unwrap();
-        let source = GitRepo::new(&source_path);
-        source.run(&["init", "-b", "main"]).unwrap();
-        source
-            .run(&["config", "user.name", "DevRelay Test"])
-            .unwrap();
-        source
-            .run(&["config", "user.email", "devrelay-test@example.local"])
-            .unwrap();
-        fs::write(source_path.join("tracked.txt"), "base\n").unwrap();
-        source.run(&["add", "."]).unwrap();
-        source.run(&["commit", "-m", "base"]).unwrap();
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
         fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
         let snapshot = create_snapshot(&source, &manifest()).unwrap();
 
@@ -376,5 +432,90 @@ portable_paths = "strict"
         fs::write(target_path.join("local.txt"), "do not overwrite\n").unwrap();
         let err = apply_snapshot(&target, &source, &snapshot).unwrap_err();
         assert!(matches!(err, DevRelayError::TargetDirty(_)));
+    }
+
+    #[test]
+    fn checkpoint_preserves_source_worktree_and_index() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        fs::write(source_path.join("tracked.txt"), "base\n").unwrap();
+        fs::write(source_path.join("staged.txt"), "old\n").unwrap();
+        source.run(&["add", "."]).unwrap();
+        source.run(&["commit", "-m", "base"]).unwrap();
+
+        fs::write(source_path.join("staged.txt"), "new staged\n").unwrap();
+        source.run(&["add", "staged.txt"]).unwrap();
+        fs::write(source_path.join("tracked.txt"), "base\nunstaged\n").unwrap();
+        fs::write(source_path.join("notes.md"), "carry me\n").unwrap();
+
+        let before_status = source
+            .run(&[
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--branch",
+                "--untracked-files=all",
+            ])
+            .unwrap();
+        let before_index_tree = source.current_index_tree().unwrap();
+
+        create_snapshot(&source, &manifest()).unwrap();
+
+        let after_status = source
+            .run(&[
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--branch",
+                "--untracked-files=all",
+            ])
+            .unwrap();
+        let after_index_tree = source.current_index_tree().unwrap();
+
+        assert_eq!(before_status, after_status);
+        assert_eq!(before_index_tree, after_index_tree);
+    }
+
+    #[test]
+    fn checkpoint_rejects_unborn_repository() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+
+        let err = create_snapshot(&source, &manifest()).unwrap_err();
+        assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
+        assert!(err.to_string().contains("no HEAD commit"));
+    }
+
+    #[test]
+    fn checkpoint_rejects_unmerged_status() {
+        let status = GitStatus {
+            head_oid: "abc".to_string(),
+            branch: Some("main".to_string()),
+            upstream: None,
+            entries: Vec::new(),
+            counts: StatusCounts {
+                unmerged: 1,
+                ..StatusCounts::default()
+            },
+        };
+
+        let err = ensure_status_supports_checkpoint(&status).unwrap_err();
+        assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
+        assert!(err.to_string().contains("unmerged"));
+    }
+
+    #[test]
+    fn checkpoint_rejects_rebase_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::create_dir(source.git_dir().unwrap().join("rebase-merge")).unwrap();
+
+        let err = create_snapshot(&source, &manifest()).unwrap_err();
+        assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
+        assert!(err.to_string().contains("rebase-merge"));
     }
 }
