@@ -1693,13 +1693,13 @@ Conventions:
 
 ### M12.3 Git LFS
 
-- [ ] Detect LFS pointer files.
-- [ ] Detect required local LFS objects.
+- [x] Detect LFS pointer files.
+- [x] Detect required local LFS objects.
 - [ ] Check upstream availability.
 - [ ] Store local-only LFS object in CAS.
 - [ ] Verify LFS object before apply.
 - [ ] Block apply if object missing.
-- [ ] Add LFS tests with fake objects.
+- [x] Add LFS tests with fake objects.
 
 ### M12.4 Sparse Checkout And Partial Clone
 
