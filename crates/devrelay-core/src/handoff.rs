@@ -39,6 +39,44 @@ impl HandoffState {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum HandoffJournalPhase {
+    Begin,
+    TargetPrepare,
+    TargetApply,
+    TargetVerified,
+    SourceReady,
+    LeaseCommitted,
+    Aborted,
+}
+
+impl HandoffJournalPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Begin => "begin",
+            Self::TargetPrepare => "target-prepare",
+            Self::TargetApply => "target-apply",
+            Self::TargetVerified => "target-verified",
+            Self::SourceReady => "source-ready",
+            Self::LeaseCommitted => "lease-committed",
+            Self::Aborted => "aborted",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "target-prepare" => Self::TargetPrepare,
+            "target-apply" => Self::TargetApply,
+            "target-verified" => Self::TargetVerified,
+            "source-ready" => Self::SourceReady,
+            "lease-committed" => Self::LeaseCommitted,
+            "aborted" => Self::Aborted,
+            _ => Self::Begin,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HandoffRecord {
     pub handoff_id: String,
@@ -50,6 +88,27 @@ pub struct HandoffRecord {
     pub source_generation: String,
     pub expires_at_unix_seconds: u64,
     pub state: HandoffState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HandoffJournalRecord {
+    pub journal_id: i64,
+    pub handoff_id: String,
+    pub lease_id: String,
+    pub project_id: String,
+    pub phase: HandoffJournalPhase,
+    pub detail_json: String,
+    pub created_at_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum HandoffRecoveryOutcome {
+    WaitingForTarget,
+    Committed,
+    AbortedExpired,
+    AlreadyCommitted,
+    AlreadyAborted,
 }
 
 pub fn generate_handoff_id() -> String {

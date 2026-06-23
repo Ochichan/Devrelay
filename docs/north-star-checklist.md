@@ -735,16 +735,16 @@ Conventions:
 
 ### M3.9 Crash Recovery
 
-- [ ] Add handoff journal table or records.
-- [ ] Record begin handoff.
-- [ ] Record target prepare.
-- [ ] Record target apply.
-- [ ] Record target verified.
-- [ ] Record lease committed.
-- [ ] Resume incomplete handoff safely.
-- [ ] Abort expired incomplete handoff safely.
-- [ ] Add crash-before-commit test.
-- [ ] Add crash-after-commit test.
+- [x] Add handoff journal table or records.
+- [x] Record begin handoff.
+- [x] Record target prepare.
+- [x] Record target apply.
+- [x] Record target verified.
+- [x] Record lease committed.
+- [x] Resume incomplete handoff safely.
+- [x] Abort expired incomplete handoff safely.
+- [x] Add crash-before-commit test.
+- [x] Add crash-after-commit test.
 
 ### M3 Exit Gate
 

@@ -69,7 +69,10 @@ pub use events::{
     WorkspaceStateChangedEvent,
 };
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
-pub use handoff::{HANDOFF_ID_PREFIX, HandoffRecord, HandoffState, generate_handoff_id};
+pub use handoff::{
+    HANDOFF_ID_PREFIX, HandoffJournalPhase, HandoffJournalRecord, HandoffRecord,
+    HandoffRecoveryOutcome, HandoffState, generate_handoff_id,
+};
 pub use home::{AnchorLayout, DevRelayHome};
 pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 #[cfg(unix)]
