@@ -241,6 +241,7 @@ version = "0.0.0"
 dependencies = [
  "devrelay-core",
  "libfuzzer-sys",
+ "serde",
  "serde_json",
 ]
 
