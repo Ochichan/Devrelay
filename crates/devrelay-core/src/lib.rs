@@ -36,6 +36,7 @@
 //! ```
 
 mod audit;
+mod background_checkpoint;
 mod config;
 mod debounce;
 mod discovery;
@@ -75,6 +76,11 @@ mod wsl_doctor;
 pub use audit::{
     AUDIT_SCHEMA_VERSION, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
 };
+pub use background_checkpoint::{
+    BackgroundCheckpointManager, BackgroundCheckpointOutcome, BackgroundCheckpointReport,
+    BackgroundWorkspace, DEFAULT_BACKGROUND_FAILURE_NOTIFICATION_THRESHOLD,
+    WorkspaceCheckpointState,
+};
 pub use config::{
     AgentRole, AnchorMode, DEVICE_ID_PREFIX, DeviceIdentity, EditorPreference, LocalConfig,
     ProjectRegistryEntry, ProjectRegistryIndex, RedactedLocalConfig, ResourcePolicy,
@@ -95,9 +101,9 @@ pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{
     EVENT_SCHEMA_VERSION, EventEnvelope, EventGapDetector, EventReplayCursor, EventSequence,
     EventSequenceGap, EventSequencer, EventStreamMessage, EventTimestampMillis, EventType,
-    QuotaWarningEvent, SecurityBlockedEvent, SessionDivergedEvent, SnapshotApplyStartedEvent,
-    SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent, TypedEventPayload,
-    WorkspaceStateChangedEvent,
+    ProtectionStatus, ProtectionStatusEvent, QuotaWarningEvent, SecurityBlockedEvent,
+    SessionDivergedEvent, SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent,
+    SnapshotLocalCreatedEvent, TypedEventPayload, WorkspaceStateChangedEvent,
 };
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
 pub use git_doctor::{
@@ -191,7 +197,8 @@ pub use snapshot::{
 };
 pub use snapshot_schema::SnapshotMetadata;
 pub use snapshot_store::{
-    SnapshotPruneResult, SnapshotStore, SnapshotStoreFaultPoint, StoredSnapshot,
+    SnapshotCheckpointResult, SnapshotPruneResult, SnapshotStore, SnapshotStoreFaultPoint,
+    StoredSnapshot,
 };
 pub use sparse::{PartialCloneState, SparseCheckoutReport, inspect_sparse_checkout};
 pub use storage::{

@@ -1004,15 +1004,15 @@ Conventions:
 
 ### M6.3 Background Checkpoint
 
-- [ ] Track dirty workspace state.
-- [ ] Trigger Git status after quiet window.
-- [ ] Skip checkpoint if semantic state unchanged.
-- [ ] Create local snapshot.
+- [x] Track dirty workspace state.
+- [x] Trigger Git status after quiet window.
+- [x] Skip checkpoint if semantic state unchanged.
+- [x] Create local snapshot.
 - [ ] Publish to anchor if available.
-- [ ] Emit protection status event.
-- [ ] Avoid notifications for normal success.
-- [ ] Surface repeated failures.
-- [ ] Add background checkpoint tests.
+- [x] Emit protection status event.
+- [x] Avoid notifications for normal success.
+- [x] Surface repeated failures.
+- [x] Add background checkpoint tests.
 
 ### M6.4 Git Performance Doctor
 

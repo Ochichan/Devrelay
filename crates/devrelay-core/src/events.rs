@@ -198,6 +198,8 @@ pub enum EventType {
     SnapshotApplyStarted,
     #[serde(rename = "snapshot.apply.verified")]
     SnapshotApplyVerified,
+    #[serde(rename = "protection.status.changed")]
+    ProtectionStatusChanged,
     #[serde(rename = "session.diverged")]
     SessionDiverged,
     #[serde(rename = "security.blocked")]
@@ -287,6 +289,35 @@ pub struct SnapshotApplyVerifiedEvent {
 impl TypedEventPayload for SnapshotApplyVerifiedEvent {
     fn event_type(&self) -> EventType {
         EventType::SnapshotApplyVerified
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProtectionStatus {
+    Dirty,
+    Protected,
+    Unchanged,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtectionStatusEvent {
+    pub project_id: String,
+    pub workspace_id: String,
+    pub device_id: Option<String>,
+    pub status: ProtectionStatus,
+    pub source_generation: u64,
+    pub snapshot_id: Option<String>,
+    pub state_hash: Option<String>,
+    pub repeated_failures: u32,
+    pub user_visible: bool,
+    pub detail: Option<String>,
+}
+
+impl TypedEventPayload for ProtectionStatusEvent {
+    fn event_type(&self) -> EventType {
+        EventType::ProtectionStatusChanged
     }
 }
 
@@ -638,8 +669,30 @@ mod tests {
             "state-hash"
         );
 
-        let diverged = EventEnvelope::with_typed_payload_at(
+        let protection = EventEnvelope::with_typed_payload_at(
             EventSequence::new(4).unwrap(),
+            EventTimestampMillis::new(35),
+            ProtectionStatusEvent {
+                project_id: "12345678".to_string(),
+                workspace_id: "w_source".to_string(),
+                device_id: Some("device-a".to_string()),
+                status: ProtectionStatus::Protected,
+                source_generation: 9,
+                snapshot_id: Some("s1_checkpoint".to_string()),
+                state_hash: Some("state-hash".to_string()),
+                repeated_failures: 0,
+                user_visible: false,
+                detail: None,
+            },
+        )
+        .unwrap();
+        let encoded = serde_json::to_value(protection).unwrap();
+        assert_eq!(encoded["type"], "protection.status.changed");
+        assert_eq!(encoded["payload"]["status"], "protected");
+        assert_eq!(encoded["payload"]["user_visible"], false);
+
+        let diverged = EventEnvelope::with_typed_payload_at(
+            EventSequence::new(5).unwrap(),
             EventTimestampMillis::new(40),
             SessionDivergedEvent {
                 project_id: "12345678".to_string(),
@@ -660,7 +713,7 @@ mod tests {
         );
 
         let security = EventEnvelope::with_typed_payload_at(
-            EventSequence::new(5).unwrap(),
+            EventSequence::new(6).unwrap(),
             EventTimestampMillis::new(50),
             SecurityBlockedEvent {
                 code: "DR-SECURITY-BLOCKED".to_string(),
@@ -681,7 +734,7 @@ mod tests {
         );
 
         let quota = EventEnvelope::with_typed_payload_at(
-            EventSequence::new(6).unwrap(),
+            EventSequence::new(7).unwrap(),
             EventTimestampMillis::new(60),
             QuotaWarningEvent {
                 quota: "snapshot-store".to_string(),

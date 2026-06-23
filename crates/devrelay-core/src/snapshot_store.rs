@@ -35,6 +35,18 @@ pub struct SnapshotPruneResult {
     pub reclaimed_estimated_bytes: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+pub enum SnapshotCheckpointResult {
+    Created {
+        snapshot: Box<StoredSnapshot>,
+    },
+    Unchanged {
+        snapshot_id: String,
+        state_hash: String,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotStoreFaultPoint {
     AfterSnapshotObjectImport,
@@ -95,6 +107,31 @@ impl SnapshotStore {
     ) -> Result<StoredSnapshot> {
         let metadata = create_snapshot(source, manifest)?;
         self.store_snapshot(source, metadata, pinned, label)
+    }
+
+    pub fn checkpoint_if_changed(
+        &mut self,
+        source: &GitRepo,
+        manifest: &Manifest,
+        pinned: bool,
+        label: Option<String>,
+    ) -> Result<SnapshotCheckpointResult> {
+        let metadata = create_snapshot(source, manifest)?;
+        if let Some(latest) = self.latest_snapshot()?
+            && latest.metadata.state_hash == metadata.state_hash
+        {
+            let state_hash = metadata.state_hash.clone();
+            remove_source_snapshot_refs(source, &metadata, None)?;
+            return Ok(SnapshotCheckpointResult::Unchanged {
+                snapshot_id: latest.snapshot_id,
+                state_hash,
+            });
+        }
+
+        self.store_snapshot(source, metadata, pinned, label)
+            .map(|snapshot| SnapshotCheckpointResult::Created {
+                snapshot: Box::new(snapshot),
+            })
     }
 
     pub fn store_snapshot(
@@ -217,6 +254,32 @@ WHERE project_id = ?1 AND snapshot_id = ?2
             )
             .optional()?
             .ok_or_else(|| DevRelayError::Config(format!("unknown snapshot {snapshot_id}")))
+    }
+
+    pub fn latest_snapshot(&self) -> Result<Option<StoredSnapshot>> {
+        Ok(self
+            .db
+            .connection()
+            .query_row(
+                r#"
+SELECT snapshot_id,
+       project_id,
+       session_id,
+       parent_snapshot_id,
+       sequence_number,
+       pinned,
+       label,
+       metadata_json,
+       created_at_unix_seconds
+FROM snapshots
+WHERE project_id = ?1
+ORDER BY sequence_number DESC
+LIMIT 1
+"#,
+                [self.project_id.as_str()],
+                stored_snapshot_from_row,
+            )
+            .optional()?)
     }
 
     pub fn prune_snapshots(&mut self, plan: &PruningPlan) -> Result<SnapshotPruneResult> {
@@ -343,21 +406,7 @@ INSERT INTO snapshots (
     }
 
     fn latest_snapshot_id(&self) -> Result<Option<String>> {
-        Ok(self
-            .db
-            .connection()
-            .query_row(
-                r#"
-SELECT snapshot_id
-FROM snapshots
-WHERE project_id = ?1
-ORDER BY sequence_number DESC
-LIMIT 1
-"#,
-                [self.project_id.as_str()],
-                |row| row.get(0),
-            )
-            .optional()?)
+        Ok(self.latest_snapshot()?.map(|snapshot| snapshot.snapshot_id))
     }
 
     fn snapshot_repo(&self) -> GitRepo {
@@ -576,6 +625,48 @@ portable_paths = "strict"
             .unwrap();
         assert_eq!(exported.snapshot_id, second.snapshot_id);
         assert!(export_path.exists());
+    }
+
+    #[test]
+    fn checkpoint_if_changed_skips_duplicate_semantic_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        let manifest = manifest();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id).unwrap();
+
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let first = store
+            .checkpoint_if_changed(&source, &manifest, false, Some("first".to_string()))
+            .unwrap();
+        let first = match first {
+            SnapshotCheckpointResult::Created { snapshot } => *snapshot,
+            SnapshotCheckpointResult::Unchanged { .. } => panic!("first checkpoint must store"),
+        };
+
+        let duplicate = store
+            .checkpoint_if_changed(&source, &manifest, false, Some("duplicate".to_string()))
+            .unwrap();
+
+        assert_eq!(
+            duplicate,
+            SnapshotCheckpointResult::Unchanged {
+                snapshot_id: first.snapshot_id.clone(),
+                state_hash: first.metadata.state_hash.clone(),
+            }
+        );
+        assert_eq!(store.list_snapshots().unwrap().len(), 1);
+        assert!(
+            source
+                .run(&["rev-parse", "--verify", &first.metadata.index_ref()])
+                .is_err()
+        );
+        assert!(
+            source
+                .run(&["rev-parse", "--verify", &first.metadata.work_ref()])
+                .is_err()
+        );
     }
 
     #[test]
