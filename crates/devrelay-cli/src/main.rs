@@ -9,17 +9,18 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(unix)]
 use devrelay_core::AgentRpcClient;
 use devrelay_core::{
-    CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome, ErrorInfo,
-    GitRepo, LocalConfig, METHOD_CHECKPOINT_CREATE, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
-    METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, PathDecision, PatternConfig,
-    PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
-    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RecoverListParams,
-    RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
-    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
-    StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
-    apply_snapshot, classify_untracked_paths, create_snapshot, plan_apply_snapshot,
-    read_snapshot_file, workspace_id_for, write_snapshot_file,
+    ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
+    DevRelayError, DevRelayHome, ErrorInfo, GitRepo, LocalConfig, METHOD_APPLY_SNAPSHOT,
+    METHOD_CHECKPOINT_CREATE, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
+    METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
+    METHOD_STATUS_GET, Manifest, PathDecision, PatternConfig, PortablePathsPolicy,
+    ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
+    ProjectsRemoveParams, ProjectsShowParams, RecoverListParams, RecoverListResult,
+    RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult, SnapshotMetadata,
+    SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary, StoredSnapshot,
+    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
+    classify_untracked_paths, create_snapshot, plan_apply_snapshot, read_snapshot_file,
+    workspace_id_for, write_snapshot_file,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -584,53 +585,15 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             dry_run,
             dirty_policy,
             json,
-        } => {
-            let snapshot = read_snapshot_file(&snapshot)
-                .with_context(|| format!("failed to read {}", snapshot.display()))?;
-            let target = GitRepo::new(repo);
-            let source = GitRepo::new(source);
-            if dry_run {
-                let plan = plan_apply_snapshot(&target, &source, &snapshot)?;
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "dry_run": true,
-                            "plan": plan,
-                        }))?
-                    );
-                } else {
-                    println!("apply dry-run: {}", plan.snapshot_id);
-                    println!("  head: {}", plan.head_oid);
-                    println!(
-                        "  target: {}",
-                        plan.branch.as_deref().unwrap_or("detached HEAD")
-                    );
-                }
-            } else {
-                let prepared = prepare_apply_target(&target, &snapshot, dirty_policy)?;
-                let verification = apply_snapshot(&prepared.repo, &source, &snapshot)?;
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "applied": snapshot.snapshot_id,
-                            "applied_repo": prepared.repo.path(),
-                            "dirty_policy": dirty_policy.label(),
-                            "backup": prepared.backup,
-                            "safe_actions": prepared.safe_actions,
-                            "verification": verification,
-                        }))?
-                    );
-                } else {
-                    println!("applied: {}", snapshot.snapshot_id);
-                    println!("  repo: {}", prepared.repo.path().display());
-                    for action in prepared.safe_actions {
-                        println!("  {action}");
-                    }
-                }
-            }
-        }
+        } => handle_apply(
+            repo,
+            source,
+            snapshot,
+            dry_run,
+            dirty_policy,
+            json,
+            &agent_options,
+        )?,
     }
     Ok(())
 }
@@ -1204,6 +1167,158 @@ fn render_recover_open(result: &RecoverOpenResult, json: bool) -> anyhow::Result
         }
         if result.registered.is_some() {
             println!("  registered: true");
+        }
+    }
+    Ok(())
+}
+
+fn handle_apply(
+    repo: PathBuf,
+    source: PathBuf,
+    snapshot: PathBuf,
+    dry_run: bool,
+    dirty_policy: DirtyPolicy,
+    json: bool,
+    agent_options: &AgentOptions,
+) -> anyhow::Result<()> {
+    if should_route_apply_command(agent_options, dirty_policy) {
+        let applied_repo = repo.clone();
+        let result = apply_via_agent(agent_options, repo, snapshot, dry_run)?;
+        render_agent_apply_result(&result, &applied_repo, dirty_policy, dry_run, json)
+    } else {
+        apply_direct(repo, source, snapshot, dry_run, dirty_policy, json)
+    }
+}
+
+fn should_route_apply_command(agent_options: &AgentOptions, dirty_policy: DirtyPolicy) -> bool {
+    !agent_options.direct && dirty_policy == DirtyPolicy::Block
+}
+
+fn apply_direct(
+    repo: PathBuf,
+    source: PathBuf,
+    snapshot: PathBuf,
+    dry_run: bool,
+    dirty_policy: DirtyPolicy,
+    json: bool,
+) -> anyhow::Result<()> {
+    let snapshot = read_snapshot_file(&snapshot)
+        .with_context(|| format!("failed to read {}", snapshot.display()))?;
+    let target = GitRepo::new(repo);
+    let source = GitRepo::new(source);
+    if dry_run {
+        let plan = plan_apply_snapshot(&target, &source, &snapshot)?;
+        render_apply_dry_run(&plan, json)
+    } else {
+        let prepared = prepare_apply_target(&target, &snapshot, dirty_policy)?;
+        let verification = apply_snapshot(&prepared.repo, &source, &snapshot)?;
+        render_apply_success(
+            &snapshot.snapshot_id,
+            prepared.repo.path(),
+            dirty_policy,
+            &prepared.backup,
+            &prepared.safe_actions,
+            &verification,
+            json,
+        )
+    }
+}
+
+fn apply_via_agent(
+    agent_options: &AgentOptions,
+    repo: PathBuf,
+    snapshot_path: PathBuf,
+    dry_run: bool,
+) -> anyhow::Result<ApplySnapshotResult> {
+    let snapshot = read_snapshot_file(&snapshot_path)
+        .with_context(|| format!("failed to read {}", snapshot_path.display()))?;
+    call_agent(
+        agent_options,
+        METHOD_APPLY_SNAPSHOT,
+        ApplySnapshotParams {
+            repo: absolute_cli_path(repo)?,
+            project: snapshot.project_id,
+            snapshot_id: snapshot.snapshot_id,
+            dry_run,
+        },
+    )
+}
+
+fn render_agent_apply_result(
+    result: &ApplySnapshotResult,
+    applied_repo: &Path,
+    dirty_policy: DirtyPolicy,
+    dry_run: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    if dry_run {
+        let plan = result
+            .plan
+            .as_ref()
+            .ok_or_else(|| DevRelayError::Ipc("agent apply response missing plan".to_string()))?;
+        render_apply_dry_run(plan, json)
+    } else {
+        let verification = result.verification.as_ref().ok_or_else(|| {
+            DevRelayError::Ipc("agent apply response missing verification".to_string())
+        })?;
+        render_apply_success(
+            &result.snapshot.snapshot_id,
+            applied_repo,
+            dirty_policy,
+            &None,
+            &[],
+            verification,
+            json,
+        )
+    }
+}
+
+fn render_apply_dry_run(plan: &devrelay_core::ApplyPlan, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "dry_run": true,
+                "plan": plan,
+            }))?
+        );
+    } else {
+        println!("apply dry-run: {}", plan.snapshot_id);
+        println!("  head: {}", plan.head_oid);
+        println!(
+            "  target: {}",
+            plan.branch.as_deref().unwrap_or("detached HEAD")
+        );
+    }
+    Ok(())
+}
+
+fn render_apply_success(
+    snapshot_id: &str,
+    applied_repo: &Path,
+    dirty_policy: DirtyPolicy,
+    backup: &Option<StoredSnapshot>,
+    safe_actions: &[String],
+    verification: &devrelay_core::VerificationDetails,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "applied": snapshot_id,
+                "applied_repo": applied_repo,
+                "dirty_policy": dirty_policy.label(),
+                "backup": backup,
+                "safe_actions": safe_actions,
+                "verification": verification,
+            }))?
+        );
+    } else {
+        println!("applied: {snapshot_id}");
+        println!("  repo: {}", applied_repo.display());
+        for action in safe_actions {
+            println!("  {action}");
         }
     }
     Ok(())

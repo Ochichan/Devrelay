@@ -751,6 +751,185 @@ fn recover_commands_use_agent_rpc_by_default() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn apply_uses_agent_rpc_by_default_for_block_policy() {
+    use devrelay_core::{
+        IpcConnection, IpcLimits, IpcTransport, METHOD_APPLY_SNAPSHOT, RpcRequest, RpcResponse,
+        UnixIpcListener,
+    };
+    use serde_json::json;
+
+    let root =
+        std::env::temp_dir().join(format!("devrelay-apply-agent-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+    let socket = root.join("agent.sock");
+    let target = root.join("target");
+    let source = root.join("unused-source");
+    let snapshot_path = root.join("snapshot.json");
+    let snapshot_id = "s1_222222222222222222222222";
+    let metadata = json!({
+        "schema_version": 1,
+        "snapshot_id": snapshot_id,
+        "project_id": "agent-apply-project",
+        "project_name": "Agent Apply Project",
+        "session_id": null,
+        "parent_snapshot_id": null,
+        "source_device_id": null,
+        "branch": "main",
+        "head_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "index_tree_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "index_commit_oid": "cccccccccccccccccccccccccccccccccccccccc",
+        "work_tree_oid": "dddddddddddddddddddddddddddddddddddddddd",
+        "work_commit_oid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "source_status": {
+            "staged": 0,
+            "unstaged": 0,
+            "untracked": 1,
+            "ignored": 0,
+            "unmerged": 0
+        },
+        "included_untracked": ["notes.md"],
+        "excluded": [],
+        "state_hash": "apply-state-hash",
+        "created_at_unix_seconds": 1234567890_u64
+    });
+    std::fs::write(
+        &snapshot_path,
+        serde_json::to_vec_pretty(&metadata).unwrap(),
+    )
+    .unwrap();
+    let snapshot = json!({
+        "snapshot_id": snapshot_id,
+        "project_id": "agent-apply-project",
+        "session_id": null,
+        "parent_snapshot_id": null,
+        "sequence_number": 4,
+        "pinned": false,
+        "label": "apply me",
+        "metadata": metadata,
+        "created_at_unix_seconds": 1234567890_u64
+    });
+    let plan = json!({
+        "snapshot_id": snapshot_id,
+        "branch": "main",
+        "detached": false,
+        "head_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "index_ref": format!("refs/devrelay/snapshots/{snapshot_id}/index"),
+        "work_ref": format!("refs/devrelay/snapshots/{snapshot_id}/work")
+    });
+    let verification = json!({
+        "head_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "index_tree_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "work_tree_oid": "dddddddddddddddddddddddddddddddddddddddd",
+        "state_hash": "apply-state-hash",
+        "included_untracked": ["notes.md"],
+        "excluded_paths": []
+    });
+
+    let listener = UnixIpcListener::bind(&socket).unwrap();
+    let expected_target = target.to_str().unwrap().to_string();
+    let handle = std::thread::spawn(move || {
+        for dry_run in [true, false] {
+            let mut connection = listener.accept().unwrap();
+            let request_bytes = connection.read_message(IpcLimits::default()).unwrap();
+            let request = RpcRequest::parse(&request_bytes).unwrap();
+            assert_eq!(request.method, METHOD_APPLY_SNAPSHOT);
+            assert_eq!(
+                request.params["repo"].as_str(),
+                Some(expected_target.as_str())
+            );
+            assert_eq!(
+                request.params["project"].as_str(),
+                Some("agent-apply-project")
+            );
+            assert_eq!(request.params["snapshot_id"].as_str(), Some(snapshot_id));
+            assert_eq!(request.params["dry_run"].as_bool(), Some(dry_run));
+            let result = if dry_run {
+                json!({
+                    "snapshot": snapshot.clone(),
+                    "plan": plan,
+                    "verification": null
+                })
+            } else {
+                json!({
+                    "snapshot": snapshot.clone(),
+                    "plan": null,
+                    "verification": verification
+                })
+            };
+            let response = RpcResponse::success(request.required_id().unwrap(), result);
+            connection
+                .write_message(
+                    &serde_json::to_vec(&response).unwrap(),
+                    IpcLimits::default(),
+                )
+                .unwrap();
+        }
+    });
+
+    let dry_run = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "apply",
+            "--repo",
+            target.to_str().unwrap(),
+            "--source",
+            source.to_str().unwrap(),
+            "--snapshot",
+            snapshot_path.to_str().unwrap(),
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        dry_run.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&dry_run.stderr)
+    );
+    let dry_run_json: serde_json::Value = serde_json::from_slice(&dry_run.stdout).unwrap();
+    assert_eq!(dry_run_json["dry_run"].as_bool(), Some(true));
+    assert_eq!(
+        dry_run_json["plan"]["snapshot_id"].as_str(),
+        Some(snapshot_id)
+    );
+
+    let apply = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "apply",
+            "--repo",
+            target.to_str().unwrap(),
+            "--source",
+            source.to_str().unwrap(),
+            "--snapshot",
+            snapshot_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        apply.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&apply.stderr)
+    );
+    let apply_json: serde_json::Value = serde_json::from_slice(&apply.stdout).unwrap();
+    assert_eq!(apply_json["applied"].as_str(), Some(snapshot_id));
+    assert_eq!(apply_json["dirty_policy"].as_str(), Some("block"));
+    assert!(apply_json["backup"].is_null());
+    assert_eq!(
+        apply_json["verification"]["included_untracked"][0].as_str(),
+        Some("notes.md")
+    );
+    handle.join().unwrap();
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn manifest_check_supports_json() {
     let output = devrelay()
