@@ -1703,13 +1703,13 @@ Conventions:
 
 ### M12.4 Sparse Checkout And Partial Clone
 
-- [ ] Detect sparse checkout.
-- [ ] Capture sparse definition as workspace preference.
+- [x] Detect sparse checkout.
+- [x] Capture sparse definition as workspace preference.
 - [ ] Distinguish logical snapshot from sparse view.
 - [ ] Fetch missing blobs on demand.
 - [ ] Avoid overwriting target sparse policy.
-- [ ] Add sparse checkout tests.
-- [ ] Add partial clone tests where practical.
+- [x] Add sparse checkout tests.
+- [x] Add partial clone tests where practical.
 
 ### M12.5 Interactive Rebase And Sequencer
 

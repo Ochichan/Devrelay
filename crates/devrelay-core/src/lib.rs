@@ -63,6 +63,7 @@ mod session;
 mod snapshot;
 mod snapshot_schema;
 mod snapshot_store;
+mod sparse;
 mod storage;
 mod submodule;
 mod transport_security;
@@ -175,6 +176,7 @@ pub use snapshot::{
 };
 pub use snapshot_schema::SnapshotMetadata;
 pub use snapshot_store::{SnapshotStore, StoredSnapshot};
+pub use sparse::{PartialCloneState, SparseCheckoutReport, inspect_sparse_checkout};
 pub use storage::{
     CanonicalPublishRequest, CanonicalPublishResult, InactiveForkPublishRequest,
     InactiveForkPublishResult, MetadataDb, PairingStartRequest,
