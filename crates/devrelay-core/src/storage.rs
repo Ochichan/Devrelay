@@ -5,6 +5,7 @@
 //! inside a transaction so a failed migration leaves the previous schema intact.
 
 use crate::{
+    AUDIT_SCHEMA_VERSION, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
     DeviceIdentity, DevicePublicIdentity, FabricRootIdentity, HandoffJournalPhase,
     HandoffJournalRecord, HandoffRecord, HandoffRecoveryOutcome, HandoffState, LeaseRecord,
     LeaseState, PairingSession, PairingState, Result, SessionState, SnapshotMetadata,
@@ -277,6 +278,38 @@ CREATE INDEX idx_pairing_sessions_peer
     ON pairing_sessions(peer_device_id, state);
 "#,
     },
+    Migration {
+        version: 8,
+        name: "audit_events",
+        sql: r#"
+CREATE TABLE audit_events (
+    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    project_id TEXT,
+    actor_device_id TEXT,
+    target_device_id TEXT,
+    session_id TEXT,
+    snapshot_id TEXT,
+    lease_id TEXT,
+    handoff_id TEXT,
+    outcome TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    detail_json TEXT NOT NULL DEFAULT '{}',
+    created_at_unix_seconds INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX idx_audit_events_timeline
+    ON audit_events(created_at_unix_seconds DESC, audit_id DESC);
+CREATE INDEX idx_audit_events_project_timeline
+    ON audit_events(project_id, created_at_unix_seconds DESC, audit_id DESC);
+CREATE INDEX idx_audit_events_type_timeline
+    ON audit_events(event_type, created_at_unix_seconds DESC, audit_id DESC);
+CREATE INDEX idx_audit_events_snapshot
+    ON audit_events(project_id, snapshot_id);
+CREATE INDEX idx_audit_events_lease
+    ON audit_events(project_id, lease_id);
+"#,
+    },
 ];
 
 pub struct MetadataDb {
@@ -384,6 +417,111 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
         let result = f(&tx)?;
         tx.commit()?;
         Ok(result)
+    }
+
+    pub fn record_audit_event(&self, input: AuditEventInput) -> Result<AuditEventRecord> {
+        self.record_audit_event_at(input, unix_now_seconds())
+    }
+
+    pub fn record_audit_event_at(
+        &self,
+        input: AuditEventInput,
+        created_at_unix_seconds: u64,
+    ) -> Result<AuditEventRecord> {
+        validate_audit_input(&input)?;
+        let detail_json = normalize_audit_detail(&input.detail)?;
+        self.conn.execute(
+            r#"
+INSERT INTO audit_events (
+    event_type,
+    project_id,
+    actor_device_id,
+    target_device_id,
+    session_id,
+    snapshot_id,
+    lease_id,
+    handoff_id,
+    outcome,
+    summary,
+    detail_json,
+    created_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+"#,
+            (
+                input.event_type.as_str(),
+                input.project_id.as_deref(),
+                input.actor_device_id.as_deref(),
+                input.target_device_id.as_deref(),
+                input.session_id.as_deref(),
+                input.snapshot_id.as_deref(),
+                input.lease_id.as_deref(),
+                input.handoff_id.as_deref(),
+                input.outcome.as_str(),
+                input.summary.as_str(),
+                detail_json.as_str(),
+                created_at_unix_seconds as i64,
+            ),
+        )?;
+        Ok(AuditEventRecord {
+            schema_version: AUDIT_SCHEMA_VERSION,
+            audit_id: self.conn.last_insert_rowid(),
+            event_type: input.event_type,
+            project_id: input.project_id,
+            actor_device_id: input.actor_device_id,
+            target_device_id: input.target_device_id,
+            session_id: input.session_id,
+            snapshot_id: input.snapshot_id,
+            lease_id: input.lease_id,
+            handoff_id: input.handoff_id,
+            outcome: input.outcome,
+            summary: input.summary,
+            detail: serde_json::from_str(&detail_json)?,
+            created_at_unix_seconds,
+        })
+    }
+
+    pub fn list_audit_events(
+        &self,
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<AuditEventRecord>> {
+        let limit = limit.clamp(1, 1_000) as i64;
+        let sql = r#"
+SELECT audit_id,
+       event_type,
+       project_id,
+       actor_device_id,
+       target_device_id,
+       session_id,
+       snapshot_id,
+       lease_id,
+       handoff_id,
+       outcome,
+       summary,
+       detail_json,
+       created_at_unix_seconds
+FROM audit_events
+"#;
+        let mut events = if let Some(project_id) = project_id {
+            let mut statement = self.conn.prepare(&format!(
+                "{sql} WHERE project_id = ?1 ORDER BY created_at_unix_seconds DESC, audit_id DESC LIMIT ?2"
+            ))?;
+            let rows = statement.query_map((project_id, limit), audit_event_record_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            let mut statement = self.conn.prepare(&format!(
+                "{sql} ORDER BY created_at_unix_seconds DESC, audit_id DESC LIMIT ?1"
+            ))?;
+            let rows = statement.query_map([limit], audit_event_record_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        events.sort_by(|left, right| {
+            right
+                .created_at_unix_seconds
+                .cmp(&left.created_at_unix_seconds)
+                .then(right.audit_id.cmp(&left.audit_id))
+        });
+        Ok(events)
     }
 
     pub fn upsert_device_identity(&self, device: &DeviceIdentity) -> Result<()> {
@@ -781,6 +919,19 @@ ON CONFLICT(device_id) DO UPDATE SET
                 now_unix_seconds as i64,
             ),
         )?;
+        let mut audit = AuditEventInput::new(
+            AuditEventType::DevicePaired,
+            AuditOutcome::Succeeded,
+            format!("paired device {}", session.peer_display_name),
+        )
+        .with_detail(serde_json::json!({
+            "pairing_id": session.pairing_id,
+            "fabric_id": session.fabric_id,
+            "confirmed_at_unix_seconds": now_unix_seconds,
+        }));
+        audit.actor_device_id = Some(session.local_device_id);
+        audit.target_device_id = Some(session.peer_device_id);
+        insert_audit_event_tx(&tx, audit, now_unix_seconds)?;
         tx.commit()?;
         self.get_pairing_session(pairing_id)?.ok_or_else(|| {
             crate::DevRelayError::Config("pairing confirmation disappeared".to_string())
@@ -1232,6 +1383,33 @@ INSERT INTO snapshots (
             )?;
             None
         };
+        let mut audit = AuditEventInput::new(
+            AuditEventType::SnapshotPublished,
+            if stale_error.is_some() {
+                AuditOutcome::Blocked
+            } else {
+                AuditOutcome::Succeeded
+            },
+            if stale_error.is_some() {
+                "snapshot stored without advancing canonical latest"
+            } else {
+                "snapshot published as canonical latest"
+            },
+        )
+        .with_detail(serde_json::json!({
+            "expected_epoch": request.expected_epoch,
+            "actual_epoch": lease.epoch,
+            "expected_latest_snapshot_id": request.expected_latest_snapshot_id,
+            "previous_latest_snapshot_id": lease.latest_snapshot_id,
+            "pinned": request.pinned,
+            "label": request.label,
+        }));
+        audit.project_id = Some(request.metadata.project_id.clone());
+        audit.actor_device_id = Some(request.holder_device_id.to_string());
+        audit.session_id = Some(request.session_id.to_string());
+        audit.snapshot_id = Some(request.metadata.snapshot_id.clone());
+        audit.lease_id = Some(request.lease_id.to_string());
+        insert_audit_event_tx(&tx, audit, request.metadata.created_at_unix_seconds)?;
         tx.commit()?;
 
         if let Some(err) = stale_error {
@@ -1423,6 +1601,24 @@ INSERT INTO snapshots (
                 "inactive edit fork lost lease state race".to_string(),
             ));
         }
+        let mut audit = AuditEventInput::new(
+            AuditEventType::SnapshotPublished,
+            AuditOutcome::Blocked,
+            "inactive workspace snapshot stored as fork",
+        )
+        .with_detail(serde_json::json!({
+            "source_session_id": request.session_id,
+            "fork_session_id": fork_session_id.as_str(),
+            "canonical_latest_snapshot_id": lease.latest_snapshot_id.as_deref(),
+            "pinned": true,
+            "label": label.as_str(),
+        }));
+        audit.project_id = Some(fork_metadata.project_id.clone());
+        audit.actor_device_id = Some(request.holder_device_id.to_string());
+        audit.session_id = Some(fork_session_id.clone());
+        audit.snapshot_id = Some(fork_metadata.snapshot_id.clone());
+        audit.lease_id = Some(request.lease_id.to_string());
+        insert_audit_event_tx(&tx, audit, fork_metadata.created_at_unix_seconds)?;
         tx.commit()?;
 
         Ok(InactiveForkPublishResult {
@@ -1698,6 +1894,23 @@ WHERE lease_id = ?4 AND epoch = ?5 AND handoff_id = ?6
             "{}",
             now_unix_seconds,
         )?;
+        let mut audit = AuditEventInput::new(
+            AuditEventType::LeaseTransferred,
+            AuditOutcome::Succeeded,
+            "lease transferred to target device",
+        )
+        .with_detail(serde_json::json!({
+            "from_device_id": handoff.source_device_id.as_str(),
+            "to_device_id": handoff.target_device_id.as_str(),
+            "previous_epoch": handoff.expected_epoch,
+            "next_epoch": handoff.expected_epoch.saturating_add(1),
+        }));
+        audit.project_id = Some(handoff.project_id.clone());
+        audit.actor_device_id = Some(handoff.source_device_id.clone());
+        audit.target_device_id = Some(handoff.target_device_id.clone());
+        audit.lease_id = Some(handoff.lease_id.clone());
+        audit.handoff_id = Some(handoff_id.to_string());
+        insert_audit_event_tx(&tx, audit, now_unix_seconds)?;
         tx.commit()?;
         self.get_handoff(handoff_id)?
             .ok_or_else(|| crate::DevRelayError::Config("handoff commit disappeared".to_string()))
@@ -1953,6 +2166,99 @@ fn pairing_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Pairing
     })
 }
 
+fn validate_audit_input(input: &AuditEventInput) -> Result<()> {
+    if input.summary.trim().is_empty() {
+        return Err(crate::DevRelayError::Config(
+            "audit summary must not be empty".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_audit_detail(detail: &serde_json::Value) -> Result<String> {
+    Ok(serde_json::to_string(detail)?)
+}
+
+fn insert_audit_event_tx(
+    tx: &Transaction<'_>,
+    input: AuditEventInput,
+    created_at_unix_seconds: u64,
+) -> Result<AuditEventRecord> {
+    validate_audit_input(&input)?;
+    let detail_json = normalize_audit_detail(&input.detail)?;
+    tx.execute(
+        r#"
+INSERT INTO audit_events (
+    event_type,
+    project_id,
+    actor_device_id,
+    target_device_id,
+    session_id,
+    snapshot_id,
+    lease_id,
+    handoff_id,
+    outcome,
+    summary,
+    detail_json,
+    created_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+"#,
+        (
+            input.event_type.as_str(),
+            input.project_id.as_deref(),
+            input.actor_device_id.as_deref(),
+            input.target_device_id.as_deref(),
+            input.session_id.as_deref(),
+            input.snapshot_id.as_deref(),
+            input.lease_id.as_deref(),
+            input.handoff_id.as_deref(),
+            input.outcome.as_str(),
+            input.summary.as_str(),
+            detail_json.as_str(),
+            created_at_unix_seconds as i64,
+        ),
+    )?;
+    Ok(AuditEventRecord {
+        schema_version: AUDIT_SCHEMA_VERSION,
+        audit_id: tx.last_insert_rowid(),
+        event_type: input.event_type,
+        project_id: input.project_id,
+        actor_device_id: input.actor_device_id,
+        target_device_id: input.target_device_id,
+        session_id: input.session_id,
+        snapshot_id: input.snapshot_id,
+        lease_id: input.lease_id,
+        handoff_id: input.handoff_id,
+        outcome: input.outcome,
+        summary: input.summary,
+        detail: serde_json::from_str(&detail_json)?,
+        created_at_unix_seconds,
+    })
+}
+
+fn audit_event_record_from_row(row: &Row<'_>) -> rusqlite::Result<AuditEventRecord> {
+    let detail_json: String = row.get(11)?;
+    let detail = serde_json::from_str(&detail_json).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(11, rusqlite::types::Type::Text, Box::new(err))
+    })?;
+    Ok(AuditEventRecord {
+        schema_version: AUDIT_SCHEMA_VERSION,
+        audit_id: row.get(0)?,
+        event_type: AuditEventType::parse(&row.get::<_, String>(1)?),
+        project_id: row.get(2)?,
+        actor_device_id: row.get(3)?,
+        target_device_id: row.get(4)?,
+        session_id: row.get(5)?,
+        snapshot_id: row.get(6)?,
+        lease_id: row.get(7)?,
+        handoff_id: row.get(8)?,
+        outcome: AuditOutcome::parse(&row.get::<_, String>(9)?),
+        summary: row.get(10)?,
+        detail,
+        created_at_unix_seconds: row.get::<_, i64>(12)?.max(0) as u64,
+    })
+}
+
 fn validate_non_empty(field: &str, value: &str) -> Result<()> {
     if value.is_empty() {
         return Err(crate::DevRelayError::Config(format!(
@@ -2179,6 +2485,7 @@ mod tests {
             "fabric_roots",
             "device_public_identities",
             "pairing_sessions",
+            "audit_events",
             "devices",
             "task_runs",
         ] {
@@ -2201,6 +2508,11 @@ mod tests {
         assert!(index_exists(&db, "idx_device_public_identities_fabric"));
         assert!(index_exists(&db, "idx_pairing_sessions_fabric_state"));
         assert!(index_exists(&db, "idx_pairing_sessions_peer"));
+        assert!(index_exists(&db, "idx_audit_events_timeline"));
+        assert!(index_exists(&db, "idx_audit_events_project_timeline"));
+        assert!(index_exists(&db, "idx_audit_events_type_timeline"));
+        assert!(index_exists(&db, "idx_audit_events_snapshot"));
+        assert!(index_exists(&db, "idx_audit_events_lease"));
 
         let journal_mode: String = db
             .connection()
@@ -2325,6 +2637,23 @@ mod tests {
         }
         assert!(column_exists(&db, "task_runs", "task_run_id"));
         assert!(column_exists(&db, "task_runs", "metadata_json"));
+        for column in [
+            "audit_id",
+            "event_type",
+            "project_id",
+            "actor_device_id",
+            "target_device_id",
+            "session_id",
+            "snapshot_id",
+            "lease_id",
+            "handoff_id",
+            "outcome",
+            "summary",
+            "detail_json",
+            "created_at_unix_seconds",
+        ] {
+            assert!(column_exists(&db, "audit_events", column), "{column}");
+        }
     }
 
     #[test]
@@ -2483,6 +2812,52 @@ mod tests {
         );
     }
 
+    #[test]
+    fn records_and_filters_audit_events() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let db = MetadataDb::open(&path).unwrap();
+        let mut first = AuditEventInput::new(
+            AuditEventType::SecurityBlocked,
+            AuditOutcome::Blocked,
+            "blocked secret transfer",
+        )
+        .with_detail(serde_json::json!({
+            "path": "/Users/me/project/.env",
+            "api_token": "secret-token",
+        }));
+        first.project_id = Some("project-a".to_string());
+        first.actor_device_id = Some("device-a".to_string());
+
+        let mut second = AuditEventInput::new(
+            AuditEventType::CommandApproved,
+            AuditOutcome::Succeeded,
+            "approved bootstrap command",
+        );
+        second.project_id = Some("project-b".to_string());
+
+        let first = db.record_audit_event_at(first, 100).unwrap();
+        let second = db.record_audit_event_at(second, 101).unwrap();
+
+        assert_eq!(first.schema_version, AUDIT_SCHEMA_VERSION);
+        assert_eq!(first.event_type, AuditEventType::SecurityBlocked);
+        assert_eq!(first.outcome, AuditOutcome::Blocked);
+        assert_eq!(first.detail["api_token"], "secret-token");
+
+        assert_eq!(
+            db.list_audit_events(None, 10)
+                .unwrap()
+                .iter()
+                .map(|event| event.audit_id)
+                .collect::<Vec<_>>(),
+            vec![second.audit_id, first.audit_id]
+        );
+        assert_eq!(
+            db.list_audit_events(Some("project-a"), 10).unwrap(),
+            vec![first]
+        );
+    }
+
     fn setup_pairing_db() -> (MetadataDb, FabricRootIdentity) {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.keep().join("metadata.sqlite");
@@ -2540,6 +2915,12 @@ mod tests {
                 .display_name,
             "Peer Laptop"
         );
+        let audits = db.list_audit_events(None, 10).unwrap();
+        assert_eq!(audits.len(), 1);
+        assert_eq!(audits[0].event_type, AuditEventType::DevicePaired);
+        assert_eq!(audits[0].actor_device_id.as_deref(), Some("d_local"));
+        assert_eq!(audits[0].target_device_id.as_deref(), Some("d_peer"));
+        assert_eq!(audits[0].detail["pairing_id"], session.pairing_id);
     }
 
     #[test]
@@ -2726,6 +3107,15 @@ mod tests {
             updated.latest_snapshot_id.as_deref(),
             Some(metadata.snapshot_id.as_str())
         );
+        let audits = db.list_audit_events(Some("project123"), 10).unwrap();
+        assert_eq!(audits.len(), 1);
+        assert_eq!(audits[0].event_type, AuditEventType::SnapshotPublished);
+        assert_eq!(audits[0].outcome, AuditOutcome::Succeeded);
+        assert_eq!(
+            audits[0].snapshot_id.as_deref(),
+            Some(metadata.snapshot_id.as_str())
+        );
+        assert_eq!(audits[0].lease_id.as_deref(), Some("lease-1"));
     }
 
     #[test]
@@ -2966,6 +3356,22 @@ mod tests {
         assert_eq!(updated.epoch, 8);
         assert_eq!(updated.holder_device_id.as_deref(), Some("device-b"));
         assert_eq!(updated.handoff_id, None);
+        let lease_audits = db
+            .list_audit_events(Some("project123"), 10)
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event_type == AuditEventType::LeaseTransferred)
+            .collect::<Vec<_>>();
+        assert_eq!(lease_audits.len(), 1);
+        assert_eq!(lease_audits[0].actor_device_id.as_deref(), Some("device-a"));
+        assert_eq!(
+            lease_audits[0].target_device_id.as_deref(),
+            Some("device-b")
+        );
+        assert_eq!(
+            lease_audits[0].handoff_id.as_deref(),
+            Some(handoff.handoff_id.as_str())
+        );
     }
 
     #[test]
@@ -3301,7 +3707,7 @@ WHERE snapshot_id = ?1
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 7);
+        assert_eq!(count, 8);
     }
 
     #[test]

@@ -9,11 +9,12 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(unix)]
 use devrelay_core::AgentRpcClient;
 use devrelay_core::{
-    AgentRole, AnchorLayout, AnchorMode, ApplySnapshotParams, ApplySnapshotResult,
-    CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome, DeviceIdentity,
-    DevicePublicIdentity, DiagnosticsExportParams, DiagnosticsExportResult, DiscoveryAdvertisement,
-    DiscoveryRole, DiscoveryService, ErrorInfo, FabricIdentityBundle, FabricIdentityStore, GitRepo,
-    LocalConfig, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
+    AgentRole, AnchorLayout, AnchorMode, ApplySnapshotParams, ApplySnapshotResult, AuditEventInput,
+    AuditEventRecord, AuditEventType, AuditOutcome, CheckpointCreateParams, CheckpointCreateResult,
+    DevRelayError, DevRelayHome, DeviceIdentity, DevicePublicIdentity, DiagnosticsExportParams,
+    DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole, DiscoveryService, ErrorInfo,
+    FabricIdentityBundle, FabricIdentityStore, GitRepo, LocalConfig, LogRedactor,
+    METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
     METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
     METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
     MetadataDb, PairingSession, PairingStartRequest, PathDecision, PatternConfig,
@@ -56,6 +57,10 @@ enum Command {
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
+    },
+    Audit {
+        #[command(subcommand)]
+        command: AuditCommand,
     },
     Anchor {
         #[command(subcommand)]
@@ -196,6 +201,32 @@ enum AgentCommand {
     Status {
         #[arg(long)]
         service_dir: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AuditCommand {
+    List {
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long)]
+        include_sensitive_paths: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Export {
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long, default_value_t = 1_000)]
+        limit: usize,
+        #[arg(long)]
+        include_sensitive_paths: bool,
         #[arg(long)]
         json: bool,
     },
@@ -554,6 +585,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
 
     match command {
         Command::Agent { command } => handle_agent_command(command)?,
+        Command::Audit { command } => handle_audit_command(command)?,
         Command::Anchor { command } => handle_anchor_command(command)?,
         Command::Continue {
             source,
@@ -610,6 +642,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             let snapshot_source = GitRepo::new(store.snapshot_repo_path());
             let verification =
                 apply_snapshot(&prepared.repo, &snapshot_source, &source_snapshot.metadata)?;
+            record_snapshot_apply_audit(
+                &source_snapshot.metadata,
+                prepared.repo.path(),
+                "continue",
+                dirty_policy,
+                &prepared.backup,
+                &verification,
+            )?;
             let changed_states = mark_handoff_workspace_states(
                 &mut local_config,
                 &source_root,
@@ -945,6 +985,164 @@ fn handle_agent_command(command: AgentCommand) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn handle_audit_command(command: AuditCommand) -> anyhow::Result<()> {
+    match command {
+        AuditCommand::List {
+            project,
+            limit,
+            include_sensitive_paths,
+            json,
+        } => {
+            let (events, redactor) =
+                collect_audit_events(project.as_deref(), limit, include_sensitive_paths)?;
+            render_audit_list(&events, redactor.as_ref(), json)
+        }
+        AuditCommand::Export {
+            out,
+            project,
+            limit,
+            include_sensitive_paths,
+            json,
+        } => {
+            let home = DevRelayHome::resolve()?;
+            let path = out.unwrap_or_else(|| {
+                home.diagnostics_dir()
+                    .join(format!("audit-{}.json", devrelay_core::unix_now_seconds()))
+            });
+            let (events, redactor) =
+                collect_audit_events(project.as_deref(), limit, include_sensitive_paths)?;
+            let events_json = audit_events_json(&events, redactor.as_ref())?;
+            let bundle = serde_json::json!({
+                "schema_version": devrelay_core::AUDIT_SCHEMA_VERSION,
+                "generated_at_unix_seconds": devrelay_core::unix_now_seconds(),
+                "project": project,
+                "include_sensitive_paths": include_sensitive_paths,
+                "event_count": events.len(),
+                "events": events_json,
+            });
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&path, serde_json::to_vec_pretty(&bundle)?)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "path": path,
+                        "event_count": events.len(),
+                        "include_sensitive_paths": include_sensitive_paths,
+                    }))?
+                );
+            } else {
+                println!("audit exported: {}", path.display());
+                println!("  events: {}", events.len());
+                println!("  sensitive paths: {}", include_sensitive_paths);
+            }
+            Ok(())
+        }
+    }
+}
+
+fn collect_audit_events(
+    project: Option<&str>,
+    limit: usize,
+    include_sensitive_paths: bool,
+) -> anyhow::Result<(Vec<AuditEventRecord>, Option<LogRedactor>)> {
+    let registry = open_device_registry()?;
+    let home = DevRelayHome::resolve()?;
+    let redactor = (!include_sensitive_paths)
+        .then(|| LogRedactor::for_diagnostics(audit_local_paths(&home, &registry.config)));
+    let project_ids = audit_project_ids(project, &registry.config)?;
+
+    let mut events = registry.db.list_audit_events(project, limit)?;
+    for project_id in project_ids {
+        let db = MetadataDb::open(home.metadata_db_path(&project_id))?;
+        events.extend(db.list_audit_events(Some(&project_id), limit)?);
+    }
+    events.sort_by(|left, right| {
+        right
+            .created_at_unix_seconds
+            .cmp(&left.created_at_unix_seconds)
+            .then(right.audit_id.cmp(&left.audit_id))
+    });
+    events.truncate(limit);
+    Ok((events, redactor))
+}
+
+fn audit_project_ids(project: Option<&str>, config: &LocalConfig) -> anyhow::Result<Vec<String>> {
+    if let Some(project) = project {
+        return Ok(vec![find_project(config, project)?.project_id.clone()]);
+    }
+    Ok(config.project_registry.projects.keys().cloned().collect())
+}
+
+fn audit_local_paths(home: &DevRelayHome, config: &LocalConfig) -> Vec<PathBuf> {
+    let mut paths = vec![home.root().to_path_buf(), home.agent_socket_path()];
+    for project in config.project_registry.projects.values() {
+        paths.push(project.local_path.clone());
+        if let Some(manifest_path) = &project.manifest_path {
+            paths.push(manifest_path.clone());
+        }
+        for workspace in project.workspaces.values() {
+            paths.push(workspace.local_path.clone());
+        }
+    }
+    paths
+}
+
+fn render_audit_list(
+    events: &[AuditEventRecord],
+    redactor: Option<&LogRedactor>,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&audit_events_json(events, redactor)?)?
+        );
+    } else {
+        for event in events {
+            let summary = redactor
+                .map(|redactor| redactor.redact_text(&event.summary))
+                .unwrap_or_else(|| event.summary.clone());
+            println!(
+                "{} {} {} {}",
+                event.created_at_unix_seconds,
+                event.event_type.as_str(),
+                event.outcome.as_str(),
+                summary
+            );
+            if let Some(project_id) = &event.project_id {
+                println!("  project: {project_id}");
+            }
+            if let Some(snapshot_id) = &event.snapshot_id {
+                println!("  snapshot: {snapshot_id}");
+            }
+            if let Some(lease_id) = &event.lease_id {
+                println!("  lease: {lease_id}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn audit_events_json(
+    events: &[AuditEventRecord],
+    redactor: Option<&LogRedactor>,
+) -> anyhow::Result<serde_json::Value> {
+    let events = events
+        .iter()
+        .map(|event| {
+            let value = serde_json::to_value(event)?;
+            Ok(match redactor {
+                Some(redactor) => redactor.redact_json_value(value),
+                None => value,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(serde_json::Value::Array(events))
 }
 
 #[derive(Debug, Serialize)]
@@ -2181,6 +2379,14 @@ fn recover_open_direct(
     let target = prepare_recovery_workspace(&path, &source_path)?;
     let snapshot_source = GitRepo::new(store.snapshot_repo_path());
     let verification = apply_snapshot(&target, &snapshot_source, &snapshot.metadata)?;
+    record_snapshot_apply_audit(
+        &snapshot.metadata,
+        target.path(),
+        "recover.open",
+        DirtyPolicy::Block,
+        &None,
+        &verification,
+    )?;
     let registered = if register {
         let workspace = register_recovery_workspace(
             &mut local_config,
@@ -2336,6 +2542,14 @@ fn apply_direct(
     } else {
         let prepared = prepare_apply_target(&target, &snapshot, dirty_policy)?;
         let verification = apply_snapshot(&prepared.repo, &source, &snapshot)?;
+        record_snapshot_apply_audit(
+            &snapshot,
+            prepared.repo.path(),
+            "apply",
+            dirty_policy,
+            &prepared.backup,
+            &verification,
+        )?;
         render_apply_success(
             &snapshot.snapshot_id,
             prepared.repo.path(),
@@ -2346,6 +2560,38 @@ fn apply_direct(
             json,
         )
     }
+}
+
+fn record_snapshot_apply_audit(
+    snapshot: &SnapshotMetadata,
+    target_path: &Path,
+    operation: &str,
+    dirty_policy: DirtyPolicy,
+    backup: &Option<StoredSnapshot>,
+    verification: &devrelay_core::VerificationDetails,
+) -> anyhow::Result<()> {
+    let home = DevRelayHome::resolve()?;
+    let db = MetadataDb::open(home.metadata_db_path(&snapshot.project_id))?;
+    let target_path = target_path.to_string_lossy().to_string();
+    let mut audit = AuditEventInput::new(
+        AuditEventType::SnapshotApplied,
+        AuditOutcome::Succeeded,
+        "snapshot applied to workspace",
+    )
+    .with_detail(serde_json::json!({
+        "operation": operation,
+        "target_path": target_path,
+        "dirty_policy": dirty_policy.label(),
+        "backup_snapshot_id": backup.as_ref().map(|snapshot| snapshot.snapshot_id.as_str()),
+        "verified_state_hash": verification.state_hash.as_str(),
+        "included_untracked_count": verification.included_untracked.len(),
+        "excluded_path_count": verification.excluded_paths.len(),
+    }));
+    audit.project_id = Some(snapshot.project_id.clone());
+    audit.session_id = snapshot.session_id.clone();
+    audit.snapshot_id = Some(snapshot.snapshot_id.clone());
+    db.record_audit_event(audit)?;
+    Ok(())
 }
 
 fn apply_via_agent(

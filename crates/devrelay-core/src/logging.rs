@@ -192,6 +192,31 @@ impl LogRedactor {
         }
     }
 
+    pub fn redact_json_value(&self, value: Value) -> Value {
+        match value {
+            Value::String(value) => Value::String(self.redact_text(&value)),
+            Value::Array(values) => Value::Array(
+                values
+                    .into_iter()
+                    .map(|value| self.redact_json_value(value))
+                    .collect(),
+            ),
+            Value::Object(values) => Value::Object(
+                values
+                    .into_iter()
+                    .map(|(key, value)| {
+                        let value = match value {
+                            Value::String(value) => Value::String(self.redact_field(&key, &value)),
+                            value => self.redact_json_value(value),
+                        };
+                        (key, value)
+                    })
+                    .collect(),
+            ),
+            value => value,
+        }
+    }
+
     fn redact_paths(&self, value: &str) -> String {
         let mut redacted = value.to_string();
         for path in &self.local_paths {
@@ -514,6 +539,27 @@ mod tests {
         assert_eq!(
             redactor.redact_text("open /Users/me/project/src/main.rs"),
             "open <path>/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn redacts_nested_json_values() {
+        let redactor = LogRedactor::for_diagnostics([PathBuf::from("/Users/me/project")]);
+        let value = serde_json::json!({
+            "path": "/Users/me/project/src/main.rs",
+            "nested": {
+                "token": "secret-token",
+                "remote": "https://user:secret@example.com/repo.git"
+            }
+        });
+
+        let redacted = redactor.redact_json_value(value);
+
+        assert_eq!(redacted["path"], "<path>/src/main.rs");
+        assert_eq!(redacted["nested"]["token"], "<redacted>");
+        assert_eq!(
+            redacted["nested"]["remote"],
+            "https://<redacted>@example.com/repo.git"
         );
     }
 

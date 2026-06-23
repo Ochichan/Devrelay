@@ -225,6 +225,99 @@ fn diagnostics_export_uses_agent_and_redacts_bundle_by_default() {
     running.stop();
 }
 
+#[test]
+fn audit_list_and_export_redact_by_default() {
+    use devrelay_core::{AuditEventInput, AuditEventType, AuditOutcome, DevRelayHome, MetadataDb};
+
+    let home = std::env::temp_dir().join(format!("devrelay-audit-test-{}", std::process::id()));
+    let repo = home.join("repo");
+    let out = home.join("audit-export.json");
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    write_manifest(&repo, "audit-project", "Audit Project");
+    git(&repo, &["add", "devrelay.toml"]);
+    git(&repo, &["commit", "-m", "manifest"]);
+
+    let add = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "--direct",
+            "project",
+            "add",
+            repo.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let devrelay_home = DevRelayHome::new(&home);
+    let db = MetadataDb::open(devrelay_home.metadata_db_path("audit-project")).unwrap();
+    let mut event = AuditEventInput::new(
+        AuditEventType::SecurityBlocked,
+        AuditOutcome::Blocked,
+        "blocked secret-like path",
+    )
+    .with_detail(serde_json::json!({
+        "target_path": repo.join(".env").to_str().unwrap(),
+        "api_token": "secret-token",
+    }));
+    event.project_id = Some("audit-project".to_string());
+    event.snapshot_id = Some("s1_audit".to_string());
+    db.record_audit_event_at(event, 123).unwrap();
+
+    let list = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args(["audit", "list", "--project", "audit-project", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let list_stdout = String::from_utf8(list.stdout).unwrap();
+    assert!(list_stdout.contains("security.blocked"));
+    assert!(list_stdout.contains("<path>"));
+    assert!(!list_stdout.contains(repo.to_str().unwrap()));
+    assert!(!list_stdout.contains(home.to_str().unwrap()));
+    assert!(!list_stdout.contains("secret-token"));
+
+    let export = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "audit",
+            "export",
+            "--project",
+            "audit-project",
+            "--out",
+            out.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        export.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&export.stderr)
+    );
+    let exported: serde_json::Value = serde_json::from_slice(&export.stdout).unwrap();
+    assert_eq!(exported["path"], out.to_str().unwrap());
+    assert_eq!(exported["event_count"], 1);
+    let raw_export = std::fs::read_to_string(&out).unwrap();
+    assert!(raw_export.contains("security.blocked"));
+    assert!(!raw_export.contains(repo.to_str().unwrap()));
+    assert!(!raw_export.contains(home.to_str().unwrap()));
+    assert!(!raw_export.contains("secret-token"));
+
+    let _ = std::fs::remove_dir_all(home);
+}
+
 fn write_manifest(root: &Path, project_id: &str, name: &str) {
     std::fs::write(
         root.join("devrelay.toml"),

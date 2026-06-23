@@ -849,16 +849,16 @@ Conventions:
 
 ### M4.7 Audit Log
 
-- [ ] Record pair event.
+- [x] Record pair event.
 - [ ] Record revoke event.
-- [ ] Record snapshot publish event.
-- [ ] Record snapshot apply event.
-- [ ] Record lease transfer event.
+- [x] Record snapshot publish event.
+- [x] Record snapshot apply event.
+- [x] Record lease transfer event.
 - [ ] Record command approval event.
 - [ ] Record security block event.
-- [ ] Add audit query CLI.
-- [ ] Add audit export with redaction.
-- [ ] Add audit tests.
+- [x] Add audit query CLI.
+- [x] Add audit export with redaction.
+- [x] Add audit tests.
 
 ### M4 Exit Gate
 

@@ -35,6 +35,7 @@
 //! # Ok::<(), devrelay_core::DevRelayError>(())
 //! ```
 
+mod audit;
 mod config;
 mod discovery;
 mod error;
@@ -57,6 +58,9 @@ mod snapshot_schema;
 mod snapshot_store;
 mod storage;
 
+pub use audit::{
+    AUDIT_SCHEMA_VERSION, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
+};
 pub use config::{
     AgentRole, AnchorMode, DEVICE_ID_PREFIX, DeviceIdentity, EditorPreference, LocalConfig,
     ProjectRegistryEntry, ProjectRegistryIndex, RedactedLocalConfig, ResourceProfile,

@@ -10,19 +10,20 @@ use devrelay_core::{
 };
 #[cfg(unix)]
 use devrelay_core::{
-    ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
-    DiagnosticsExportParams, DiagnosticsExportResult, EventEnvelope, EventReplayCursor,
-    EventSequence, EventStreamMessage, EventsSubscribeParams, EventsSubscribeResult, GitRepo,
-    IpcConnection, IpcLimits, IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult,
-    ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
-    RPC_PROTOCOL_VERSION, RecoverListParams, RecoverListResult, RecoverOpenParams,
-    RecoverOpenResult, RecoverShowParams, RecoverShowResult, RpcError, RpcId, RpcRequest,
-    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
-    SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent,
-    SnapshotStore, SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult,
-    StoredSnapshot, StructuredLogFile, StructuredLogRecord, TypedEventPayload, UnixIpcConnection,
-    UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, WorkspaceStateChangedEvent,
-    apply_snapshot, classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
+    ApplySnapshotParams, ApplySnapshotResult, AuditEventInput, AuditEventType, AuditOutcome,
+    CheckpointCreateParams, CheckpointCreateResult, DiagnosticsExportParams,
+    DiagnosticsExportResult, EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage,
+    EventsSubscribeParams, EventsSubscribeResult, GitRepo, IpcConnection, IpcLimits, IpcTransport,
+    Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
+    ProjectsRemoveParams, ProjectsShowParams, RPC_PROTOCOL_VERSION, RecoverListParams,
+    RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
+    RpcError, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
+    RpcVersionNegotiationResult, SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent,
+    SnapshotLocalCreatedEvent, SnapshotStore, SnapshotsListParams, SnapshotsListResult,
+    StatusGetParams, StatusGetResult, StoredSnapshot, StructuredLogFile, StructuredLogRecord,
+    TypedEventPayload, UnixIpcConnection, UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState,
+    WorkspaceStateChangedEvent, apply_snapshot, classify_untracked_paths, plan_apply_snapshot,
+    workspace_id_for,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -829,6 +830,16 @@ fn handle_apply_snapshot(
     } else {
         match apply_snapshot(&target, &source, &snapshot.metadata) {
             Ok(verification) => {
+                if let Err(err) = record_agent_snapshot_apply_audit(
+                    state,
+                    &snapshot,
+                    target.path(),
+                    target_workspace_id.as_deref(),
+                    "apply.snapshot",
+                    &verification,
+                ) {
+                    return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+                }
                 if let Err(err) = state.events.publish(SnapshotApplyVerifiedEvent {
                     project_id: params.project.clone(),
                     snapshot_id: snapshot.snapshot_id.clone(),
@@ -946,6 +957,16 @@ fn handle_recover_open(
         Ok(verification) => verification,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
+    if let Err(err) = record_agent_snapshot_apply_audit(
+        state,
+        &snapshot,
+        target.path(),
+        None,
+        "recover.open",
+        &verification,
+    ) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
     let registered = if params.register {
         let mut config = match state.config.lock() {
             Ok(config) => config,
@@ -1456,6 +1477,42 @@ fn registered_workspace_id(state: &AgentState, project_id: &str, path: &Path) ->
         .values()
         .find(|workspace| workspace.local_path == path)
         .map(|workspace| workspace.workspace_id.clone())
+}
+
+#[cfg(unix)]
+fn record_agent_snapshot_apply_audit(
+    state: &AgentState,
+    snapshot: &StoredSnapshot,
+    target_path: &Path,
+    target_workspace_id: Option<&str>,
+    operation: &str,
+    verification: &devrelay_core::VerificationDetails,
+) -> anyhow::Result<()> {
+    let actor_device_id = state
+        .config
+        .lock()
+        .ok()
+        .map(|config| config.device_id.clone());
+    let db = MetadataDb::open(state.home.metadata_db_path(&snapshot.project_id))?;
+    let mut audit = AuditEventInput::new(
+        AuditEventType::SnapshotApplied,
+        AuditOutcome::Succeeded,
+        "snapshot applied to workspace",
+    )
+    .with_detail(serde_json::json!({
+        "operation": operation,
+        "target_path": target_path.to_string_lossy().to_string(),
+        "target_workspace_id": target_workspace_id,
+        "verified_state_hash": verification.state_hash.as_str(),
+        "included_untracked_count": verification.included_untracked.len(),
+        "excluded_path_count": verification.excluded_paths.len(),
+    }));
+    audit.project_id = Some(snapshot.project_id.clone());
+    audit.actor_device_id = actor_device_id;
+    audit.session_id = snapshot.session_id.clone();
+    audit.snapshot_id = Some(snapshot.snapshot_id.clone());
+    db.record_audit_event(audit)?;
+    Ok(())
 }
 
 #[cfg(unix)]
