@@ -969,7 +969,7 @@ Conventions:
 
 - [x] Large sidecar transfer uses bounded memory.
 - [ ] Missing chunk blocks apply before lease transfer.
-- [ ] Anchor can serve snapshot after source offline.
+- [x] Anchor can serve snapshot after source offline.
 - [x] Partial upload never changes canonical latest.
 - [x] Data plane enforces project authorization.
 

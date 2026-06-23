@@ -503,6 +503,44 @@ portable_paths = "strict"
     }
 
     #[test]
+    fn anchor_repo_exports_snapshot_after_source_and_store_are_offline() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        let target = init_repo(&target_path);
+        let manifest = manifest();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id).unwrap();
+
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let stored = store.checkpoint(&source, &manifest, false, None).unwrap();
+        let store_repo_path = store.snapshot_repo_path().to_path_buf();
+        let anchor = AnchorSnapshotRepo::open(&home, &manifest.project_id).unwrap();
+        anchor
+            .import_snapshot_from_store(&store, &stored.snapshot_id)
+            .unwrap();
+        drop(store);
+        fs::remove_dir_all(&source_path).unwrap();
+        fs::remove_dir_all(&store_repo_path).unwrap();
+
+        anchor
+            .export_snapshot_to_repo(&target, &stored.metadata)
+            .unwrap();
+
+        assert!(
+            target
+                .run(&["rev-parse", "--verify", &stored.metadata.index_ref()])
+                .is_ok()
+        );
+        assert!(
+            target
+                .run(&["rev-parse", "--verify", &stored.metadata.work_ref()])
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn anchor_repo_authorized_wrappers_gate_import_and_export_by_project_device() {
         let temp = tempfile::tempdir().unwrap();
         let home = DevRelayHome::new(temp.path().join("home"));
