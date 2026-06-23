@@ -788,20 +788,20 @@ Conventions:
 
 ### M4.3 mDNS Discovery
 
-- [ ] Choose mDNS crate.
-- [ ] Advertise `_devrelay-anchor._tcp.local`.
-- [ ] Advertise `_devrelay-peer._tcp.local`.
-- [ ] Include `protocol=1`.
-- [ ] Include truncated fabric hint.
-- [ ] Include public device ID.
-- [ ] Include port.
-- [ ] Exclude project names.
-- [ ] Exclude repository paths.
-- [ ] Exclude usernames.
-- [ ] Add discovery browser.
-- [ ] Add manual address fallback.
-- [ ] Add mDNS disable config.
-- [ ] Add privacy test for TXT records.
+- [x] Choose mDNS crate.
+- [x] Advertise `_devrelay-anchor._tcp.local`.
+- [x] Advertise `_devrelay-peer._tcp.local`.
+- [x] Include `protocol=1`.
+- [x] Include truncated fabric hint.
+- [x] Include public device ID.
+- [x] Include port.
+- [x] Exclude project names.
+- [x] Exclude repository paths.
+- [x] Exclude usernames.
+- [x] Add discovery browser.
+- [x] Add manual address fallback.
+- [x] Add mDNS disable config.
+- [x] Add privacy test for TXT records.
 
 ### M4.4 mTLS Transport
 

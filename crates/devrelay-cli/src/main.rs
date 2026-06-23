@@ -11,18 +11,19 @@ use devrelay_core::AgentRpcClient;
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, ApplySnapshotParams, ApplySnapshotResult,
     CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome, DeviceIdentity,
-    DevicePublicIdentity, DiagnosticsExportParams, DiagnosticsExportResult, ErrorInfo,
-    FabricIdentityBundle, FabricIdentityStore, GitRepo, LocalConfig, METHOD_APPLY_SNAPSHOT,
-    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
-    METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, MetadataDb, PairingSession,
-    PairingStartRequest, PathDecision, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
-    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
-    RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
-    RecoverShowResult, ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind,
-    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
-    StoredSession, StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
-    WorkspaceState, apply_snapshot, classify_untracked_paths, create_snapshot,
+    DevicePublicIdentity, DiagnosticsExportParams, DiagnosticsExportResult, DiscoveryAdvertisement,
+    DiscoveryRole, DiscoveryService, ErrorInfo, FabricIdentityBundle, FabricIdentityStore, GitRepo,
+    LocalConfig, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
+    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
+    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
+    MetadataDb, PairingSession, PairingStartRequest, PathDecision, PatternConfig,
+    PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
+    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RecoverListParams,
+    RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
+    ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore,
+    StatusGetParams, StatusGetResult, StatusSummary, StoredSession, StoredSnapshot,
+    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
+    build_discovery_advertisement, classify_untracked_paths, create_snapshot,
     linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
     read_snapshot_file, workspace_id_for, write_snapshot_file,
 };
@@ -75,6 +76,10 @@ enum Command {
     Devices {
         #[command(subcommand)]
         command: DevicesCommand,
+    },
+    Discovery {
+        #[command(subcommand)]
+        command: DiscoveryCommand,
     },
     Identity {
         #[command(subcommand)]
@@ -235,6 +240,43 @@ enum DevicesCommand {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum DiscoveryCommand {
+    Advertise {
+        #[arg(long, value_enum)]
+        role: DiscoveryRoleArg,
+        #[arg(long)]
+        port: u16,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Browse {
+        #[arg(long, value_enum)]
+        role: DiscoveryRoleArg,
+        #[arg(long)]
+        manual_address: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DiscoveryRoleArg {
+    Anchor,
+    Peer,
+}
+
+impl From<DiscoveryRoleArg> for DiscoveryRole {
+    fn from(value: DiscoveryRoleArg) -> Self {
+        match value {
+            DiscoveryRoleArg::Anchor => Self::Anchor,
+            DiscoveryRoleArg::Peer => Self::Peer,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -647,6 +689,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Diagnostics { command } => handle_diagnostics_command(command, &agent_options)?,
         Command::Device { command } => handle_device_command(command)?,
         Command::Devices { command } => handle_devices_command(command)?,
+        Command::Discovery { command } => handle_discovery_command(command)?,
         Command::Identity { command } => handle_identity_command(command)?,
         Command::Manifest { command } => match command {
             ManifestCommand::Check { path, json } => {
@@ -1092,6 +1135,130 @@ fn handle_devices_command(command: DevicesCommand) -> anyhow::Result<()> {
             render_devices_list(&devices, json)
         }
     }
+}
+
+fn handle_discovery_command(command: DiscoveryCommand) -> anyhow::Result<()> {
+    match command {
+        DiscoveryCommand::Advertise {
+            role,
+            port,
+            dry_run,
+            json,
+        } => {
+            let role = DiscoveryRole::from(role);
+            let (bundle, registry) = open_identity_bundle(true)?;
+            let advertisement = build_discovery_advertisement(
+                role,
+                &bundle.root.fabric_id,
+                &bundle.device.device_id,
+                port,
+            )?;
+            let mut advertised = false;
+            if registry.config.mdns_enabled && !dry_run {
+                let discovery = DiscoveryService::new()?;
+                discovery.advertise(&advertisement)?;
+                advertised = true;
+            }
+            render_discovery_advertisement(
+                &advertisement,
+                registry.config.mdns_enabled,
+                dry_run,
+                advertised,
+                json,
+            )
+        }
+        DiscoveryCommand::Browse {
+            role,
+            manual_address,
+            json,
+        } => {
+            let role = DiscoveryRole::from(role);
+            let registry = open_device_registry()?;
+            let selected_manual_address =
+                manual_address.or_else(|| registry.config.manual_discovery_address.clone());
+            let mut browser_started = false;
+            if selected_manual_address.is_none() {
+                if !registry.config.mdns_enabled {
+                    return Err(DevRelayError::Config(
+                        "mDNS discovery is disabled and no manual address is configured"
+                            .to_string(),
+                    )
+                    .into());
+                }
+                let discovery = DiscoveryService::new()?;
+                let _receiver = discovery.browse(role)?;
+                browser_started = true;
+            }
+            render_discovery_browser(
+                role,
+                registry.config.mdns_enabled,
+                selected_manual_address,
+                browser_started,
+                json,
+            )
+        }
+    }
+}
+
+fn render_discovery_advertisement(
+    advertisement: &DiscoveryAdvertisement,
+    mdns_enabled: bool,
+    dry_run: bool,
+    advertised: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "dry_run": dry_run,
+                "mdns_enabled": mdns_enabled,
+                "advertised": advertised,
+                "advertisement": advertisement,
+            }))?
+        );
+    } else {
+        println!("discovery advertisement: {}", advertisement.service_type);
+        println!("  role: {}", advertisement.role.label());
+        println!("  port: {}", advertisement.port);
+        println!("  mDNS enabled: {mdns_enabled}");
+        println!("  advertised: {advertised}");
+        if dry_run {
+            println!("  dry run: true");
+        }
+    }
+    Ok(())
+}
+
+fn render_discovery_browser(
+    role: DiscoveryRole,
+    mdns_enabled: bool,
+    manual_address: Option<String>,
+    browser_started: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "role": role,
+                "service_type": role.service_type(),
+                "mdns_enabled": mdns_enabled,
+                "manual_address": manual_address,
+                "browser_started": browser_started,
+            }))?
+        );
+    } else {
+        println!("discovery browser: {}", role.service_type());
+        println!("  role: {}", role.label());
+        println!("  mDNS enabled: {mdns_enabled}");
+        if let Some(address) = manual_address {
+            println!("  manual address: {address}");
+        } else {
+            println!("  browser started: {browser_started}");
+        }
+    }
+    Ok(())
 }
 
 fn handle_identity_command(command: IdentityCommand) -> anyhow::Result<()> {

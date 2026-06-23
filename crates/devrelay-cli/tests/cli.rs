@@ -1362,6 +1362,7 @@ fn config_save_and_load_round_trip() {
     let stdout = String::from_utf8(load.stdout).unwrap();
     assert!(stdout.contains("\"version\": 1"));
     assert!(stdout.contains("\"device_name\""));
+    assert!(stdout.contains("\"mdns_enabled\": true"));
 
     let _ = std::fs::remove_file(path);
 }
@@ -1548,6 +1549,103 @@ fn identity_commands_create_public_fabric_identity() {
             .unwrap()
             .contains("recovery export")
     );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn discovery_advertise_dry_run_limits_txt_records() {
+    let root = std::env::temp_dir().join(format!("devrelay-discovery-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "discovery",
+            "advertise",
+            "--role",
+            "anchor",
+            "--port",
+            "7717",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(value["dry_run"].as_bool().unwrap());
+    assert!(value["mdns_enabled"].as_bool().unwrap());
+    assert!(!value["advertised"].as_bool().unwrap());
+    let advertisement = &value["advertisement"];
+    assert_eq!(
+        advertisement["service_type"],
+        "_devrelay-anchor._tcp.local."
+    );
+    assert_eq!(advertisement["port"], 7717);
+    let txt = advertisement["txt"].as_object().unwrap();
+    assert_eq!(txt.len(), 4);
+    assert_eq!(txt["protocol"], "1");
+    assert_eq!(txt["port"], "7717");
+    assert!(txt["fabric"].as_str().unwrap().len() <= 12);
+    assert!(txt["device_id"].as_str().unwrap().starts_with("d_"));
+    assert!(advertisement.get("project").is_none());
+    assert!(advertisement.get("path").is_none());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn discovery_browse_uses_manual_address_when_mdns_disabled() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-discovery-manual-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("config.toml"),
+        r#"
+version = 1
+fabric_name = "Personal Fabric"
+device_id = "d_testmanual"
+device_name = "test-device"
+platform_key = "test"
+architecture = "test"
+capabilities_json = "{\"anchor\":true,\"local_snapshots\":true}"
+paired_at_unix_seconds = 0
+last_seen_unix_seconds = 0
+resource_profile = "balanced"
+anchor_mode = "local-only"
+mdns_enabled = false
+manual_discovery_address = "192.0.2.44:7717"
+
+[editor]
+command = "system"
+"#,
+    )
+    .unwrap();
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["discovery", "browse", "--role", "anchor", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["role"], "anchor");
+    assert_eq!(value["service_type"], "_devrelay-anchor._tcp.local.");
+    assert!(!value["mdns_enabled"].as_bool().unwrap());
+    assert_eq!(value["manual_address"], "192.0.2.44:7717");
+    assert!(!value["browser_started"].as_bool().unwrap());
 
     let _ = std::fs::remove_dir_all(root);
 }

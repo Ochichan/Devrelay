@@ -36,6 +36,7 @@
 //! ```
 
 mod config;
+mod discovery;
 mod error;
 mod events;
 mod git;
@@ -61,6 +62,12 @@ pub use config::{
     ProjectRegistryEntry, ProjectRegistryIndex, RedactedLocalConfig, ResourceProfile,
     WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry, WorkspaceState, generate_device_id,
     migrate_local_config, workspace_id_for,
+};
+pub use discovery::{
+    DEVRELAY_ANCHOR_SERVICE_TYPE, DEVRELAY_DISCOVERY_PROTOCOL, DEVRELAY_PEER_SERVICE_TYPE,
+    DISCOVERY_TXT_DEVICE_ID, DISCOVERY_TXT_FABRIC_HINT, DISCOVERY_TXT_PORT, DISCOVERY_TXT_PROTOCOL,
+    DiscoveryAdvertisement, DiscoveryRole, DiscoveryService, build_discovery_advertisement,
+    truncated_fabric_hint,
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{

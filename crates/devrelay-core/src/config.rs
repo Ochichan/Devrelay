@@ -36,6 +36,10 @@ pub struct LocalConfig {
     pub editor: EditorPreference,
     pub resource_profile: ResourceProfile,
     pub anchor_mode: AnchorMode,
+    #[serde(default = "default_mdns_enabled")]
+    pub mdns_enabled: bool,
+    #[serde(default)]
+    pub manual_discovery_address: Option<String>,
     #[serde(default)]
     pub project_registry: ProjectRegistryIndex,
 }
@@ -144,6 +148,8 @@ pub struct RedactedLocalConfig {
     pub editor: EditorPreference,
     pub resource_profile: ResourceProfile,
     pub anchor_mode: AnchorMode,
+    pub mdns_enabled: bool,
+    pub manual_discovery_address_configured: bool,
     pub project_count: usize,
     pub projects: BTreeMap<String, RedactedProjectRegistryEntry>,
 }
@@ -184,6 +190,8 @@ impl Default for LocalConfig {
             },
             resource_profile: ResourceProfile::Balanced,
             anchor_mode: AnchorMode::LocalOnly,
+            mdns_enabled: true,
+            manual_discovery_address: None,
             project_registry: ProjectRegistryIndex::default(),
         }
     }
@@ -244,6 +252,13 @@ impl LocalConfig {
         validate_non_empty("architecture", &self.architecture)?;
         validate_capabilities_json(&self.capabilities_json)?;
         validate_non_empty("editor.command", &self.editor.command)?;
+        if let Some(address) = &self.manual_discovery_address
+            && address.trim().is_empty()
+        {
+            return Err(DevRelayError::Config(
+                "manual_discovery_address must not be empty".to_string(),
+            ));
+        }
 
         for (key, project) in &self.project_registry.projects {
             validate_non_empty("project_registry.projects key", key)?;
@@ -320,6 +335,8 @@ impl LocalConfig {
             editor: self.editor.clone(),
             resource_profile: self.resource_profile,
             anchor_mode: self.anchor_mode,
+            mdns_enabled: self.mdns_enabled,
+            manual_discovery_address_configured: self.manual_discovery_address.is_some(),
             project_count: self.project_registry.projects.len(),
             projects: self
                 .project_registry
@@ -488,6 +505,10 @@ fn default_capabilities_json() -> String {
     r#"{"anchor":true,"local_snapshots":true}"#.to_string()
 }
 
+fn default_mdns_enabled() -> bool {
+    true
+}
+
 pub fn generate_device_id() -> String {
     let seed = format!(
         "{}\0{}\0{}\0{}\0{}",
@@ -539,6 +560,8 @@ mod tests {
         assert_eq!(decoded.editor.command, "system");
         assert_eq!(decoded.resource_profile, ResourceProfile::Balanced);
         assert_eq!(decoded.anchor_mode, AnchorMode::LocalOnly);
+        assert!(decoded.mdns_enabled);
+        assert_eq!(decoded.manual_discovery_address, None);
     }
 
     #[test]
@@ -635,6 +658,44 @@ anchor_mode = "local-only"
             redacted.projects["project123"].local_path,
             "<redacted>".to_string()
         );
+        assert!(redacted.mdns_enabled);
+        assert!(!redacted.manual_discovery_address_configured);
+    }
+
+    #[test]
+    fn parses_mdns_disable_config_and_manual_fallback() {
+        let raw = r#"
+version = 1
+fabric_name = "Personal Fabric"
+device_name = "this-device"
+resource_profile = "balanced"
+anchor_mode = "local-only"
+mdns_enabled = false
+manual_discovery_address = "192.0.2.10:7000"
+
+[editor]
+command = "system"
+"#;
+
+        let config = LocalConfig::parse(raw).unwrap();
+
+        assert!(!config.mdns_enabled);
+        assert_eq!(
+            config.manual_discovery_address,
+            Some("192.0.2.10:7000".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_blank_manual_discovery_address() {
+        let config = LocalConfig {
+            manual_discovery_address: Some("   ".to_string()),
+            ..LocalConfig::default()
+        };
+
+        let err = config.validate().unwrap_err();
+
+        assert!(err.to_string().contains("manual_discovery_address"));
     }
 
     #[test]
