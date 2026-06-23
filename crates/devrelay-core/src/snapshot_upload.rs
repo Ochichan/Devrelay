@@ -613,6 +613,41 @@ large_file_threshold_mib = 1
     }
 
     #[test]
+    fn upload_fault_points_do_not_advance_canonical_latest() {
+        for fault in [
+            SnapshotDataUploadFaultPoint::AfterPendingMarker,
+            SnapshotDataUploadFaultPoint::AfterGitObjects,
+            SnapshotDataUploadFaultPoint::AfterCasObjects,
+            SnapshotDataUploadFaultPoint::AfterDataVerification,
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let home = DevRelayHome::new(temp.path().join("home"));
+            let source_path = temp.path().join("source");
+            let source = init_repo(&source_path);
+            let source_cas = CasStore::open(temp.path().join("source-cas")).unwrap();
+            let anchor_cas = CasStore::open(home.anchor_cas_root()).unwrap();
+            let anchor = AnchorSnapshotRepo::open(&home, "upload-project").unwrap();
+            let (mut db, session_id, lease_id) = setup_db(&home);
+            let metadata = create_upload_snapshot(&source, &source_path, &source_cas, &session_id);
+
+            let err = publish_snapshot_canonical_with_data(
+                &mut db,
+                request(&lease_id, &session_id, &metadata),
+                upload_context(&source, &anchor, &source_cas, &anchor_cas, Some(fault)),
+            )
+            .unwrap_err();
+
+            assert!(err.to_string().contains(fault.as_str()));
+            assert!(snapshots_for_project(&db).is_empty());
+            assert_eq!(
+                db.get_lease(&lease_id).unwrap().unwrap().latest_snapshot_id,
+                None
+            );
+            assert_eq!(list_pending_snapshot_uploads(&anchor).unwrap().len(), 1);
+        }
+    }
+
+    #[test]
     fn retry_after_partial_upload_publishes_and_clears_pending_marker() {
         let temp = tempfile::tempdir().unwrap();
         let home = DevRelayHome::new(temp.path().join("home"));
