@@ -57,6 +57,28 @@ pub fn capture_operation_capsule(repo: &GitRepo) -> Result<Option<OperationCapsu
     }))
 }
 
+pub fn apply_unmerged_index_entries(repo: &GitRepo, capsule: &OperationCapsule) -> Result<()> {
+    if capsule.unmerged_entries.is_empty() {
+        return Ok(());
+    }
+
+    for entry in &capsule.unmerged_entries {
+        repo.run(&["update-index", "--force-remove", "--", &entry.path])?;
+    }
+
+    let mut index_info = String::new();
+    for entry in &capsule.unmerged_entries {
+        for stage in &entry.stages {
+            index_info.push_str(&format!(
+                "{} {} {}\t{}\n",
+                stage.mode, stage.oid, stage.stage, entry.path
+            ));
+        }
+    }
+    repo.run_with_stdin(&["update-index", "--index-info"], index_info.as_bytes())?;
+    Ok(())
+}
+
 fn capture_operation_metadata(repo: &GitRepo) -> Result<Option<GitOperationMetadata>> {
     let git_dir = repo.git_dir()?;
     let Some((kind, marker_path)) = [
@@ -189,6 +211,40 @@ mod tests {
     }
 
     #[test]
+    fn applies_unmerged_index_entries_to_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        fs::create_dir(&source_path).unwrap();
+        let source = init_repo(&source_path);
+        fs::write(source_path.join("conflict.txt"), "base\n").unwrap();
+        git(&source_path, &["add", "conflict.txt"]);
+        git(&source_path, &["commit", "-m", "base"]);
+        git(&source_path, &["checkout", "-b", "feature"]);
+        fs::write(source_path.join("conflict.txt"), "feature\n").unwrap();
+        git(&source_path, &["commit", "-am", "feature"]);
+        git(&source_path, &["checkout", "main"]);
+        fs::write(source_path.join("conflict.txt"), "main\n").unwrap();
+        git(&source_path, &["commit", "-am", "main"]);
+
+        let merge = git_output(&source_path, &["merge", "feature"]);
+        assert!(!merge.status.success(), "merge should conflict");
+        let capsule = capture_operation_capsule(&source)
+            .unwrap()
+            .expect("merge conflict should produce an operation capsule");
+        git_clone(&source_path, &target_path);
+        let target = GitRepo::new(&target_path);
+
+        apply_unmerged_index_entries(&target, &capsule).unwrap();
+
+        assert_eq!(target.status().unwrap().counts.unmerged, 1);
+        assert_eq!(
+            capture_unmerged_index_entries(&target).unwrap(),
+            capsule.unmerged_entries
+        );
+    }
+
+    #[test]
     fn captures_cherry_pick_and_revert_metadata_markers() {
         for (kind, marker) in [
             (GitOperationKind::CherryPick, "CHERRY_PICK_HEAD"),
@@ -248,5 +304,19 @@ mod tests {
             .env("GIT_COMMITTER_EMAIL", "devrelay-test@example.local")
             .output()
             .unwrap()
+    }
+
+    fn git_clone(source: &Path, target: &Path) {
+        let output = Command::new("git")
+            .arg("clone")
+            .arg(source)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git clone failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

@@ -122,7 +122,7 @@ pub use manifest::{
 };
 pub use operation_capsule::{
     GitOperationKind, GitOperationMetadata, IndexStageEntry, OperationCapsule, UnmergedIndexEntry,
-    capture_operation_capsule,
+    apply_unmerged_index_entries, capture_operation_capsule,
 };
 pub use pairing::{
     PAIRING_ID_PREFIX, PairingEphemeralKey, PairingSession, PairingState,

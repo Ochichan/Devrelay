@@ -9,8 +9,9 @@
 use crate::error::{DevRelayError, Result};
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 
 #[derive(Debug, Clone)]
 pub struct GitRepo {
@@ -122,6 +123,22 @@ impl GitRepo {
         self.run_os(args, envs)
     }
 
+    pub fn run_with_stdin(&self, args: &[&str], input: &[u8]) -> Result<String> {
+        let args: Vec<OsString> = args.iter().map(OsString::from).collect();
+        let mut command = Command::new("git");
+        command.arg("-C").arg(&self.path);
+        command.args(&args);
+        command.stdin(Stdio::piped());
+        let mut child = command.spawn()?;
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin should be piped")
+            .write_all(input)?;
+        let output = child.wait_with_output()?;
+        self.output_to_result(args, output)
+    }
+
     fn run_os<I>(&self, args: I, envs: &[(&str, &OsStr)]) -> Result<String>
     where
         I: IntoIterator<Item = OsString>,
@@ -134,6 +151,10 @@ impl GitRepo {
         }
         command.args(&args);
         let output = command.output()?;
+        self.output_to_result(args, output)
+    }
+
+    fn output_to_result(&self, args: Vec<OsString>, output: Output) -> Result<String> {
         if !output.status.success() {
             return Err(DevRelayError::GitCommand {
                 cwd: self.path.clone(),

@@ -1674,7 +1674,7 @@ Conventions:
 - [x] Capture index stage 3 entries.
 - [x] Capture operation metadata.
 - [x] Store operation capsule.
-- [ ] Apply unmerged index to target.
+- [x] Apply unmerged index to target.
 - [ ] Restore conflict markers.
 - [ ] Verify staged entries.
 - [ ] Add conflict round-trip tests.
