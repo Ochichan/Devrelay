@@ -16,7 +16,8 @@ use crate::policy::classify_untracked_paths;
 use crate::snapshot_schema::{SNAPSHOT_ID_PREFIX, SNAPSHOT_SCHEMA_VERSION, calculate_state_hash};
 use crate::{
     CasStore, DEFAULT_SIDECAR_CHUNK_BYTES, GitRepo, GitStatus, Manifest, PathDecision,
-    SnapshotMetadata, capture_large_sidecars, ensure_sidecars_available, materialize_sidecars,
+    SnapshotMetadata, capture_large_sidecars, ensure_lfs_objects_available,
+    ensure_sidecars_available, ensure_snapshot_lfs_objects_available, materialize_sidecars,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
@@ -84,6 +85,7 @@ fn create_snapshot_inner(
 ) -> Result<SnapshotMetadata> {
     let status = repo.status()?;
     ensure_checkpoint_supported(repo, &status)?;
+    ensure_lfs_objects_available(repo)?;
     let classified = classify_untracked_paths(repo.path(), manifest, status.untracked_paths())?;
     let sidecars = if let Some(cas_store) = cas_store {
         capture_large_sidecars(
@@ -223,6 +225,7 @@ fn apply_snapshot_inner(
     fault: Option<SnapshotApplyFaultPoint>,
 ) -> Result<VerificationDetails> {
     plan_apply_snapshot(target, source, snapshot)?;
+    ensure_snapshot_lfs_objects_available(source, snapshot)?;
     let target_platform_key = current_platform_key();
     ensure_no_reparse_points_before_materialization(target)?;
     ensure_snapshot_paths_supported(source, snapshot, &target_platform_key)?;
@@ -681,6 +684,7 @@ fn unix_nanos() -> u128 {
 mod tests {
     use super::*;
     use crate::{StatusCounts, manifest::Manifest};
+    use sha2::{Digest, Sha256};
     use std::fs;
 
     fn manifest() -> Manifest {
@@ -754,6 +758,37 @@ large_file_threshold_mib = 1
             .join("b3")
             .join(&hex[0..2])
             .join(format!("{}.chunk", &hex[2..]))
+    }
+
+    fn lfs_pointer(oid: &str, size: u64) -> String {
+        format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize {size}\n")
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let digest = Sha256::digest(bytes);
+        let mut output = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            output.push(HEX[(byte >> 4) as usize] as char);
+            output.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+        output
+    }
+
+    fn lfs_object_path(repo: &GitRepo, oid: &str) -> PathBuf {
+        repo.git_dir()
+            .unwrap()
+            .join("lfs")
+            .join("objects")
+            .join(&oid[..2])
+            .join(&oid[2..4])
+            .join(oid)
+    }
+
+    fn write_lfs_object(repo: &GitRepo, oid: &str, bytes: &[u8]) {
+        let path = lfs_object_path(repo, oid);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
     }
 
     #[test]
@@ -1055,6 +1090,29 @@ large_file_threshold_mib = 1
     }
 
     #[test]
+    fn checkpoint_rejects_missing_lfs_object() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        let object = b"missing lfs object";
+        let oid = sha256_hex(object);
+        fs::write(
+            source_path.join("asset.bin"),
+            lfs_pointer(&oid, object.len() as u64),
+        )
+        .unwrap();
+        source.run(&["add", "asset.bin"]).unwrap();
+        source.run(&["commit", "-m", "lfs pointer"]).unwrap();
+
+        let err = create_snapshot(&source, &manifest()).unwrap_err();
+
+        assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
+        assert!(err.to_string().contains("asset.bin"));
+        assert!(err.to_string().contains(&oid));
+    }
+
+    #[test]
     fn checkpoint_rejects_unmerged_status() {
         let status = GitStatus {
             head_oid: "abc".to_string(),
@@ -1250,6 +1308,45 @@ large_file_threshold_mib = 1
         let err = plan_apply_snapshot(&target, &source, &snapshot).unwrap_err();
         assert!(matches!(err, DevRelayError::MissingSourceObject(_)));
         assert_eq!(err.code(), "DR-APPLY-MISSING-SOURCE-OBJECT");
+    }
+
+    #[test]
+    fn apply_rejects_missing_lfs_object_before_target_mutation() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        let object = b"source lfs object required for apply";
+        let oid = sha256_hex(object);
+        fs::write(
+            source_path.join("asset.bin"),
+            lfs_pointer(&oid, object.len() as u64),
+        )
+        .unwrap();
+        source.run(&["add", "asset.bin"]).unwrap();
+        source.run(&["commit", "-m", "lfs pointer"]).unwrap();
+        write_lfs_object(&source, &oid, object);
+        fs::write(
+            source_path.join("tracked.txt"),
+            "changed through snapshot\n",
+        )
+        .unwrap();
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+        fs::remove_file(lfs_object_path(&source, &oid)).unwrap();
+
+        clone_repo(&source_path, &target_path);
+        let target = GitRepo::new(&target_path);
+        let err = apply_snapshot(&target, &source, &snapshot).unwrap_err();
+
+        assert!(matches!(err, DevRelayError::MissingSourceObject(_)));
+        assert_eq!(err.code(), "DR-APPLY-MISSING-SOURCE-OBJECT");
+        assert!(err.to_string().contains("asset.bin"));
+        assert!(err.to_string().contains(&oid));
+        assert_eq!(
+            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
     }
 
     #[test]

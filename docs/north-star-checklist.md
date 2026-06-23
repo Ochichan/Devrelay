@@ -1697,8 +1697,8 @@ Conventions:
 - [x] Detect required local LFS objects.
 - [ ] Check upstream availability.
 - [ ] Store local-only LFS object in CAS.
-- [ ] Verify LFS object before apply.
-- [ ] Block apply if object missing.
+- [x] Verify LFS object before apply.
+- [x] Block apply if object missing.
 - [x] Add LFS tests with fake objects.
 
 ### M12.4 Sparse Checkout And Partial Clone

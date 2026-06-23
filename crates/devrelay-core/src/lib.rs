@@ -149,7 +149,7 @@ pub use ipc::{UnixIpcConnection, UnixIpcListener};
 pub use lease::{LeaseRecord, LeaseState};
 pub use lfs::{
     LfsMissingObject, LfsObjectReport, LfsPointer, ensure_lfs_objects_available,
-    inspect_lfs_objects,
+    ensure_snapshot_lfs_objects_available, inspect_lfs_objects, inspect_snapshot_lfs_objects,
 };
 pub use line_ending_doctor::{
     LineEndingDoctorReport, LineEndingHashMismatch, LineEndingWarning, LineEndingWarningCode,
