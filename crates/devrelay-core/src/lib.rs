@@ -250,7 +250,10 @@ pub use snapshot_upload::{
     list_pending_snapshot_uploads, mark_snapshot_upload_pending,
     publish_snapshot_canonical_with_data,
 };
-pub use sparse::{PartialCloneState, SparseCheckoutReport, inspect_sparse_checkout};
+pub use sparse::{
+    BlobAvailabilityReport, PartialCloneState, SparseCheckoutReport, fetch_missing_blobs_on_demand,
+    inspect_sparse_checkout,
+};
 pub use storage::{
     CanonicalPublishRequest, CanonicalPublishResult, HandoffCommitSnapshotPreflight,
     InactiveForkPublishRequest, InactiveForkPublishResult, MetadataDb, MetadataDbFaultPoint,

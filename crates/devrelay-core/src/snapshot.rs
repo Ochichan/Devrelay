@@ -19,7 +19,8 @@ use crate::{
     SnapshotMetadata, capture_large_sidecars, capture_local_only_lfs_objects,
     ensure_lfs_report_objects_available, ensure_sidecars_available,
     ensure_snapshot_lfs_objects_available, ensure_snapshot_lfs_objects_available_or_sidecars,
-    inspect_lfs_objects, inspect_lfs_objects_with_upstream, materialize_sidecars,
+    fetch_missing_blobs_on_demand, inspect_lfs_objects, inspect_lfs_objects_with_upstream,
+    materialize_sidecars,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
@@ -271,6 +272,9 @@ fn apply_snapshot_inner(
     ensure_snapshot_paths_supported(source, snapshot, &target_platform_key)?;
     ensure_snapshot_materialization_supported(source, snapshot, &target_platform_key)?;
     fetch_snapshot_refs(target, source, snapshot)?;
+    fetch_missing_blobs_on_demand(target, &snapshot.head_oid)?;
+    fetch_missing_blobs_on_demand(target, &snapshot.index_tree_oid)?;
+    fetch_missing_blobs_on_demand(target, &snapshot.work_tree_oid)?;
     inject_apply_fault(fault, SnapshotApplyFaultPoint::AfterTargetFetch)?;
 
     if let Some(branch) = &snapshot.branch {

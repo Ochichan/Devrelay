@@ -2,7 +2,7 @@
 
 use crate::{DevRelayError, GitRepo, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -23,6 +23,14 @@ pub struct PartialCloneState {
     pub extension_remote: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlobAvailabilityReport {
+    pub repo: PathBuf,
+    pub treeish: String,
+    pub checked_blobs: usize,
+    pub missing_blobs: Vec<String>,
+}
+
 pub fn inspect_sparse_checkout(repo: &GitRepo) -> Result<SparseCheckoutReport> {
     let sparse_checkout_enabled = git_bool_config(repo, "core.sparseCheckout")?;
     let cone_mode = git_bool_config(repo, "core.sparseCheckoutCone")?;
@@ -36,6 +44,58 @@ pub fn inspect_sparse_checkout(repo: &GitRepo) -> Result<SparseCheckoutReport> {
         sparse_patterns,
         partial_clone,
     })
+}
+
+pub fn fetch_missing_blobs_on_demand(
+    repo: &GitRepo,
+    treeish: &str,
+) -> Result<BlobAvailabilityReport> {
+    let blob_oids = blob_oids_in_tree(repo, treeish)?;
+    let mut missing_blobs = Vec::new();
+    for oid in &blob_oids {
+        if repo
+            .run(&["cat-file", "-e", &format!("{oid}^{{blob}}")])
+            .is_err()
+        {
+            missing_blobs.push(oid.clone());
+        }
+    }
+
+    let report = BlobAvailabilityReport {
+        repo: repo.path().to_path_buf(),
+        treeish: treeish.to_string(),
+        checked_blobs: blob_oids.len(),
+        missing_blobs,
+    };
+    if !report.missing_blobs.is_empty() {
+        return Err(DevRelayError::MissingSourceObject(format!(
+            "missing {} Git blobs required by {}: {}",
+            report.missing_blobs.len(),
+            treeish,
+            report.missing_blobs.join(", ")
+        )));
+    }
+    Ok(report)
+}
+
+fn blob_oids_in_tree(repo: &GitRepo, treeish: &str) -> Result<Vec<String>> {
+    let raw = repo.run(&["ls-tree", "-r", "-z", treeish])?;
+    let mut oids = BTreeSet::new();
+    for record in raw.split('\0').filter(|record| !record.is_empty()) {
+        let Some((metadata, _path)) = record.split_once('\t') else {
+            return Err(DevRelayError::Config(format!(
+                "unexpected git ls-tree record: {record:?}"
+            )));
+        };
+        let mut fields = metadata.split_whitespace();
+        let _mode = fields.next().unwrap_or_default();
+        let object_type = fields.next().unwrap_or_default();
+        let oid = fields.next().unwrap_or_default();
+        if object_type == "blob" && !oid.is_empty() {
+            oids.insert(oid.to_string());
+        }
+    }
+    Ok(oids.into_iter().collect())
 }
 
 fn inspect_partial_clone(repo: &GitRepo) -> Result<PartialCloneState> {
@@ -242,6 +302,42 @@ mod tests {
         );
         assert_eq!(report.partial_clone.promisor_remotes, vec!["origin"]);
         assert_eq!(report.partial_clone.filter.as_deref(), Some("blob:none"));
+    }
+
+    #[test]
+    fn fetch_missing_blobs_on_demand_checks_tree_blobs() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = init_repo(temp.path());
+        fs::write(temp.path().join("tracked.txt"), "present\n").unwrap();
+        git(temp.path(), &["add", "tracked.txt"]);
+        git(temp.path(), &["commit", "-m", "base"]);
+
+        let report = fetch_missing_blobs_on_demand(&repo, "HEAD").unwrap();
+
+        assert_eq!(report.checked_blobs, 1);
+        assert!(report.missing_blobs.is_empty());
+    }
+
+    #[test]
+    fn fetch_missing_blobs_on_demand_reports_missing_blob() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = init_repo(temp.path());
+        fs::write(temp.path().join("tracked.txt"), "missing\n").unwrap();
+        git(temp.path(), &["add", "tracked.txt"]);
+        git(temp.path(), &["commit", "-m", "base"]);
+        let blob_oid = repo.run(&["rev-parse", "HEAD:tracked.txt"]).unwrap();
+        let blob_path = repo
+            .git_dir()
+            .unwrap()
+            .join("objects")
+            .join(&blob_oid[..2])
+            .join(&blob_oid[2..]);
+        fs::remove_file(blob_path).unwrap();
+
+        let err = fetch_missing_blobs_on_demand(&repo, "HEAD").unwrap_err();
+
+        assert!(matches!(err, DevRelayError::MissingSourceObject(_)));
+        assert!(err.to_string().contains(&blob_oid));
     }
 
     fn init_repo(root: &Path) -> GitRepo {
