@@ -1,6 +1,6 @@
 use devrelay_core::{
     DevRelayError, GitRepo, Manifest, SnapshotMetadata, VerificationDetails, apply_snapshot,
-    create_snapshot, verify_snapshot,
+    classification_reason, create_snapshot, verify_snapshot,
 };
 use std::ffi::OsString;
 use std::fs;
@@ -93,6 +93,12 @@ fn tree_mode(repo: &GitRepo, treeish: &str, path: &str) -> String {
         .next()
         .unwrap()
         .to_string()
+}
+
+fn tree_blob_content(repo: &GitRepo, treeish: &str, path: &str) -> String {
+    let entry = repo.run(&["ls-tree", treeish, "--", path]).unwrap();
+    let oid = entry.split_whitespace().nth(2).unwrap();
+    repo.run(&["cat-file", "-p", oid]).unwrap()
 }
 
 fn index_mode(repo: &GitRepo, path: &str) -> String {
@@ -257,6 +263,54 @@ fn round_trips_executable_index_mode_when_filemode_is_ignored() {
         },
         |_target_path, target, snapshot, _verification| {
             assert_executable_mode_preserved(target, snapshot, "script.sh");
+        },
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn round_trips_symlink_target_string() {
+    round_trip(
+        |source_path, _source| {
+            std::os::unix::fs::symlink("tracked.txt", source_path.join("tracked-link")).unwrap();
+        },
+        |target_path, target, snapshot, _verification| {
+            assert_eq!(
+                tree_mode(target, &snapshot.work_tree_oid, "tracked-link"),
+                "120000"
+            );
+            assert_eq!(
+                tree_blob_content(target, &snapshot.work_tree_oid, "tracked-link"),
+                "tracked.txt"
+            );
+            let link_path = target_path.join("tracked-link");
+            assert!(
+                fs::symlink_metadata(&link_path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_eq!(fs::read_link(link_path).unwrap(), Path::new("tracked.txt"));
+        },
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn excludes_symlink_escape_without_following_target() {
+    round_trip(
+        |source_path, _source| {
+            let outside = source_path.parent().unwrap().join("outside-private.pem");
+            fs::write(outside, "-----BEGIN PRIVATE KEY-----\nsecret\n").unwrap();
+            std::os::unix::fs::symlink("../outside-private.pem", source_path.join("outside-link"))
+                .unwrap();
+        },
+        |target_path, _target, snapshot, _verification| {
+            assert!(snapshot.excluded.iter().any(|item| {
+                item.path == "outside-link"
+                    && item.reason == classification_reason::SYMLINK_TARGET_OUTSIDE_WORKSPACE
+            }));
+            assert!(!target_path.join("outside-link").exists());
         },
     );
 }

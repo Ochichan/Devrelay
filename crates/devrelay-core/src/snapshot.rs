@@ -6,6 +6,7 @@
 //! verifies HEAD, index tree, work tree, and state hash after materialization.
 
 use crate::error::{DevRelayError, Result};
+use crate::platform::{current_platform_key, platform_capabilities_for_key};
 use crate::policy::classify_untracked_paths;
 use crate::snapshot_schema::{SNAPSHOT_ID_PREFIX, SNAPSHOT_SCHEMA_VERSION, calculate_state_hash};
 use crate::{GitRepo, GitStatus, Manifest, PathDecision, SnapshotMetadata};
@@ -135,6 +136,7 @@ pub fn apply_snapshot(
     snapshot: &SnapshotMetadata,
 ) -> Result<VerificationDetails> {
     plan_apply_snapshot(target, source, snapshot)?;
+    ensure_snapshot_materialization_supported(source, snapshot, &current_platform_key())?;
     fetch_snapshot_refs(target, source, snapshot)?;
 
     if let Some(branch) = &snapshot.branch {
@@ -249,6 +251,46 @@ fn ensure_source_snapshot_refs(source: &GitRepo, snapshot: &SnapshotMetadata) ->
             })?;
     }
     Ok(())
+}
+
+fn ensure_snapshot_materialization_supported(
+    repo: &GitRepo,
+    snapshot: &SnapshotMetadata,
+    target_platform_key: &str,
+) -> Result<()> {
+    if platform_capabilities_for_key(target_platform_key).symlinks {
+        return Ok(());
+    }
+
+    let mut symlink_paths = symlink_paths_in_tree(repo, &snapshot.index_tree_oid)?;
+    symlink_paths.extend(symlink_paths_in_tree(repo, &snapshot.work_tree_oid)?);
+    symlink_paths.sort();
+    symlink_paths.dedup();
+    if symlink_paths.is_empty() {
+        return Ok(());
+    }
+
+    Err(DevRelayError::UnsupportedRepositoryState(format!(
+        "target platform {target_platform_key} does not support symlink materialization for: {}",
+        symlink_paths.join(", ")
+    )))
+}
+
+fn symlink_paths_in_tree(repo: &GitRepo, treeish: &str) -> Result<Vec<String>> {
+    let raw = repo.run(&["ls-tree", "-r", "-z", treeish])?;
+    let mut paths = Vec::new();
+    for record in raw.split('\0').filter(|record| !record.is_empty()) {
+        let Some((metadata, path)) = record.split_once('\t') else {
+            return Err(DevRelayError::Config(format!(
+                "unexpected git ls-tree record: {record:?}"
+            )));
+        };
+        let mode = metadata.split_whitespace().next().unwrap_or_default();
+        if mode == "120000" {
+            paths.push(path.replace('\\', "/"));
+        }
+    }
+    Ok(paths)
 }
 
 fn verify_included_untracked_paths(repo: &GitRepo, snapshot: &SnapshotMetadata) -> Result<()> {
@@ -700,5 +742,23 @@ portable_paths = "strict"
 
         assert!(matches!(err, DevRelayError::Verification(_)));
         assert_eq!(err.code(), "DR-APPLY-VERIFICATION-MISMATCH");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn blocks_symlink_materialization_for_targets_without_symlink_support() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        std::os::unix::fs::symlink("tracked.txt", source_path.join("tracked-link")).unwrap();
+
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+        let err =
+            ensure_snapshot_materialization_supported(&source, &snapshot, "windows-native-x86_64")
+                .unwrap_err();
+
+        assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
+        assert!(err.to_string().contains("tracked-link"));
     }
 }

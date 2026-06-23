@@ -1632,12 +1632,12 @@ Conventions:
 
 ### M11.5 Symlink Policy
 
-- [ ] Detect symlink entries.
-- [ ] Preserve symlink target string.
-- [ ] Refuse to follow symlink outside workspace.
-- [ ] Block materialization if target lacks symlink support.
-- [ ] Add symlink capability doctor.
-- [ ] Add symlink tests.
+- [x] Detect symlink entries.
+- [x] Preserve symlink target string.
+- [x] Refuse to follow symlink outside workspace.
+- [x] Block materialization if target lacks symlink support.
+- [x] Add symlink capability doctor.
+- [x] Add symlink tests.
 
 ### M11.6 Windows Reparse Points
 

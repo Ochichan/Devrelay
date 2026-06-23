@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::manifest::{Manifest, UntrackedPolicy};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -19,6 +19,7 @@ pub mod classification_reason {
     pub const PRIVATE_KEY_FILENAME: &str = "private-key-filename";
     pub const PRIVATE_KEY_CONTENT: &str = "private-key-content";
     pub const HIGH_ENTROPY_PLACEHOLDER: &str = "high-entropy-placeholder";
+    pub const SYMLINK_TARGET_OUTSIDE_WORKSPACE: &str = "symlink-target-outside-workspace";
     pub const MANIFEST_OR_GENERATED_EXCLUDE: &str = "manifest-or-generated-exclude";
     pub const LARGE_FILE_THRESHOLD: &str = "large-file-threshold";
     pub const MANIFEST_UNTRACKED_NONE: &str = "manifest-untracked-none";
@@ -86,6 +87,12 @@ fn classify_one(
 ) -> ClassifiedPath {
     if let Some(reason) = secret_path_reason(path) {
         return excluded(path, reason);
+    }
+    if symlink_target_escapes_workspace(repo_root, path) {
+        return excluded(
+            path,
+            classification_reason::SYMLINK_TARGET_OUTSIDE_WORKSPACE,
+        );
     }
     if path_has_private_key_header(repo_root, path) {
         return excluded(path, classification_reason::PRIVATE_KEY_CONTENT);
@@ -179,6 +186,12 @@ fn secret_path_reason(path: &str) -> Option<&'static str> {
 
 fn path_has_private_key_header(repo_root: &Path, path: &str) -> bool {
     let full = repo_root.join(PathBuf::from(path));
+    let Ok(metadata) = fs::symlink_metadata(&full) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() {
+        return false;
+    }
     let Ok(mut file) = File::open(full) else {
         return false;
     };
@@ -208,10 +221,48 @@ fn exceeds_threshold(repo_root: &Path, path: &str, threshold_bytes: u64) -> bool
         return false;
     }
     let full = repo_root.join(PathBuf::from(path));
-    let Ok(metadata) = full.metadata() else {
+    let Ok(metadata) = fs::symlink_metadata(full) else {
         return false;
     };
+    if metadata.file_type().is_symlink() {
+        return false;
+    }
     metadata.is_file() && metadata.len() > threshold_bytes
+}
+
+fn symlink_target_escapes_workspace(repo_root: &Path, path: &str) -> bool {
+    let full = repo_root.join(PathBuf::from(path));
+    let Ok(metadata) = fs::symlink_metadata(&full) else {
+        return false;
+    };
+    if !metadata.file_type().is_symlink() {
+        return false;
+    }
+    let Ok(target) = fs::read_link(&full) else {
+        return true;
+    };
+    if target.is_absolute() {
+        return true;
+    }
+    let link_parent = Path::new(path).parent().unwrap_or_else(|| Path::new(""));
+    normalize_workspace_relative_path(&link_parent.join(target)).is_none()
+}
+
+fn normalize_workspace_relative_path(path: &Path) -> Option<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => normalized.push(part),
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => return None,
+        }
+    }
+    Some(normalized)
 }
 
 #[cfg(test)]
@@ -344,6 +395,47 @@ large_file_threshold_mib = {threshold_mib}
             classification_reason::LARGE_FILE_THRESHOLD
         );
         assert_eq!(decisions[1].decision, PathDecision::Include);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn excludes_symlink_targets_outside_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("inside.txt"), "inside\n").unwrap();
+        fs::write(
+            temp.path().parent().unwrap().join("outside.txt"),
+            "outside\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("../outside.txt", temp.path().join("escape-link")).unwrap();
+
+        let decisions =
+            classify_untracked_paths(temp.path(), &safe_manifest(), ["inside.txt", "escape-link"])
+                .unwrap();
+
+        assert_eq!(decisions[0].decision, PathDecision::Include);
+        assert_eq!(decisions[1].decision, PathDecision::Exclude);
+        assert_eq!(
+            decisions[1].reason,
+            classification_reason::SYMLINK_TARGET_OUTSIDE_WORKSPACE
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn does_not_follow_symlink_targets_for_content_checks() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("secret.txt"),
+            "-----BEGIN PRIVATE KEY-----\nsecret\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("secret.txt", temp.path().join("link.txt")).unwrap();
+
+        let decisions =
+            classify_untracked_paths(temp.path(), &safe_manifest(), ["link.txt"]).unwrap();
+
+        assert_eq!(decisions[0].decision, PathDecision::Include);
     }
 
     #[test]

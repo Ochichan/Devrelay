@@ -342,6 +342,60 @@ portable_paths = "strict"
     let _ = std::fs::remove_dir_all(repo);
 }
 
+#[cfg(unix)]
+#[test]
+fn doctor_paths_reports_symlink_capability_mismatch() {
+    let repo = std::env::temp_dir().join(format!(
+        "devrelay-doctor-symlink-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    std::fs::write(
+        repo.join("devrelay.toml"),
+        r#"
+schema = 1
+project_id = "12345678"
+name = "demo"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("README.md", repo.join("readme-link")).unwrap();
+    git(&repo, &["add", "devrelay.toml", "readme-link"]);
+    git(&repo, &["commit", "-m", "manifest and symlink"]);
+
+    let output = devrelay()
+        .args([
+            "doctor",
+            "paths",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--target-platform",
+            "windows-native-x86_64",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let issues = value["issues"].as_array().unwrap();
+    assert!(issues.iter().any(|issue| {
+        issue["code"] == "symlink-unsupported-on-target" && issue["path"] == "readme-link"
+    }));
+
+    let _ = std::fs::remove_dir_all(repo);
+}
+
 #[test]
 fn doctor_line_endings_reports_missing_policy_and_target_risk() {
     let repo = std::env::temp_dir().join(format!(
