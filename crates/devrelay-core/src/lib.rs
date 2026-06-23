@@ -72,6 +72,7 @@ mod sidecar;
 mod snapshot;
 mod snapshot_schema;
 mod snapshot_store;
+mod snapshot_upload;
 mod sparse;
 mod storage;
 mod submodule;
@@ -229,6 +230,12 @@ pub use snapshot_schema::{SnapshotMetadata, SnapshotSidecar};
 pub use snapshot_store::{
     SnapshotCheckpointResult, SnapshotPruneResult, SnapshotStore, SnapshotStoreFaultPoint,
     StoredSnapshot,
+};
+pub use snapshot_upload::{
+    PendingSnapshotUpload, PendingSnapshotUploadCleanup, SnapshotDataUpload,
+    SnapshotDataUploadFaultPoint, cleanup_pending_snapshot_upload, finish_snapshot_upload,
+    list_pending_snapshot_uploads, mark_snapshot_upload_pending,
+    publish_snapshot_canonical_with_data,
 };
 pub use sparse::{PartialCloneState, SparseCheckoutReport, inspect_sparse_checkout};
 pub use storage::{

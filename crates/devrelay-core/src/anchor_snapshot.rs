@@ -118,6 +118,11 @@ impl AnchorSnapshotRepo {
         Ok(())
     }
 
+    pub fn verify_snapshot_available(&self, metadata: &SnapshotMetadata) -> Result<()> {
+        self.validate_snapshot_metadata(metadata)?;
+        self.ensure_snapshot_objects(metadata)
+    }
+
     pub fn scan_orphan_snapshot_refs(
         &self,
         known_snapshot_ids: &[String],

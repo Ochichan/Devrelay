@@ -955,22 +955,22 @@ Conventions:
 
 ### M5.7 Partial Upload Safety
 
-- [ ] Mark snapshot data upload as pending.
-- [ ] Upload Git objects before metadata publish.
-- [ ] Upload CAS chunks before metadata publish.
-- [ ] Verify anchor has required data.
-- [ ] Publish metadata only after data availability.
-- [ ] Ensure partial upload does not update latest.
-- [ ] Add network cut fault test.
-- [ ] Add upload retry test.
-- [ ] Add orphan cleanup test.
+- [x] Mark snapshot data upload as pending.
+- [x] Upload Git objects before metadata publish.
+- [x] Upload CAS chunks before metadata publish.
+- [x] Verify anchor has required data.
+- [x] Publish metadata only after data availability.
+- [x] Ensure partial upload does not update latest.
+- [x] Add network cut fault test.
+- [x] Add upload retry test.
+- [x] Add orphan cleanup test.
 
 ### M5 Exit Gate
 
-- [ ] Large sidecar transfer uses bounded memory.
+- [x] Large sidecar transfer uses bounded memory.
 - [ ] Missing chunk blocks apply before lease transfer.
 - [ ] Anchor can serve snapshot after source offline.
-- [ ] Partial upload never changes canonical latest.
+- [x] Partial upload never changes canonical latest.
 - [ ] Data plane enforces project authorization.
 
 ## M6. Background Protection

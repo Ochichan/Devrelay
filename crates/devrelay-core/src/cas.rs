@@ -288,6 +288,16 @@ impl CasStore {
         Ok(root)
     }
 
+    pub fn remove_reachability_root(&self, root_id: &str) -> Result<bool> {
+        validate_root_id(root_id)?;
+        let path = self.reachability_root_path(root_id)?;
+        match fs::remove_file(path) {
+            Ok(()) => Ok(true),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(err) => Err(err.into()),
+        }
+    }
+
     fn verify_chunk_file(&self, hash: &CasChunkHash) -> Result<u64> {
         let bytes = self.download_chunk(hash)?;
         Ok(bytes.len() as u64)
