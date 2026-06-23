@@ -854,8 +854,8 @@ Conventions:
 - [x] Record snapshot publish event.
 - [x] Record snapshot apply event.
 - [x] Record lease transfer event.
-- [ ] Record command approval event.
-- [ ] Record security block event.
+- [x] Record command approval event.
+- [x] Record security block event.
 - [x] Add audit query CLI.
 - [x] Add audit export with redaction.
 - [x] Add audit tests.
