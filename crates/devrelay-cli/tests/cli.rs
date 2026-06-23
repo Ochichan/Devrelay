@@ -43,6 +43,126 @@ fn init_git_repo(root: &Path) {
     git(root, &["commit", "-m", "base"]);
 }
 
+#[test]
+fn agent_install_dry_run_renders_service_template() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-agent-install-dry-run-test-{}",
+        std::process::id()
+    ));
+    let service_dir = root.join("services");
+    let agent_bin = root.join("bin").join("devrelay-agent");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(agent_bin.parent().unwrap()).unwrap();
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "agent",
+            "install",
+            "--dry-run",
+            "--service-dir",
+            service_dir.to_str().unwrap(),
+            "--agent-bin",
+            agent_bin.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["dry_run"], true);
+    assert_eq!(value["installed"], false);
+    assert!(
+        value["service_path"]
+            .as_str()
+            .unwrap()
+            .starts_with(service_dir.to_str().unwrap())
+    );
+    assert!(
+        value["content"]
+            .as_str()
+            .unwrap()
+            .contains(agent_bin.to_str().unwrap())
+    );
+    assert!(!Path::new(value["service_path"].as_str().unwrap()).exists());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn agent_install_status_and_uninstall_round_trip() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-agent-install-test-{}",
+        std::process::id()
+    ));
+    let service_dir = root.join("services");
+    let agent_bin = root.join("bin").join("devrelay-agent");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(agent_bin.parent().unwrap()).unwrap();
+
+    let install = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "agent",
+            "install",
+            "--service-dir",
+            service_dir.to_str().unwrap(),
+            "--agent-bin",
+            agent_bin.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        install.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+    let installed: serde_json::Value = serde_json::from_slice(&install.stdout).unwrap();
+    let service_path = std::path::PathBuf::from(installed["service_path"].as_str().unwrap());
+    assert_eq!(installed["installed"], true);
+    assert!(service_path.exists());
+
+    let status = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "agent",
+            "status",
+            "--service-dir",
+            service_dir.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["installed"], true);
+    assert_eq!(status["service_path"], service_path.to_str().unwrap());
+
+    let uninstall = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "agent",
+            "uninstall",
+            "--service-dir",
+            service_dir.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(uninstall.status.success());
+    let uninstalled: serde_json::Value = serde_json::from_slice(&uninstall.stdout).unwrap();
+    assert_eq!(uninstalled["removed"], true);
+    assert!(!service_path.exists());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 fn write_manifest(root: &Path, project_id: &str, name: &str) {
     std::fs::write(
         root.join("devrelay.toml"),

@@ -16,11 +16,12 @@ use devrelay_core::{
     METHOD_STATUS_GET, Manifest, PathDecision, PatternConfig, PortablePathsPolicy,
     ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
     ProjectsRemoveParams, ProjectsShowParams, RecoverListParams, RecoverListResult,
-    RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult, SnapshotMetadata,
-    SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary, StoredSnapshot,
-    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
-    classify_untracked_paths, create_snapshot, plan_apply_snapshot, read_snapshot_file,
-    workspace_id_for, write_snapshot_file,
+    RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult, ServiceTemplate,
+    ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetParams,
+    StatusGetResult, StatusSummary, StoredSnapshot, UntrackedPolicy, WorkspaceConfig,
+    WorkspaceRegistryEntry, WorkspaceState, apply_snapshot, classify_untracked_paths,
+    create_snapshot, linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
+    read_snapshot_file, workspace_id_for, write_snapshot_file,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -47,6 +48,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
@@ -124,6 +129,32 @@ enum Command {
         dry_run: bool,
         #[arg(long, value_enum, default_value = "block")]
         dirty_policy: DirtyPolicy,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AgentCommand {
+    Install {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        agent_bin: Option<PathBuf>,
+        #[arg(long)]
+        service_dir: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    Uninstall {
+        #[arg(long)]
+        service_dir: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    Status {
+        #[arg(long)]
+        service_dir: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -314,6 +345,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     };
 
     match command {
+        Command::Agent { command } => handle_agent_command(command)?,
         Command::Continue {
             source,
             target,
@@ -596,6 +628,202 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         )?,
     }
     Ok(())
+}
+
+fn handle_agent_command(command: AgentCommand) -> anyhow::Result<()> {
+    match command {
+        AgentCommand::Install {
+            dry_run,
+            agent_bin,
+            service_dir,
+            json,
+        } => {
+            let template = build_agent_service_template(agent_bin, service_dir)?;
+            let commands = service_manual_commands(&template);
+            if !dry_run {
+                if let Some(parent) = template.service_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&template.service_path, &template.content)?;
+            }
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "dry_run": dry_run,
+                        "installed": !dry_run,
+                        "platform": template.kind.label(),
+                        "service_path": template.service_path,
+                        "content": template.content,
+                        "manual_commands": commands,
+                    }))?
+                );
+            } else {
+                if dry_run {
+                    println!("agent install dry-run: {}", template.kind.label());
+                } else {
+                    println!(
+                        "agent service installed: {}",
+                        template.service_path.display()
+                    );
+                }
+                println!("  service: {}", template.service_path.display());
+                for command in commands {
+                    println!("  next: {command}");
+                }
+            }
+        }
+        AgentCommand::Uninstall { service_dir, json } => {
+            let template = build_agent_service_template(None, service_dir)?;
+            let existed = template.service_path.exists();
+            if existed {
+                fs::remove_file(&template.service_path)?;
+            }
+            let commands = service_uninstall_commands(&template);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "removed": existed,
+                        "platform": template.kind.label(),
+                        "service_path": template.service_path,
+                        "manual_commands": commands,
+                    }))?
+                );
+            } else {
+                println!(
+                    "agent service {}: {}",
+                    if existed { "removed" } else { "not installed" },
+                    template.service_path.display()
+                );
+                for command in commands {
+                    println!("  next: {command}");
+                }
+            }
+        }
+        AgentCommand::Status { service_dir, json } => {
+            let template = build_agent_service_template(None, service_dir)?;
+            let installed = template.service_path.exists();
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "installed": installed,
+                        "platform": template.kind.label(),
+                        "service_path": template.service_path,
+                    }))?
+                );
+            } else {
+                println!(
+                    "agent service: {}",
+                    if installed {
+                        "installed"
+                    } else {
+                        "not installed"
+                    }
+                );
+                println!("  platform: {}", template.kind.label());
+                println!("  service: {}", template.service_path.display());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentServicePlatform {
+    Macos,
+    Linux,
+}
+
+fn build_agent_service_template(
+    agent_bin: Option<PathBuf>,
+    service_dir: Option<PathBuf>,
+) -> anyhow::Result<ServiceTemplate> {
+    let platform = current_agent_service_platform()?;
+    let home = DevRelayHome::resolve()?;
+    let agent_bin = agent_bin.unwrap_or(default_agent_bin()?);
+    let service_dir = match service_dir {
+        Some(path) => path,
+        None => default_service_dir(platform)?,
+    };
+    let input = ServiceTemplateInput {
+        agent_bin,
+        devrelay_home: home.root().to_path_buf(),
+        socket_path: home.agent_socket_path(),
+        log_level: "info".to_string(),
+    };
+    Ok(match platform {
+        AgentServicePlatform::Macos => macos_launch_agent_template(&input, &service_dir),
+        AgentServicePlatform::Linux => linux_systemd_user_template(&input, &service_dir),
+    })
+}
+
+fn current_agent_service_platform() -> anyhow::Result<AgentServicePlatform> {
+    if cfg!(target_os = "macos") {
+        Ok(AgentServicePlatform::Macos)
+    } else if cfg!(target_os = "linux") {
+        Ok(AgentServicePlatform::Linux)
+    } else {
+        Err(DevRelayError::Config(
+            "devrelay agent install is not packaged for Windows yet; see docs/windows-startup.md"
+                .to_string(),
+        )
+        .into())
+    }
+}
+
+fn default_agent_bin() -> anyhow::Result<PathBuf> {
+    let current = std::env::current_exe()?;
+    Ok(current.with_file_name(if cfg!(windows) {
+        "devrelay-agent.exe"
+    } else {
+        "devrelay-agent"
+    }))
+}
+
+fn default_service_dir(platform: AgentServicePlatform) -> anyhow::Result<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
+        DevRelayError::Config("HOME must be set for agent service install".into())
+    })?;
+    match platform {
+        AgentServicePlatform::Macos => Ok(home.join("Library").join("LaunchAgents")),
+        AgentServicePlatform::Linux => {
+            let config_home = std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".config"));
+            Ok(config_home.join("systemd").join("user"))
+        }
+    }
+}
+
+fn service_manual_commands(template: &ServiceTemplate) -> Vec<String> {
+    match template.kind {
+        ServiceTemplateKind::MacosLaunchAgent => vec![
+            format!(
+                "launchctl bootstrap gui/$(id -u) {}",
+                template.service_path.display()
+            ),
+            "launchctl enable gui/$(id -u)/com.devrelay.agent".to_string(),
+        ],
+        ServiceTemplateKind::LinuxSystemdUser => vec![
+            "systemctl --user daemon-reload".to_string(),
+            "systemctl --user enable --now devrelay-agent.service".to_string(),
+        ],
+    }
+}
+
+fn service_uninstall_commands(template: &ServiceTemplate) -> Vec<String> {
+    match template.kind {
+        ServiceTemplateKind::MacosLaunchAgent => vec![
+            "launchctl bootout gui/$(id -u)/com.devrelay.agent".to_string(),
+            "launchctl disable gui/$(id -u)/com.devrelay.agent".to_string(),
+        ],
+        ServiceTemplateKind::LinuxSystemdUser => vec![
+            "systemctl --user disable --now devrelay-agent.service".to_string(),
+            "systemctl --user daemon-reload".to_string(),
+        ],
+    }
 }
 
 fn config_path(path: Option<PathBuf>, create_home: bool) -> anyhow::Result<PathBuf> {

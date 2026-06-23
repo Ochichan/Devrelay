@@ -45,6 +45,7 @@ mod logging;
 pub mod manifest;
 mod policy;
 mod rpc;
+mod service;
 mod snapshot;
 mod snapshot_schema;
 mod snapshot_store;
@@ -91,6 +92,10 @@ pub use rpc::{
     RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult, RpcError, RpcId,
     RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
     SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult,
+};
+pub use service::{
+    LINUX_SYSTEMD_UNIT, MACOS_LAUNCH_AGENT_LABEL, ServiceTemplate, ServiceTemplateInput,
+    ServiceTemplateKind, linux_systemd_user_template, macos_launch_agent_template,
 };
 pub use snapshot::{
     ApplyPlan, VerificationDetails, apply_snapshot, create_snapshot, plan_apply_snapshot,

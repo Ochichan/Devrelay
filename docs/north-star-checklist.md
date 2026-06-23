@@ -573,16 +573,16 @@ Conventions:
 
 ### M2.7 Service Templates
 
-- [ ] Add macOS LaunchAgent template.
-- [ ] Add Linux systemd user service template.
-- [ ] Add Windows background process/service design note.
-- [ ] Add `devrelay agent install --dry-run`.
-- [ ] Add `devrelay agent install` for macOS dev mode.
-- [ ] Add `devrelay agent install` for Linux dev mode.
-- [ ] Add `devrelay agent uninstall`.
-- [ ] Add `devrelay agent status`.
-- [ ] Document manual Windows startup setup until packaged.
-- [ ] Add service template tests where practical.
+- [x] Add macOS LaunchAgent template.
+- [x] Add Linux systemd user service template.
+- [x] Add Windows background process/service design note.
+- [x] Add `devrelay agent install --dry-run`.
+- [x] Add `devrelay agent install` for macOS dev mode.
+- [x] Add `devrelay agent install` for Linux dev mode.
+- [x] Add `devrelay agent uninstall`.
+- [x] Add `devrelay agent status`.
+- [x] Document manual Windows startup setup until packaged.
+- [x] Add service template tests where practical.
 
 ### M2.8 Diagnostics
 
