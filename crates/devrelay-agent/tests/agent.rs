@@ -865,9 +865,49 @@ fn foreground_serves_recover_open_rpc() {
 fn foreground_serves_diagnostics_export_rpc() {
     use devrelay_core::{IpcLimits, UnixIpcConnection};
     use serde_json::json;
+    use std::io::Write;
 
     let mut running = RunningAgent::start("devrelay-agent-diagnostics-rpc-test");
     let out = running.root.join("diagnostics").join("bundle.json");
+    let repo = running.root.join("diagnostics-project");
+    create_manifest_repo(&repo, "24681357", "Diagnostics Project");
+
+    let added = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "diagnostics-project-add",
+            "method": "projects.add",
+            "params": {
+                "path": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+    assert_eq!(added["result"]["project"]["project_id"], "24681357");
+
+    let log_path = running.root.join("logs").join("agent.log");
+    std::fs::create_dir_all(log_path.parent().unwrap()).unwrap();
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .unwrap();
+    let git_exit_log = json!({
+        "timestamp_unix_millis": 1234,
+        "level": "info",
+        "target": "agent.git",
+        "message": "Git command completed",
+        "request_id": null,
+        "operation_id": "op-git",
+        "fields": {
+            "command": "git",
+            "args": format!("-C {} status", running.root.join("private").display()),
+            "exit_code": "129",
+            "success": "false"
+        }
+    });
+    writeln!(log, "{git_exit_log}").unwrap();
 
     let exported = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
@@ -901,13 +941,26 @@ fn foreground_serves_diagnostics_export_rpc() {
         bundle["state_machine_records"]["sessions"]
             .as_array()
             .unwrap()
+            .iter()
+            .any(|session| session["project_id"] == "24681357" && session["state"] == "active")
+    );
+    assert!(
+        bundle["state_machine_records"]["errors"]
+            .as_array()
+            .unwrap()
             .is_empty()
     );
     assert!(
         bundle["git_command_exit_codes"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .iter()
+            .any(|entry| entry["command"] == "git"
+                && entry["exit_code"] == 129
+                && entry["success"] == false
+                && entry["args"]
+                    .as_str()
+                    .is_some_and(|args| args.contains("<path>")))
     );
     let raw_bundle = std::fs::read_to_string(&out).unwrap();
     assert!(

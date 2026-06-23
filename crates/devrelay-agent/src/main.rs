@@ -948,7 +948,7 @@ fn handle_recover_open(
         Ok(path) => path,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
-    let target = match prepare_recovery_workspace(&params.path, &source_path) {
+    let target = match prepare_recovery_workspace(&params.path, &source_path, &state.logger) {
         Ok(target) => target,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
@@ -1023,20 +1023,26 @@ fn handle_diagnostics_export(
             .join(format!("diagnostics-{}.json", unix_seconds()))
     });
     let started_at_unix_millis = unix_millis();
-    let (config, redactor) = match state.config.lock() {
+    let (config, redactor, project_ids) = match state.config.lock() {
         Ok(config) => {
             let redactor = if params.include_sensitive_paths {
                 LogRedactor::new()
             } else {
                 LogRedactor::for_diagnostics(diagnostic_local_paths(&state.home, &config))
             };
+            let project_ids = config
+                .project_registry
+                .projects
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
             let config = if params.include_sensitive_paths {
                 serde_json::to_value(&*config)
             } else {
                 serde_json::to_value(config.redacted_for_diagnostics())
             };
             match config {
-                Ok(value) => (value, redactor),
+                Ok(value) => (value, redactor, project_ids),
                 Err(err) => {
                     return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
                 }
@@ -1047,6 +1053,13 @@ fn handle_diagnostics_export(
     let recent_logs = match recent_structured_logs(&state.home, &redactor, 50) {
         Ok(logs) => logs,
         Err(err) => vec![format!("failed to read recent logs: {err}")],
+    };
+    let state_machine_records = diagnostic_state_machine_records(&state.home, &project_ids);
+    let git_command_exit_codes = match recent_git_command_exit_codes(&state.home, &redactor, 100) {
+        Ok(exit_codes) => exit_codes,
+        Err(err) => vec![serde_json::json!({
+            "error": format!("failed to read Git command exit codes: {err}")
+        })],
     };
     let health = match serde_json::to_value(state.health()) {
         Ok(health) => {
@@ -1077,12 +1090,8 @@ fn handle_diagnostics_export(
         "config": config,
         "methods": AgentState::supported_methods(),
         "recent_structured_logs": recent_logs,
-        "state_machine_records": {
-            "sessions": [],
-            "leases": [],
-            "handoffs": [],
-        },
-        "git_command_exit_codes": [],
+        "state_machine_records": state_machine_records,
+        "git_command_exit_codes": git_command_exit_codes,
         "include_sensitive_paths": params.include_sensitive_paths,
         "source_code_included": false,
         "snapshot_objects_included": false,
@@ -1134,6 +1143,14 @@ fn recent_structured_logs(
     redactor: &LogRedactor,
     max_lines: usize,
 ) -> anyhow::Result<Vec<String>> {
+    Ok(recent_log_lines(home, max_lines)?
+        .into_iter()
+        .map(|line| redactor.redact_text(&line))
+        .collect())
+}
+
+#[cfg(unix)]
+fn recent_log_lines(home: &DevRelayHome, max_lines: usize) -> anyhow::Result<Vec<String>> {
     let path = home.log_dir().join("agent.log");
     let raw = match std::fs::read_to_string(&path) {
         Ok(raw) => raw,
@@ -1144,10 +1161,152 @@ fn recent_structured_logs(
         .lines()
         .rev()
         .take(max_lines)
-        .map(|line| redactor.redact_text(line))
+        .map(str::to_string)
         .collect::<Vec<_>>();
     lines.reverse();
     Ok(lines)
+}
+
+#[cfg(unix)]
+fn diagnostic_state_machine_records(
+    home: &DevRelayHome,
+    project_ids: &[String],
+) -> serde_json::Value {
+    let mut sessions = Vec::new();
+    let mut leases = Vec::new();
+    let mut handoffs = Vec::new();
+    let mut errors = Vec::new();
+
+    for project_id in project_ids {
+        let db_path = home.metadata_db_path(project_id);
+        if !db_path.exists() {
+            errors.push(format!("project {project_id}: metadata DB does not exist"));
+            continue;
+        }
+        let db = match MetadataDb::open(&db_path) {
+            Ok(db) => db,
+            Err(err) => {
+                errors.push(format!(
+                    "project {project_id}: failed to open metadata DB: {err}"
+                ));
+                continue;
+            }
+        };
+
+        match db.list_sessions(Some(project_id)) {
+            Ok(records) => sessions.extend(records),
+            Err(err) => errors.push(format!(
+                "project {project_id}: failed to list sessions: {err}"
+            )),
+        }
+        match db.list_leases(Some(project_id)) {
+            Ok(records) => leases.extend(records),
+            Err(err) => errors.push(format!(
+                "project {project_id}: failed to list leases: {err}"
+            )),
+        }
+        match db.list_handoffs(Some(project_id)) {
+            Ok(records) => {
+                for handoff in records {
+                    let journal = match db.list_handoff_journal(&handoff.handoff_id) {
+                        Ok(journal) => journal,
+                        Err(err) => {
+                            errors.push(format!(
+                                "project {project_id}: failed to list handoff journal {}: {err}",
+                                handoff.handoff_id
+                            ));
+                            Vec::new()
+                        }
+                    };
+                    handoffs.push(serde_json::json!({
+                        "record": handoff,
+                        "journal": journal,
+                    }));
+                }
+            }
+            Err(err) => errors.push(format!(
+                "project {project_id}: failed to list handoffs: {err}"
+            )),
+        }
+    }
+
+    serde_json::json!({
+        "sessions": sessions,
+        "leases": leases,
+        "handoffs": handoffs,
+        "errors": errors,
+    })
+}
+
+#[cfg(unix)]
+fn recent_git_command_exit_codes(
+    home: &DevRelayHome,
+    redactor: &LogRedactor,
+    max_lines: usize,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let mut entries = Vec::new();
+    for line in recent_log_lines(home, max_lines)? {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let Some(fields) = value.get("fields").and_then(|fields| fields.as_object()) else {
+            continue;
+        };
+        if fields.get("command").and_then(|command| command.as_str()) != Some("git") {
+            continue;
+        }
+        let Some(exit_code) = fields.get("exit_code").and_then(|code| code.as_str()) else {
+            continue;
+        };
+
+        let mut entry = serde_json::Map::new();
+        entry.insert(
+            "timestamp_unix_millis".to_string(),
+            value
+                .get("timestamp_unix_millis")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+        entry.insert(
+            "target".to_string(),
+            value
+                .get("target")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+        entry.insert(
+            "operation_id".to_string(),
+            value
+                .get("operation_id")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+        entry.insert("command".to_string(), serde_json::json!("git"));
+        if let Some(args) = fields.get("args") {
+            entry.insert("args".to_string(), args.clone());
+        }
+        if let Some(success) = fields.get("success").and_then(|success| success.as_str()) {
+            let success = match success {
+                "true" => serde_json::json!(true),
+                "false" => serde_json::json!(false),
+                value => serde_json::json!(value),
+            };
+            entry.insert("success".to_string(), success);
+        }
+        entry.insert(
+            "exit_code".to_string(),
+            exit_code
+                .parse::<i64>()
+                .map(serde_json::Value::from)
+                .unwrap_or_else(|_| serde_json::json!(exit_code)),
+        );
+
+        entries.push(redact_json_value(
+            serde_json::Value::Object(entry),
+            redactor,
+        ));
+    }
+    Ok(entries)
 }
 
 #[cfg(unix)]
@@ -1376,7 +1535,11 @@ fn recovery_source_path(project: &ProjectRegistryEntry) -> anyhow::Result<PathBu
 }
 
 #[cfg(unix)]
-fn prepare_recovery_workspace(path: &Path, source_path: &Path) -> anyhow::Result<GitRepo> {
+fn prepare_recovery_workspace(
+    path: &Path,
+    source_path: &Path,
+    logger: &AgentLogger,
+) -> anyhow::Result<GitRepo> {
     if path.join(".git").exists() {
         let target = GitRepo::new(path);
         let status = target.status()?;
@@ -1397,17 +1560,40 @@ fn prepare_recovery_workspace(path: &Path, source_path: &Path) -> anyhow::Result
     }
 
     std::fs::create_dir_all(path)?;
-    clone_repository(source_path, path)?;
+    clone_repository(source_path, path, logger)?;
     Ok(GitRepo::new(path))
 }
 
 #[cfg(unix)]
-fn clone_repository(source_path: &Path, target_path: &Path) -> anyhow::Result<()> {
+fn clone_repository(
+    source_path: &Path,
+    target_path: &Path,
+    logger: &AgentLogger,
+) -> anyhow::Result<()> {
     let output = std::process::Command::new("git")
         .arg("clone")
         .arg(source_path)
         .arg(target_path)
         .output()?;
+    let exit_code = output
+        .status
+        .code()
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "signal".to_string());
+    logger.log(
+        StructuredLogRecord::new(
+            StructuredLogLevel::Info,
+            "agent.git",
+            "Git command completed",
+        )
+        .with_field("command", "git")
+        .with_field(
+            "args",
+            format!("clone {} {}", source_path.display(), target_path.display()),
+        )
+        .with_field("exit_code", exit_code)
+        .with_field("success", output.status.success().to_string()),
+    );
     if !output.status.success() {
         return Err(anyhow::anyhow!(
             "git clone {} {} failed: {}",

@@ -1385,6 +1385,35 @@ WHERE lease_id = ?1
             .map_err(Into::into)
     }
 
+    pub fn list_leases(&self, project_id: Option<&str>) -> Result<Vec<LeaseRecord>> {
+        let sql = r#"
+SELECT lease_id,
+       project_id,
+       session_id,
+       state,
+       epoch,
+       holder_device_id,
+       latest_snapshot_id,
+       handoff_id
+FROM leases
+"#;
+        if let Some(project_id) = project_id {
+            let mut statement = self.conn.prepare(&format!(
+                "{sql} WHERE project_id = ?1 ORDER BY project_id ASC, session_id ASC, lease_id ASC"
+            ))?;
+            let rows = statement.query_map([project_id], lease_record_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into)
+        } else {
+            let mut statement = self.conn.prepare(&format!(
+                "{sql} ORDER BY project_id ASC, session_id ASC, lease_id ASC"
+            ))?;
+            let rows = statement.query_map([], lease_record_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into)
+        }
+    }
+
     pub fn publish_snapshot_canonical(
         &mut self,
         request: CanonicalPublishRequest<'_>,
@@ -2084,6 +2113,25 @@ WHERE lease_id = ?4 AND epoch = ?5 AND handoff_id = ?6
             )
             .optional()
             .map_err(Into::into)
+    }
+
+    pub fn list_handoffs(&self, project_id: Option<&str>) -> Result<Vec<HandoffRecord>> {
+        if let Some(project_id) = project_id {
+            let mut statement = self.conn.prepare(
+                handoff_select_sql("WHERE project_id = ?1 ORDER BY project_id ASC, handoff_id ASC")
+                    .as_str(),
+            )?;
+            let rows = statement.query_map([project_id], handoff_record_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into)
+        } else {
+            let mut statement = self
+                .conn
+                .prepare(handoff_select_sql("ORDER BY project_id ASC, handoff_id ASC").as_str())?;
+            let rows = statement.query_map([], handoff_record_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into)
+        }
     }
 
     pub fn list_handoff_journal(&self, handoff_id: &str) -> Result<Vec<HandoffJournalRecord>> {

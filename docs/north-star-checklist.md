@@ -1806,8 +1806,8 @@ Conventions:
 - [x] Include version/capability.
 - [x] Include redacted config.
 - [x] Include recent structured logs.
-- [ ] Include state machine records.
-- [ ] Include Git command exit codes.
+- [x] Include state machine records.
+- [x] Include Git command exit codes.
 - [x] Include timing metrics.
 - [x] Exclude source code by default.
 - [x] Exclude snapshot objects by default.
