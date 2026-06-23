@@ -151,8 +151,9 @@ pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 pub use ipc::{UnixIpcConnection, UnixIpcListener};
 pub use lease::{LeaseRecord, LeaseState};
 pub use lfs::{
-    LfsMissingObject, LfsObjectReport, LfsPointer, ensure_lfs_objects_available,
-    ensure_snapshot_lfs_objects_available, inspect_lfs_objects, inspect_snapshot_lfs_objects,
+    LfsLocalOnlyObject, LfsMissingObject, LfsObjectReport, LfsPointer,
+    ensure_lfs_objects_available, ensure_snapshot_lfs_objects_available, inspect_lfs_objects,
+    inspect_lfs_objects_with_upstream, inspect_snapshot_lfs_objects,
 };
 pub use line_ending_doctor::{
     LineEndingDoctorReport, LineEndingHashMismatch, LineEndingWarning, LineEndingWarningCode,

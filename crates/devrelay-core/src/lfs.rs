@@ -14,6 +14,7 @@ pub struct LfsObjectReport {
     pub repo: PathBuf,
     pub pointers: Vec<LfsPointer>,
     pub missing_objects: Vec<LfsMissingObject>,
+    pub local_only_objects: Vec<LfsLocalOnlyObject>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,6 +23,7 @@ pub struct LfsPointer {
     pub oid_sha256: String,
     pub size: u64,
     pub local_object_present: bool,
+    pub upstream_object_present: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,20 +32,39 @@ pub struct LfsMissingObject {
     pub oid_sha256: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LfsLocalOnlyObject {
+    pub path: String,
+    pub oid_sha256: String,
+}
+
 pub fn inspect_lfs_objects(repo: &GitRepo) -> Result<LfsObjectReport> {
+    inspect_lfs_objects_inner(repo, None)
+}
+
+pub fn inspect_lfs_objects_with_upstream(
+    repo: &GitRepo,
+    upstream_git_dir: impl AsRef<std::path::Path>,
+) -> Result<LfsObjectReport> {
+    inspect_lfs_objects_inner(repo, Some(upstream_git_dir.as_ref()))
+}
+
+fn inspect_lfs_objects_inner(
+    repo: &GitRepo,
+    upstream_git_dir: Option<&std::path::Path>,
+) -> Result<LfsObjectReport> {
     let git_dir = repo.git_dir()?;
     let mut pointers = Vec::new();
     for path in tracked_paths(repo)? {
         let Some(pointer) = parse_lfs_pointer_from_worktree(repo, &path)? else {
             continue;
         };
-        let local_object_present = verify_lfs_object(&git_dir, &pointer.oid_sha256, pointer.size)?;
-        pointers.push(LfsPointer {
+        pointers.push(lfs_pointer_report(
             path,
-            oid_sha256: pointer.oid_sha256,
-            size: pointer.size,
-            local_object_present,
-        });
+            pointer,
+            &git_dir,
+            upstream_git_dir,
+        )?);
     }
     Ok(report_for_pointers(repo, pointers))
 }
@@ -135,13 +156,12 @@ fn lfs_pointers_in_tree(
         let Some(pointer) = parse_lfs_pointer_from_blob(repo, oid)? else {
             continue;
         };
-        let local_object_present = verify_lfs_object(git_dir, &pointer.oid_sha256, pointer.size)?;
-        pointers.push(LfsPointer {
-            path: path.replace('\\', "/"),
-            oid_sha256: pointer.oid_sha256,
-            size: pointer.size,
-            local_object_present,
-        });
+        pointers.push(lfs_pointer_report(
+            path.replace('\\', "/"),
+            pointer,
+            git_dir,
+            None,
+        )?);
     }
     Ok(pointers)
 }
@@ -207,6 +227,7 @@ fn report_for_pointers(repo: &GitRepo, mut pointers: Vec<LfsPointer>) -> LfsObje
             && left.oid_sha256 == right.oid_sha256
             && left.size == right.size
             && left.local_object_present == right.local_object_present
+            && left.upstream_object_present == right.upstream_object_present
     });
     let missing_objects = pointers
         .iter()
@@ -216,11 +237,41 @@ fn report_for_pointers(repo: &GitRepo, mut pointers: Vec<LfsPointer>) -> LfsObje
             oid_sha256: pointer.oid_sha256.clone(),
         })
         .collect();
+    let local_only_objects = pointers
+        .iter()
+        .filter(|pointer| {
+            pointer.local_object_present && pointer.upstream_object_present == Some(false)
+        })
+        .map(|pointer| LfsLocalOnlyObject {
+            path: pointer.path.clone(),
+            oid_sha256: pointer.oid_sha256.clone(),
+        })
+        .collect();
     LfsObjectReport {
         repo: repo.path().to_path_buf(),
         pointers,
         missing_objects,
+        local_only_objects,
     }
+}
+
+fn lfs_pointer_report(
+    path: String,
+    pointer: ParsedLfsPointer,
+    git_dir: &std::path::Path,
+    upstream_git_dir: Option<&std::path::Path>,
+) -> Result<LfsPointer> {
+    let local_object_present = verify_lfs_object(git_dir, &pointer.oid_sha256, pointer.size)?;
+    let upstream_object_present = upstream_git_dir
+        .map(|git_dir| verify_lfs_object(git_dir, &pointer.oid_sha256, pointer.size))
+        .transpose()?;
+    Ok(LfsPointer {
+        path,
+        oid_sha256: pointer.oid_sha256,
+        size: pointer.size,
+        local_object_present,
+        upstream_object_present,
+    })
 }
 
 fn verify_lfs_object(git_dir: &std::path::Path, oid_sha256: &str, size: u64) -> Result<bool> {
@@ -307,6 +358,45 @@ mod tests {
     }
 
     #[test]
+    fn checks_lfs_upstream_availability() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = init_repo(temp.path());
+        let upstream_git_dir = temp.path().join("upstream.git");
+        fs::create_dir_all(&upstream_git_dir).unwrap();
+        let object = b"local only lfs object";
+        let oid = sha256_hex(object);
+        fs::write(
+            temp.path().join("asset.bin"),
+            lfs_pointer(&oid, object.len() as u64),
+        )
+        .unwrap();
+        git(temp.path(), &["add", "asset.bin"]);
+        git(temp.path(), &["commit", "-m", "lfs pointer"]);
+        write_lfs_object(&repo.git_dir().unwrap(), &oid, object);
+
+        let local_only_report =
+            inspect_lfs_objects_with_upstream(&repo, &upstream_git_dir).unwrap();
+
+        assert_eq!(local_only_report.pointers.len(), 1);
+        assert_eq!(
+            local_only_report.pointers[0].upstream_object_present,
+            Some(false)
+        );
+        assert_eq!(local_only_report.local_only_objects.len(), 1);
+        assert_eq!(local_only_report.local_only_objects[0].oid_sha256, oid);
+
+        write_lfs_object(&upstream_git_dir, &oid, object);
+
+        let upstream_report = inspect_lfs_objects_with_upstream(&repo, &upstream_git_dir).unwrap();
+
+        assert_eq!(
+            upstream_report.pointers[0].upstream_object_present,
+            Some(true)
+        );
+        assert!(upstream_report.local_only_objects.is_empty());
+    }
+
+    #[test]
     fn rejects_corrupt_lfs_object() {
         let temp = tempfile::tempdir().unwrap();
         let repo = init_repo(temp.path());
@@ -344,6 +434,12 @@ mod tests {
 
     fn sha256_hex(bytes: &[u8]) -> String {
         hex_lower(&Sha256::digest(bytes))
+    }
+
+    fn write_lfs_object(git_dir: &Path, oid: &str, bytes: &[u8]) {
+        let object_path = lfs_object_path(git_dir, oid);
+        fs::create_dir_all(object_path.parent().unwrap()).unwrap();
+        fs::write(object_path, bytes).unwrap();
     }
 
     fn init_repo(root: &Path) -> GitRepo {
