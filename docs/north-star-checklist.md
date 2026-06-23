@@ -977,17 +977,17 @@ Conventions:
 
 ### M6.1 Filesystem Watcher
 
-- [ ] Define watcher trait.
-- [ ] Implement macOS watcher.
+- [x] Define watcher trait.
+- [x] Implement macOS watcher.
 - [ ] Implement Linux watcher.
 - [ ] Implement Windows watcher.
-- [ ] Add polling fallback for unsupported platforms.
-- [ ] Treat events as hints only.
-- [ ] Increment source generation on relevant events.
-- [ ] Coalesce path sets.
-- [ ] Drop events outside registered workspaces.
-- [ ] Add watcher lifecycle management.
-- [ ] Add watcher tests with synthetic events.
+- [x] Add polling fallback for unsupported platforms.
+- [x] Treat events as hints only.
+- [x] Increment source generation on relevant events.
+- [x] Coalesce path sets.
+- [x] Drop events outside registered workspaces.
+- [x] Add watcher lifecycle management.
+- [x] Add watcher tests with synthetic events.
 
 ### M6.2 Adaptive Debounce
 

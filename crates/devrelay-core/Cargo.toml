@@ -17,6 +17,7 @@ getrandom.workspace = true
 globset.workspace = true
 libc.workspace = true
 mdns-sd.workspace = true
+notify.workspace = true
 rusqlite.workspace = true
 rustls.workspace = true
 serde.workspace = true

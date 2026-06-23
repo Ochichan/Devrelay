@@ -67,6 +67,7 @@ mod sparse;
 mod storage;
 mod submodule;
 mod transport_security;
+mod watcher;
 mod wsl_doctor;
 
 pub use audit::{
@@ -194,6 +195,13 @@ pub use transport_security::{
     ValidatedDeviceCertificate, build_rustls_client_config, build_rustls_server_config,
     negotiate_control_protocol_version, validate_control_request_envelope,
     validate_device_certificate,
+};
+#[cfg(target_os = "macos")]
+pub use watcher::MacOsFilesystemWatcher;
+pub use watcher::{
+    CoalescedWorkspaceChange, FilesystemEventKind, FilesystemRawEvent, FilesystemWatchMessage,
+    FilesystemWatchState, FilesystemWatcher, PollingFilesystemWatcher, WorkspaceChangeHint,
+    WorkspaceWatch, default_filesystem_watcher,
 };
 pub use wsl_doctor::{
     WslFilesystemDoctorReport, WslFilesystemPathKind, WslFilesystemWarning,

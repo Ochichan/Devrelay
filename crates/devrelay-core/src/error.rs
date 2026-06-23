@@ -40,6 +40,9 @@ pub enum DevRelayError {
     #[error("IPC error: {0}")]
     Ipc(String),
 
+    #[error("filesystem watcher error: {0}")]
+    Watcher(String),
+
     #[error("recovery error: {0}")]
     Recover(String),
 
@@ -82,6 +85,7 @@ impl DevRelayError {
             Self::Glob(_) => "DR-MANIFEST-GLOB",
             Self::Config(_) => "DR-CONFIG",
             Self::Ipc(_) => "DR-IPC-LOCAL",
+            Self::Watcher(_) => "DR-WATCHER",
             Self::Recover(_) => "DR-RECOVER-SNAPSHOT-NOT-FOUND",
             Self::GitCommand { .. } => "DR-GIT-COMMAND",
             Self::NotGitRepository(_) => "DR-GIT-NOT-REPOSITORY",
@@ -124,6 +128,10 @@ impl DevRelayError {
             Self::Ipc(_) => (
                 "Local IPC error",
                 vec!["Check that the local DevRelay agent is running for the current user."],
+            ),
+            Self::Watcher(_) => (
+                "Filesystem watcher error",
+                vec!["Check that the workspace path exists and is readable by DevRelay."],
             ),
             Self::Recover(_) => (
                 "Recovery snapshot not found",
@@ -199,6 +207,10 @@ mod tests {
             (
                 DevRelayError::Ipc("socket unavailable".to_string()),
                 "DR-IPC-LOCAL",
+            ),
+            (
+                DevRelayError::Watcher("watch root unavailable".to_string()),
+                "DR-WATCHER",
             ),
             (
                 DevRelayError::Recover("unknown snapshot".to_string()),
