@@ -474,7 +474,7 @@ fn symlink_target_escapes_workspace(repo_root: &Path, path: &str) -> bool {
     normalize_workspace_relative_path(&link_parent.join(target)).is_none()
 }
 
-fn normalize_workspace_relative_path(path: &Path) -> Option<PathBuf> {
+pub fn normalize_workspace_relative_path(path: &Path) -> Option<PathBuf> {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
@@ -796,6 +796,30 @@ token_prefixes = ["customtok_"]
             classify_untracked_paths(temp.path(), &safe_manifest(), ["link.txt"]).unwrap();
 
         assert_eq!(decisions[0].decision, PathDecision::Include);
+    }
+
+    #[test]
+    fn normalizes_workspace_relative_paths_without_escape() {
+        assert_eq!(
+            normalize_workspace_relative_path(Path::new("src/./bin/../lib.rs")),
+            Some(PathBuf::from("src/lib.rs"))
+        );
+        assert_eq!(
+            normalize_workspace_relative_path(Path::new("")),
+            Some(PathBuf::new())
+        );
+        assert_eq!(
+            normalize_workspace_relative_path(Path::new("../secret.txt")),
+            None
+        );
+        assert_eq!(
+            normalize_workspace_relative_path(Path::new("src/../../secret.txt")),
+            None
+        );
+        assert_eq!(
+            normalize_workspace_relative_path(Path::new("/tmp/secret.txt")),
+            None
+        );
     }
 
     #[test]

@@ -186,7 +186,10 @@ pub use platform::{
     current_platform_device_scope_key, current_platform_key, detect_platform_identity,
     platform_capabilities_for_key, platform_device_scope_key,
 };
-pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
+pub use policy::{
+    ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths,
+    normalize_workspace_relative_path,
+};
 pub use retention::{
     HandoffSnapshotProtection, PruningDecision, PruningDecisionAction, PruningPlan,
     PruningPlanInput, PruningPlanWarning, PruningPlanWarningCode, PruningReason, PruningScope,
