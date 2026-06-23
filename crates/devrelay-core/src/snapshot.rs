@@ -516,10 +516,10 @@ fn snapshot_id(status: &GitStatus, index_tree_oid: &str, work_tree_oid: &str) ->
 }
 
 fn ensure_checkpoint_supported(repo: &GitRepo, status: &GitStatus) -> Result<()> {
-    ensure_status_supports_checkpoint(status)?;
     if let Some(state) = unsupported_operation_state(repo)? {
         return Err(DevRelayError::UnsupportedRepositoryState(state));
     }
+    ensure_status_supports_checkpoint(status)?;
     Ok(())
 }
 
@@ -549,7 +549,7 @@ fn unsupported_operation_state(repo: &GitRepo) -> Result<Option<String>> {
     ] {
         if git_dir.join(relative_path).exists() {
             return Ok(Some(format!(
-                "{name} state is not supported for checkpoint in M0"
+                "{name} state is not supported for checkpoint; finish, abort, or recover the operation before handoff"
             )));
         }
     }
@@ -762,6 +762,37 @@ portable_paths = "strict"
         let err = create_snapshot(&source, &manifest()).unwrap_err();
         assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
         assert!(err.to_string().contains("rebase-merge"));
+    }
+
+    #[test]
+    fn checkpoint_rejects_merge_cherry_pick_and_revert_states_before_unmerged_status() {
+        for (name, marker) in [
+            ("merge", "MERGE_HEAD"),
+            ("cherry-pick", "CHERRY_PICK_HEAD"),
+            ("revert", "REVERT_HEAD"),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let source_path = temp.path().join("source");
+            let source = init_repo(&source_path);
+            commit_base(&source, &source_path);
+            fs::write(source.git_dir().unwrap().join(marker), "pending\n").unwrap();
+            let status = GitStatus {
+                head_oid: "abc".to_string(),
+                branch: Some("main".to_string()),
+                upstream: None,
+                entries: Vec::new(),
+                counts: StatusCounts {
+                    unmerged: 1,
+                    ..StatusCounts::default()
+                },
+            };
+
+            let err = ensure_checkpoint_supported(&source, &status).unwrap_err();
+
+            assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
+            assert!(err.to_string().contains(name));
+            assert!(err.to_string().contains("finish, abort, or recover"));
+        }
     }
 
     #[test]

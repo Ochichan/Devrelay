@@ -1666,9 +1666,9 @@ Conventions:
 
 ### M12.1 Merge/Cherry-Pick/Revert Conflicts
 
-- [ ] Detect merge conflict state.
-- [ ] Detect cherry-pick conflict state.
-- [ ] Detect revert conflict state.
+- [x] Detect merge conflict state.
+- [x] Detect cherry-pick conflict state.
+- [x] Detect revert conflict state.
 - [ ] Capture index stage 1 entries.
 - [ ] Capture index stage 2 entries.
 - [ ] Capture index stage 3 entries.
