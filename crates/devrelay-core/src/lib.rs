@@ -38,6 +38,7 @@
 mod audit;
 mod background_checkpoint;
 mod config;
+mod crash_journal;
 mod debounce;
 mod discovery;
 mod error;
@@ -87,6 +88,10 @@ pub use config::{
     ResourcePolicyContext, ResourcePolicyLimits, ResourcePowerSource, ResourceProfile,
     WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry, WorkspaceState, detect_resource_policy_context,
     generate_device_id, migrate_local_config, workspace_id_for,
+};
+pub use crash_journal::{
+    CrashJournal, CrashJournalFaultPoint, CrashJournalOperationReplay, CrashJournalPhase,
+    CrashJournalRecord, CrashJournalReplay,
 };
 pub use debounce::{
     AdaptiveDebouncer, BackgroundDebouncePolicy, DebounceDrain, DebounceFlushReason,

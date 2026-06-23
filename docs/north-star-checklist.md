@@ -1060,21 +1060,21 @@ Conventions:
 
 ### M6.7 Crash Journal
 
-- [ ] Add journal record type.
-- [ ] Record snapshot creation start.
-- [ ] Record snapshot creation complete.
-- [ ] Record publish start.
-- [ ] Record publish complete.
-- [ ] Record target apply start.
-- [ ] Record target backup complete.
-- [ ] Record base applied.
-- [ ] Record work applied.
-- [ ] Record index applied.
-- [ ] Record verified.
-- [ ] Record lease committed.
-- [ ] Add journal replay.
-- [ ] Add journal cleanup.
-- [ ] Add fault injection tests.
+- [x] Add journal record type.
+- [x] Record snapshot creation start.
+- [x] Record snapshot creation complete.
+- [x] Record publish start.
+- [x] Record publish complete.
+- [x] Record target apply start.
+- [x] Record target backup complete.
+- [x] Record base applied.
+- [x] Record work applied.
+- [x] Record index applied.
+- [x] Record verified.
+- [x] Record lease committed.
+- [x] Add journal replay.
+- [x] Add journal cleanup.
+- [x] Add fault injection tests.
 
 ### M6 Exit Gate
 
