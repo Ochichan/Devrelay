@@ -6,12 +6,13 @@
 
 use crate::{
     AUDIT_SCHEMA_VERSION, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
-    DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord, FabricRootIdentity,
+    CasStore, DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord, FabricRootIdentity,
     HandoffJournalPhase, HandoffJournalRecord, HandoffRecord, HandoffRecoveryOutcome, HandoffState,
     LeaseRecord, LeaseState, PairingSession, PairingState, Result, SessionState, SnapshotMetadata,
     StoredSession, StoredSnapshot, compute_handshake_transcript_hash,
-    derive_short_authentication_string, generate_ephemeral_pairing_key, generate_handoff_id,
-    generate_pairing_id, generate_session_id, unix_now_seconds, validate_key_hex,
+    derive_short_authentication_string, ensure_sidecars_available, generate_ephemeral_pairing_key,
+    generate_handoff_id, generate_pairing_id, generate_session_id, unix_now_seconds,
+    validate_key_hex,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction};
 use std::collections::BTreeSet;
@@ -388,6 +389,29 @@ pub struct PairingStartRequest<'a> {
     pub peer_ephemeral_public_key_hex: &'a str,
     pub anchor_address: Option<&'a str>,
     pub ttl_seconds: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct HandoffCommitSnapshotPreflight<'a> {
+    pub target_repo_root: &'a Path,
+    pub snapshot: &'a SnapshotMetadata,
+    pub cas_store: &'a CasStore,
+}
+
+impl HandoffCommitSnapshotPreflight<'_> {
+    fn verify(self, handoff: &HandoffRecord) -> Result<()> {
+        if self.snapshot.project_id != handoff.project_id {
+            return Err(crate::DevRelayError::Config(format!(
+                "handoff snapshot project mismatch: expected {}, got {}",
+                handoff.project_id, self.snapshot.project_id
+            )));
+        }
+        ensure_sidecars_available(
+            self.target_repo_root,
+            &self.snapshot.sidecars,
+            self.cas_store,
+        )
+    }
 }
 
 impl MetadataDb {
@@ -2000,6 +2024,36 @@ INSERT INTO handoffs (
         observed_source_generation: &str,
         now_unix_seconds: u64,
     ) -> Result<HandoffRecord> {
+        self.commit_handoff_inner(
+            handoff_id,
+            observed_source_generation,
+            now_unix_seconds,
+            None,
+        )
+    }
+
+    pub fn commit_handoff_with_snapshot_preflight(
+        &mut self,
+        handoff_id: &str,
+        observed_source_generation: &str,
+        now_unix_seconds: u64,
+        preflight: HandoffCommitSnapshotPreflight<'_>,
+    ) -> Result<HandoffRecord> {
+        self.commit_handoff_inner(
+            handoff_id,
+            observed_source_generation,
+            now_unix_seconds,
+            Some(preflight),
+        )
+    }
+
+    fn commit_handoff_inner(
+        &mut self,
+        handoff_id: &str,
+        observed_source_generation: &str,
+        now_unix_seconds: u64,
+        preflight: Option<HandoffCommitSnapshotPreflight<'_>>,
+    ) -> Result<HandoffRecord> {
         let fault = self.fault;
         let tx = self.conn.transaction()?;
         let handoff = tx
@@ -2038,6 +2092,9 @@ INSERT INTO handoffs (
             )));
         }
         ensure_device_not_revoked_conn(&tx, &handoff.target_device_id, "handoff commit")?;
+        if let Some(preflight) = preflight {
+            preflight.verify(&handoff)?;
+        }
 
         let changed = tx.execute(
             r#"
@@ -2676,7 +2733,10 @@ fn normalize_journal_detail(detail_json: Option<&str>) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LocalConfig, SnapshotMetadata};
+    use crate::{
+        CAS_HASH_PREFIX, CasChunkHash, DEFAULT_SIDECAR_CHUNK_BYTES, LocalConfig, SnapshotMetadata,
+        SnapshotSidecar, classification_reason,
+    };
 
     fn table_exists(db: &MetadataDb, table: &str) -> bool {
         db.connection()
@@ -3358,6 +3418,18 @@ mod tests {
         metadata
     }
 
+    fn remove_cas_chunk(cas: &CasStore, hash: &CasChunkHash) {
+        let hex = hash.as_str().strip_prefix(CAS_HASH_PREFIX).unwrap();
+        fs::remove_file(
+            cas.root()
+                .join("chunks")
+                .join("b3")
+                .join(&hex[0..2])
+                .join(format!("{}.chunk", &hex[2..])),
+        )
+        .unwrap();
+    }
+
     fn setup_publish_db_at(
         path: &std::path::Path,
         epoch: u64,
@@ -3712,6 +3784,91 @@ mod tests {
             lease_audits[0].handoff_id.as_deref(),
             Some(handoff.handoff_id.as_str())
         );
+    }
+
+    #[test]
+    fn handoff_snapshot_preflight_blocks_missing_chunk_before_lease_transfer() {
+        let temp = tempfile::tempdir().unwrap();
+        let target_root = temp.path().join("target");
+        fs::create_dir_all(&target_root).unwrap();
+        let cas = CasStore::open(temp.path().join("cas")).unwrap();
+        let sidecar_bytes = b"large handoff payload";
+        let chunk = CasChunkHash::from_bytes(sidecar_bytes);
+        cas.upload_chunk(sidecar_bytes, &chunk).unwrap();
+        let manifest = cas.create_manifest(std::slice::from_ref(&chunk)).unwrap();
+        let (mut db, session, lease) = setup_publish_db(14, LeaseState::Active);
+        let mut metadata = publish_metadata("s1_000000000000000000000202", &session.session_id);
+        metadata.sidecars = vec![SnapshotSidecar {
+            logical_path: "large.bin".to_string(),
+            file_mode: "100644".to_string(),
+            classification: classification_reason::LARGE_FILE_THRESHOLD.to_string(),
+            size_bytes: sidecar_bytes.len() as u64,
+            chunk_size_bytes: DEFAULT_SIDECAR_CHUNK_BYTES as u64,
+            root_hash: manifest.manifest_id.clone(),
+            cas_manifest_id: manifest.manifest_id,
+        }];
+
+        let handoff = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 60)
+            .unwrap();
+        db.mark_handoff_target_verified(&handoff.handoff_id)
+            .unwrap();
+        db.mark_handoff_source_ready(&handoff.handoff_id).unwrap();
+        remove_cas_chunk(&cas, &chunk);
+
+        let err = db
+            .commit_handoff_with_snapshot_preflight(
+                &handoff.handoff_id,
+                "gen-1",
+                handoff.expires_at_unix_seconds - 1,
+                HandoffCommitSnapshotPreflight {
+                    target_repo_root: &target_root,
+                    snapshot: &metadata,
+                    cas_store: &cas,
+                },
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("missing 1 CAS chunks"));
+        let unchanged = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(unchanged.state, LeaseState::HandoffPending);
+        assert_eq!(unchanged.epoch, 14);
+        assert_eq!(unchanged.holder_device_id.as_deref(), Some("device-a"));
+        assert_eq!(
+            unchanged.handoff_id.as_deref(),
+            Some(handoff.handoff_id.as_str())
+        );
+        assert_eq!(
+            db.get_handoff(&handoff.handoff_id).unwrap().unwrap().state,
+            HandoffState::SourceReady
+        );
+        assert!(
+            !handoff_journal_phases(&db, &handoff.handoff_id)
+                .contains(&HandoffJournalPhase::LeaseCommitted)
+        );
+        assert!(
+            db.list_audit_events(Some("project123"), 100)
+                .unwrap()
+                .iter()
+                .all(|event| event.event_type != AuditEventType::LeaseTransferred)
+        );
+
+        cas.upload_chunk(sidecar_bytes, &chunk).unwrap();
+        db.commit_handoff_with_snapshot_preflight(
+            &handoff.handoff_id,
+            "gen-1",
+            handoff.expires_at_unix_seconds - 1,
+            HandoffCommitSnapshotPreflight {
+                target_repo_root: &target_root,
+                snapshot: &metadata,
+                cas_store: &cas,
+            },
+        )
+        .unwrap();
+        let committed = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(committed.state, LeaseState::Active);
+        assert_eq!(committed.epoch, 15);
+        assert_eq!(committed.holder_device_id.as_deref(), Some("device-b"));
     }
 
     #[test]

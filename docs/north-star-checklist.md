@@ -968,7 +968,7 @@ Conventions:
 ### M5 Exit Gate
 
 - [x] Large sidecar transfer uses bounded memory.
-- [ ] Missing chunk blocks apply before lease transfer.
+- [x] Missing chunk blocks apply before lease transfer.
 - [x] Anchor can serve snapshot after source offline.
 - [x] Partial upload never changes canonical latest.
 - [x] Data plane enforces project authorization.
