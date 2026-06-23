@@ -552,10 +552,10 @@ Conventions:
 - [x] Add `snapshot.apply.verified`.
 - [x] Add `security.blocked`.
 - [x] Add `quota.warning`.
-- [ ] Add subscription RPC.
-- [ ] Add reconnect behavior.
-- [ ] Add gap detection.
-- [ ] Add event stream tests.
+- [x] Add subscription RPC.
+- [x] Add reconnect behavior.
+- [x] Add gap detection.
+- [x] Add event stream tests.
 
 ### M2.6 Structured Logs
 

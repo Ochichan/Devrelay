@@ -18,6 +18,7 @@ use crate::{
 };
 #[cfg(unix)]
 use crate::{DevRelayError, IpcConnection, IpcLimits, Result, UnixIpcConnection};
+use crate::{EventReplayCursor, EventSequence};
 
 pub const RPC_JSONRPC_VERSION: &str = "2.0";
 pub const RPC_PROTOCOL_VERSION: u32 = 1;
@@ -35,6 +36,7 @@ pub const METHOD_RECOVER_LIST: &str = "recover.list";
 pub const METHOD_RECOVER_SHOW: &str = "recover.show";
 pub const METHOD_RECOVER_OPEN: &str = "recover.open";
 pub const METHOD_DIAGNOSTICS_EXPORT: &str = "diagnostics.export";
+pub const METHOD_EVENTS_SUBSCRIBE: &str = "events.subscribe";
 
 pub const RPC_PARSE_ERROR: i64 = -32700;
 pub const RPC_INVALID_REQUEST: i64 = -32600;
@@ -322,6 +324,19 @@ pub struct DiagnosticsExportResult {
     pub snapshot_objects_included: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventsSubscribeParams {
+    #[serde(default)]
+    pub cursor: EventReplayCursor,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventsSubscribeResult {
+    pub cursor: EventReplayCursor,
+    pub replayed: usize,
+    pub current_sequence: Option<EventSequence>,
+}
+
 #[cfg(unix)]
 static NEXT_RPC_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -556,6 +571,31 @@ mod tests {
 
         assert_eq!(params.out, None);
         assert!(!params.include_sensitive_paths);
+    }
+
+    #[test]
+    fn events_subscribe_defaults_to_start_cursor() {
+        let params: EventsSubscribeParams = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(params.cursor, EventReplayCursor::from_start());
+
+        let params: EventsSubscribeParams = serde_json::from_value(json!({
+            "cursor": { "after_sequence": 4 }
+        }))
+        .unwrap();
+        assert_eq!(
+            params.cursor.after_sequence,
+            Some(EventSequence::new(4).unwrap())
+        );
+
+        let result = serde_json::to_value(EventsSubscribeResult {
+            cursor: EventReplayCursor::after(EventSequence::new(4).unwrap()),
+            replayed: 2,
+            current_sequence: Some(EventSequence::new(6).unwrap()),
+        })
+        .unwrap();
+        assert_eq!(result["cursor"]["after_sequence"], 4);
+        assert_eq!(result["replayed"], 2);
+        assert_eq!(result["current_sequence"], 6);
     }
 
     #[cfg(unix)]

@@ -56,10 +56,10 @@ pub use config::{
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{
-    EVENT_SCHEMA_VERSION, EventEnvelope, EventReplayCursor, EventSequence, EventSequencer,
-    EventTimestampMillis, EventType, QuotaWarningEvent, SecurityBlockedEvent,
-    SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent,
-    TypedEventPayload, WorkspaceStateChangedEvent,
+    EVENT_SCHEMA_VERSION, EventEnvelope, EventGapDetector, EventReplayCursor, EventSequence,
+    EventSequenceGap, EventSequencer, EventStreamMessage, EventTimestampMillis, EventType,
+    QuotaWarningEvent, SecurityBlockedEvent, SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent,
+    SnapshotLocalCreatedEvent, TypedEventPayload, WorkspaceStateChangedEvent,
 };
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
 pub use home::DevRelayHome;
@@ -76,8 +76,9 @@ pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_u
 pub use rpc::AgentRpcClient;
 pub use rpc::{
     ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
-    DiagnosticsExportParams, DiagnosticsExportResult, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
-    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    DiagnosticsExportParams, DiagnosticsExportResult, EventsSubscribeParams, EventsSubscribeResult,
+    METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
+    METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
     METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
     METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
     ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,

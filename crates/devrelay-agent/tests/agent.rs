@@ -342,6 +342,111 @@ fn foreground_serves_checkpoint_create_and_snapshots_list_rpc() {
 
 #[cfg(unix)]
 #[test]
+fn foreground_streams_events_and_replays_after_reconnect() {
+    use devrelay_core::{
+        EventSequence, EventStreamMessage, EventType, IpcConnection, IpcLimits, UnixIpcConnection,
+    };
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-events-rpc-test");
+    let repo = running.root.join("event-project");
+    create_manifest_repo(&repo, "99887766", "Event Project");
+    let limits = IpcLimits {
+        request_timeout: std::time::Duration::from_secs(5),
+        ..IpcLimits::default()
+    };
+
+    let mut stream = UnixIpcConnection::connect(&running.socket, limits).unwrap();
+    let subscribe = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": "events-1",
+        "method": "events.subscribe",
+        "params": { "cursor": {} }
+    }))
+    .unwrap();
+    stream.write_message(&subscribe, limits).unwrap();
+    let ack: serde_json::Value =
+        serde_json::from_slice(&stream.read_message(limits).unwrap()).unwrap();
+    assert_eq!(ack["id"], "events-1");
+    assert_eq!(ack["result"]["replayed"], 0);
+    assert!(ack["result"]["current_sequence"].is_null());
+
+    let added = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, limits).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "event-project-add",
+            "method": "projects.add",
+            "params": {
+                "path": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+    assert_eq!(added["result"]["project"]["project_id"], "99887766");
+
+    let first = read_stream_message(&mut stream, limits);
+    let first_sequence = match first {
+        EventStreamMessage::Event { event } => {
+            assert_eq!(event.event_type, EventType::WorkspaceStateChanged);
+            assert_eq!(event.payload["project_id"], "99887766");
+            event.sequence
+        }
+        EventStreamMessage::Gap { gap } => panic!("unexpected event gap: {gap:?}"),
+    };
+    drop(stream);
+
+    std::fs::write(repo.join("README.md"), "base\nchanged\n").unwrap();
+    let checkpoint = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, limits).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "event-checkpoint",
+            "method": "checkpoint.create",
+            "params": {
+                "repo": repo,
+                "manifest": repo.join("devrelay.toml"),
+                "label": "event replay"
+            }
+        }),
+    );
+    assert_eq!(checkpoint["result"]["checkpoint"]["project_id"], "99887766");
+
+    let mut reconnected = UnixIpcConnection::connect(&running.socket, limits).unwrap();
+    let subscribe = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": "events-2",
+        "method": "events.subscribe",
+        "params": {
+            "cursor": { "after_sequence": first_sequence.get() }
+        }
+    }))
+    .unwrap();
+    reconnected.write_message(&subscribe, limits).unwrap();
+    let ack: serde_json::Value =
+        serde_json::from_slice(&reconnected.read_message(limits).unwrap()).unwrap();
+    assert_eq!(ack["id"], "events-2");
+    assert_eq!(ack["result"]["replayed"], 1);
+
+    let replayed = read_stream_message(&mut reconnected, limits);
+    match replayed {
+        EventStreamMessage::Event { event } => {
+            assert_eq!(
+                event.sequence,
+                EventSequence::new(first_sequence.get() + 1).unwrap()
+            );
+            assert_eq!(event.event_type, EventType::SnapshotLocalCreated);
+            assert_eq!(event.payload["project_id"], "99887766");
+            assert_eq!(event.payload["label"], "event replay");
+        }
+        EventStreamMessage::Gap { gap } => panic!("unexpected event gap: {gap:?}"),
+    }
+
+    running.stop();
+}
+
+#[cfg(unix)]
+#[test]
 fn foreground_serves_apply_snapshot_rpc() {
     use devrelay_core::{IpcLimits, UnixIpcConnection};
     use serde_json::json;
@@ -609,6 +714,17 @@ fn rpc_call(
         .write_message(&request, IpcLimits::default())
         .unwrap();
     let response = connection.read_message(IpcLimits::default()).unwrap();
+    serde_json::from_slice(&response).unwrap()
+}
+
+#[cfg(unix)]
+fn read_stream_message(
+    connection: &mut devrelay_core::UnixIpcConnection,
+    limits: devrelay_core::IpcLimits,
+) -> devrelay_core::EventStreamMessage {
+    use devrelay_core::IpcConnection;
+
+    let response = connection.read_message(limits).unwrap();
     serde_json::from_slice(&response).unwrap()
 }
 

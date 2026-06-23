@@ -140,6 +140,48 @@ impl EventReplayCursor {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventSequenceGap {
+    pub expected_after: EventSequence,
+    pub actual_next: EventSequence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventGapDetector {
+    cursor: EventReplayCursor,
+}
+
+impl EventGapDetector {
+    pub const fn new(cursor: EventReplayCursor) -> Self {
+        Self { cursor }
+    }
+
+    pub const fn cursor(self) -> EventReplayCursor {
+        self.cursor
+    }
+
+    pub fn observe(&mut self, event: &EventEnvelope) -> std::result::Result<(), EventSequenceGap> {
+        self.observe_sequence(event.sequence)
+    }
+
+    pub fn observe_sequence(
+        &mut self,
+        sequence: EventSequence,
+    ) -> std::result::Result<(), EventSequenceGap> {
+        if let Some(expected_after) = self.cursor.after_sequence {
+            let expected_next = expected_after.next().unwrap_or(expected_after);
+            if sequence != expected_next {
+                return Err(EventSequenceGap {
+                    expected_after,
+                    actual_next: sequence,
+                });
+            }
+        }
+        self.cursor = EventReplayCursor::after(sequence);
+        Ok(())
+    }
+}
+
 impl Default for EventReplayCursor {
     fn default() -> Self {
         Self::from_start()
@@ -350,6 +392,23 @@ impl EventEnvelope {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum EventStreamMessage {
+    Event { event: EventEnvelope },
+    Gap { gap: EventSequenceGap },
+}
+
+impl EventStreamMessage {
+    pub fn event(event: EventEnvelope) -> Self {
+        Self::Event { event }
+    }
+
+    pub fn gap(gap: EventSequenceGap) -> Self {
+        Self::Gap { gap }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,6 +497,26 @@ mod tests {
     }
 
     #[test]
+    fn gap_detector_rejects_non_contiguous_sequences() {
+        let mut detector =
+            EventGapDetector::new(EventReplayCursor::after(EventSequence::new(2).unwrap()));
+
+        let gap = detector
+            .observe_sequence(EventSequence::new(4).unwrap())
+            .unwrap_err();
+        assert_eq!(gap.expected_after.get(), 2);
+        assert_eq!(gap.actual_next.get(), 4);
+
+        detector
+            .observe_sequence(EventSequence::new(3).unwrap())
+            .unwrap();
+        assert_eq!(
+            detector.cursor().after_sequence.unwrap(),
+            EventSequence::new(3).unwrap()
+        );
+    }
+
+    #[test]
     fn typed_payload_constructor_uses_json_payload() {
         #[derive(Serialize)]
         struct Payload<'a> {
@@ -456,6 +535,28 @@ mod tests {
 
         assert_eq!(envelope.payload["project_id"], "12345678");
         assert_eq!(envelope.occurred_at_unix_millis.get(), 99);
+    }
+
+    #[test]
+    fn stream_message_serializes_events_and_gaps() {
+        let event = EventEnvelope::new_at(
+            EventSequence::new(1).unwrap(),
+            EventTimestampMillis::new(10),
+            EventType::QuotaWarning,
+            json!({ "quota": "snapshot-store" }),
+        );
+        let encoded = serde_json::to_value(EventStreamMessage::event(event)).unwrap();
+        assert_eq!(encoded["kind"], "event");
+        assert_eq!(encoded["event"]["sequence"], 1);
+
+        let encoded = serde_json::to_value(EventStreamMessage::gap(EventSequenceGap {
+            expected_after: EventSequence::new(2).unwrap(),
+            actual_next: EventSequence::new(4).unwrap(),
+        }))
+        .unwrap();
+        assert_eq!(encoded["kind"], "gap");
+        assert_eq!(encoded["gap"]["expected_after"], 2);
+        assert_eq!(encoded["gap"]["actual_next"], 4);
     }
 
     #[test]

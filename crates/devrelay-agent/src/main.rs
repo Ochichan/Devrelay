@@ -3,22 +3,25 @@ use clap::{Parser, ValueEnum};
 #[cfg(unix)]
 use devrelay_core::{
     ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
-    DiagnosticsExportParams, DiagnosticsExportResult, GitRepo, IpcConnection, IpcLimits,
-    IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
-    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RPC_PROTOCOL_VERSION,
-    RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
-    RecoverShowResult, RpcError, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
-    RpcVersionNegotiationResult, SnapshotStore, SnapshotsListParams, SnapshotsListResult,
-    StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection, UnixIpcListener,
-    WorkspaceRegistryEntry, WorkspaceState, apply_snapshot, classify_untracked_paths,
-    plan_apply_snapshot, workspace_id_for,
+    DiagnosticsExportParams, DiagnosticsExportResult, EventEnvelope, EventReplayCursor,
+    EventSequence, EventStreamMessage, EventsSubscribeParams, EventsSubscribeResult, GitRepo,
+    IpcConnection, IpcLimits, IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult,
+    ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
+    RPC_PROTOCOL_VERSION, RecoverListParams, RecoverListResult, RecoverOpenParams,
+    RecoverOpenResult, RecoverShowParams, RecoverShowResult, RpcError, RpcRequest, RpcResponse,
+    RpcVersionNegotiationParams, RpcVersionNegotiationResult, SnapshotApplyStartedEvent,
+    SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent, SnapshotStore, SnapshotsListParams,
+    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, TypedEventPayload,
+    UnixIpcConnection, UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState,
+    WorkspaceStateChangedEvent, apply_snapshot, classify_untracked_paths, plan_apply_snapshot,
+    workspace_id_for,
 };
 use devrelay_core::{
     DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
-    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
-    METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
-    MetadataDb,
+    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE,
+    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
+    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE,
+    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -29,6 +32,7 @@ use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
+    mpsc,
 };
 use std::thread;
 use std::time::Duration;
@@ -81,6 +85,8 @@ struct AgentState {
     config: Arc<Mutex<LocalConfig>>,
     database_path: PathBuf,
     shutdown: Arc<AtomicBool>,
+    #[cfg(unix)]
+    events: Arc<AgentEventLog>,
 }
 
 impl AgentState {
@@ -119,7 +125,94 @@ impl AgentState {
             METHOD_RECOVER_SHOW.to_string(),
             METHOD_RECOVER_OPEN.to_string(),
             METHOD_DIAGNOSTICS_EXPORT.to_string(),
+            METHOD_EVENTS_SUBSCRIBE.to_string(),
         ]
+    }
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct AgentEventLog {
+    inner: Mutex<AgentEventLogInner>,
+}
+
+#[cfg(unix)]
+struct AgentEventLogInner {
+    next_sequence: u64,
+    events: Vec<EventEnvelope>,
+    subscribers: Vec<mpsc::Sender<EventEnvelope>>,
+}
+
+#[cfg(unix)]
+impl Default for AgentEventLogInner {
+    fn default() -> Self {
+        Self {
+            next_sequence: 1,
+            events: Vec::new(),
+            subscribers: Vec::new(),
+        }
+    }
+}
+
+#[cfg(unix)]
+struct AgentEventSubscription {
+    replay: Vec<EventEnvelope>,
+    current_sequence: Option<EventSequence>,
+    receiver: mpsc::Receiver<EventEnvelope>,
+}
+
+#[cfg(unix)]
+impl AgentEventLog {
+    fn publish<T: TypedEventPayload>(&self, payload: T) -> anyhow::Result<EventEnvelope> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|err| anyhow::anyhow!("event log lock poisoned: {err}"))?;
+        let sequence = EventSequence::new(inner.next_sequence)
+            .ok_or_else(|| anyhow::anyhow!("event sequence exhausted"))?;
+        inner.next_sequence = inner
+            .next_sequence
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("event sequence exhausted"))?;
+
+        let event = EventEnvelope::with_typed_payload(sequence, payload)?;
+        inner.events.push(event.clone());
+        inner
+            .subscribers
+            .retain(|sender| sender.send(event.clone()).is_ok());
+        Ok(event)
+    }
+
+    fn subscribe(&self, cursor: EventReplayCursor) -> anyhow::Result<AgentEventSubscription> {
+        let (sender, receiver) = mpsc::channel();
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|err| anyhow::anyhow!("event log lock poisoned: {err}"))?;
+        let replay = inner
+            .events
+            .iter()
+            .filter(|event| cursor.accepts(event.sequence))
+            .cloned()
+            .collect::<Vec<_>>();
+        let current_sequence = inner.current_sequence();
+        inner.subscribers.push(sender);
+        Ok(AgentEventSubscription {
+            replay,
+            current_sequence,
+            receiver,
+        })
+    }
+}
+
+#[cfg(unix)]
+impl AgentEventLogInner {
+    fn current_sequence(&self) -> Option<EventSequence> {
+        if self.next_sequence == 1 {
+            None
+        } else {
+            EventSequence::new(self.next_sequence - 1)
+        }
     }
 }
 
@@ -153,6 +246,8 @@ fn main() -> anyhow::Result<()> {
         config: Arc::new(Mutex::new(config)),
         database_path,
         shutdown: Arc::clone(&shutdown),
+        #[cfg(unix)]
+        events: Arc::new(AgentEventLog::default()),
     };
 
     if cli.health {
@@ -205,6 +300,10 @@ fn run_ipc_server(listener: UnixIpcListener, state: AgentState) {
 fn handle_rpc_connection(mut connection: UnixIpcConnection, state: AgentState) {
     let response = match connection.read_message(IpcLimits::default()) {
         Ok(bytes) => match RpcRequest::parse(&bytes) {
+            Ok(request) if request.method == METHOD_EVENTS_SUBSCRIBE => {
+                handle_events_subscribe_connection(connection, request, state);
+                return;
+            }
             Ok(request) => handle_rpc_request(request, &state),
             Err(error) => RpcResponse::error(None, error),
         },
@@ -214,16 +313,92 @@ fn handle_rpc_connection(mut connection: UnixIpcConnection, state: AgentState) {
         }
     };
 
-    let bytes = match serde_json::to_vec(&response) {
+    write_ipc_json(&mut connection, &response);
+}
+
+#[cfg(unix)]
+fn handle_events_subscribe_connection(
+    mut connection: UnixIpcConnection,
+    request: RpcRequest,
+    state: AgentState,
+) {
+    let id = match request.required_id() {
+        Ok(id) => id,
+        Err(error) => {
+            let response = RpcResponse::error(None, error);
+            write_ipc_json(&mut connection, &response);
+            return;
+        }
+    };
+    let params = if request.params.is_null() {
+        EventsSubscribeParams::default()
+    } else {
+        match serde_json::from_value::<EventsSubscribeParams>(request.params) {
+            Ok(params) => params,
+            Err(err) => {
+                let response =
+                    RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string()));
+                write_ipc_json(&mut connection, &response);
+                return;
+            }
+        }
+    };
+    let subscription = match state.events.subscribe(params.cursor) {
+        Ok(subscription) => subscription,
+        Err(err) => {
+            let response = RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+            write_ipc_json(&mut connection, &response);
+            return;
+        }
+    };
+    let response = match serde_json::to_value(EventsSubscribeResult {
+        cursor: params.cursor,
+        replayed: subscription.replay.len(),
+        current_sequence: subscription.current_sequence,
+    }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    if !write_ipc_json(&mut connection, &response) {
+        return;
+    }
+
+    for event in subscription.replay {
+        if !write_ipc_json(&mut connection, &EventStreamMessage::event(event)) {
+            return;
+        }
+    }
+
+    while !state.shutdown.load(Ordering::SeqCst) {
+        match subscription
+            .receiver
+            .recv_timeout(Duration::from_millis(100))
+        {
+            Ok(event) => {
+                if !write_ipc_json(&mut connection, &EventStreamMessage::event(event)) {
+                    return;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn write_ipc_json<T: Serialize>(connection: &mut UnixIpcConnection, value: &T) -> bool {
+    let bytes = match serde_json::to_vec(value) {
         Ok(bytes) => bytes,
         Err(err) => {
-            eprintln!("devrelay-agent RPC response serialization error: {err}");
-            return;
+            eprintln!("devrelay-agent IPC JSON serialization error: {err}");
+            return false;
         }
     };
     if let Err(err) = connection.write_message(&bytes, IpcLimits::default()) {
         eprintln!("devrelay-agent IPC write error: {err}");
+        return false;
     }
+    true
 }
 
 #[cfg(unix)]
@@ -339,6 +514,12 @@ fn handle_checkpoint_create(
         Ok(checkpoint) => checkpoint,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
+    if let Err(err) = state
+        .events
+        .publish(SnapshotLocalCreatedEvent::from_snapshot(&checkpoint))
+    {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
     let result = CheckpointCreateResult {
         checkpoint,
         snapshot_repo: store.snapshot_repo_path().to_path_buf(),
@@ -394,6 +575,15 @@ fn handle_apply_snapshot(
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
     let target = GitRepo::new(params.repo);
+    let target_workspace_id = registered_workspace_id(state, &params.project, target.path());
+    if let Err(err) = state.events.publish(SnapshotApplyStartedEvent {
+        project_id: params.project.clone(),
+        snapshot_id: snapshot.snapshot_id.clone(),
+        target_workspace_id: target_workspace_id.clone(),
+        dry_run: params.dry_run,
+    }) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
     let source = GitRepo::new(store.snapshot_repo_path());
     let result = if params.dry_run {
         match plan_apply_snapshot(&target, &source, &snapshot.metadata) {
@@ -406,11 +596,21 @@ fn handle_apply_snapshot(
         }
     } else {
         match apply_snapshot(&target, &source, &snapshot.metadata) {
-            Ok(verification) => ApplySnapshotResult {
-                snapshot,
-                plan: None,
-                verification: Some(verification),
-            },
+            Ok(verification) => {
+                if let Err(err) = state.events.publish(SnapshotApplyVerifiedEvent {
+                    project_id: params.project.clone(),
+                    snapshot_id: snapshot.snapshot_id.clone(),
+                    target_workspace_id,
+                    verification: verification.clone(),
+                }) {
+                    return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+                }
+                ApplySnapshotResult {
+                    snapshot,
+                    plan: None,
+                    verification: Some(verification),
+                }
+            }
             Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
         }
     };
@@ -534,6 +734,11 @@ fn handle_recover_open(
     } else {
         None
     };
+    if let Some(workspace) = &registered
+        && let Err(err) = publish_workspace_state_changed(state, workspace, None)
+    {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
     let result = RecoverOpenResult {
         recovered: snapshot,
         path: target.path().to_path_buf(),
@@ -651,6 +856,11 @@ fn handle_projects_add(
     merge_project_registry_entry(&mut config, entry.clone());
     if let Err(err) = config.save(&state.config_path) {
         return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    for workspace in entry.workspaces.values() {
+        if let Err(err) = publish_workspace_state_changed(state, workspace, None) {
+            return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+        }
     }
 
     match serde_json::to_value(ProjectResult { project: entry }) {
@@ -889,6 +1099,37 @@ fn register_recovery_workspace(
         .ok_or_else(|| anyhow::anyhow!("unknown project {project_id}"))?;
     project.workspaces.insert(workspace_id, workspace.clone());
     Ok(workspace)
+}
+
+#[cfg(unix)]
+fn publish_workspace_state_changed(
+    state: &AgentState,
+    workspace: &WorkspaceRegistryEntry,
+    previous_state: Option<WorkspaceState>,
+) -> anyhow::Result<()> {
+    state.events.publish(WorkspaceStateChangedEvent {
+        project_id: workspace.project_id.clone(),
+        workspace_id: workspace.workspace_id.clone(),
+        previous_state,
+        state: workspace.state,
+        device_id: Some(workspace.device_id.clone()),
+        last_seen_head: workspace.last_seen_head.clone(),
+        last_checkpoint_id: workspace.last_checkpoint_id.clone(),
+    })?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn registered_workspace_id(state: &AgentState, project_id: &str, path: &Path) -> Option<String> {
+    let config = state.config.lock().ok()?;
+    config
+        .project_registry
+        .projects
+        .get(project_id)?
+        .workspaces
+        .values()
+        .find(|workspace| workspace.local_path == path)
+        .map(|workspace| workspace.workspace_id.clone())
 }
 
 #[cfg(unix)]
