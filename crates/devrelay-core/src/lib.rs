@@ -235,8 +235,8 @@ pub use sidecar::{
 };
 pub use snapshot::{
     ApplyPlan, SnapshotApplyFaultPoint, VerificationDetails, apply_snapshot,
-    apply_snapshot_with_fault_injection, apply_snapshot_with_sidecars, create_snapshot,
-    create_snapshot_with_sidecars, create_snapshot_with_sidecars_and_lfs_upstream,
+    apply_snapshot_with_fault_injection, apply_snapshot_with_journal, apply_snapshot_with_sidecars,
+    create_snapshot, create_snapshot_with_sidecars, create_snapshot_with_sidecars_and_lfs_upstream,
     plan_apply_snapshot, read_snapshot_file, verify_snapshot, write_snapshot_file,
 };
 pub use snapshot_schema::{SnapshotChildSnapshot, SnapshotMetadata, SnapshotSidecar};

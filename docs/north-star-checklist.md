@@ -2074,7 +2074,7 @@ Conventions:
 - [x] Expand Git round-trip fixtures for binary files.
 - [x] Expand Git round-trip fixtures for executable bit.
 - [x] Expand Git round-trip fixtures for Unicode paths.
-- [ ] Add apply journal records to local apply.
+- [x] Add apply journal records to local apply.
 - [ ] Create SQLite schema and migrations for local project/session/snapshot data.
 - [ ] Add `devrelay project add/list` and local registry config.
 - [ ] Move snapshot metadata persistence into the registry.

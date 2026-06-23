@@ -15,8 +15,8 @@ use crate::platform::{current_platform_key, platform_capabilities_for_key};
 use crate::policy::classify_untracked_paths;
 use crate::snapshot_schema::{SNAPSHOT_ID_PREFIX, SNAPSHOT_SCHEMA_VERSION, calculate_state_hash};
 use crate::{
-    CasStore, DEFAULT_SIDECAR_CHUNK_BYTES, GitRepo, GitStatus, Manifest, PathDecision,
-    SnapshotMetadata, capture_large_sidecars, capture_local_only_lfs_objects,
+    CasStore, CrashJournal, DEFAULT_SIDECAR_CHUNK_BYTES, GitRepo, GitStatus, Manifest,
+    PathDecision, SnapshotMetadata, capture_large_sidecars, capture_local_only_lfs_objects,
     ensure_lfs_report_objects_available, ensure_sidecars_available,
     ensure_snapshot_lfs_objects_available, ensure_snapshot_lfs_objects_available_or_sidecars,
     fetch_missing_blobs_on_demand, inspect_lfs_objects, inspect_lfs_objects_with_upstream,
@@ -231,7 +231,31 @@ pub fn apply_snapshot(
     source: &GitRepo,
     snapshot: &SnapshotMetadata,
 ) -> Result<VerificationDetails> {
-    apply_snapshot_inner(target, source, snapshot, None, false)
+    apply_snapshot_inner(target, source, snapshot, None, false, None)
+}
+
+pub fn apply_snapshot_with_journal(
+    target: &GitRepo,
+    source: &GitRepo,
+    snapshot: &SnapshotMetadata,
+    journal: &CrashJournal,
+    operation_id: &str,
+    project_id: &str,
+    workspace_id: &str,
+) -> Result<VerificationDetails> {
+    apply_snapshot_inner(
+        target,
+        source,
+        snapshot,
+        None,
+        false,
+        Some(ApplyJournalContext {
+            journal,
+            operation_id,
+            project_id,
+            workspace_id,
+        }),
+    )
 }
 
 pub fn apply_snapshot_with_sidecars(
@@ -241,7 +265,7 @@ pub fn apply_snapshot_with_sidecars(
     cas_store: &CasStore,
 ) -> Result<VerificationDetails> {
     ensure_sidecars_available(target.path(), &snapshot.sidecars, cas_store)?;
-    let verification = apply_snapshot_inner(target, source, snapshot, None, true)?;
+    let verification = apply_snapshot_inner(target, source, snapshot, None, true, None)?;
     materialize_sidecars(target.path(), &snapshot.sidecars, cas_store)?;
     Ok(verification)
 }
@@ -252,7 +276,67 @@ pub fn apply_snapshot_with_fault_injection(
     snapshot: &SnapshotMetadata,
     fault: SnapshotApplyFaultPoint,
 ) -> Result<VerificationDetails> {
-    apply_snapshot_inner(target, source, snapshot, Some(fault), false)
+    apply_snapshot_inner(target, source, snapshot, Some(fault), false, None)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ApplyJournalContext<'a> {
+    journal: &'a CrashJournal,
+    operation_id: &'a str,
+    project_id: &'a str,
+    workspace_id: &'a str,
+}
+
+impl ApplyJournalContext<'_> {
+    fn record_target_apply_start(self, snapshot: &SnapshotMetadata) -> Result<()> {
+        self.journal.record_target_apply_start(
+            self.operation_id,
+            self.project_id,
+            self.workspace_id,
+            &snapshot.snapshot_id,
+        )?;
+        Ok(())
+    }
+
+    fn record_base_applied(self, snapshot: &SnapshotMetadata) -> Result<()> {
+        self.journal.record_base_applied(
+            self.operation_id,
+            self.project_id,
+            self.workspace_id,
+            &snapshot.snapshot_id,
+        )?;
+        Ok(())
+    }
+
+    fn record_work_applied(self, snapshot: &SnapshotMetadata) -> Result<()> {
+        self.journal.record_work_applied(
+            self.operation_id,
+            self.project_id,
+            self.workspace_id,
+            &snapshot.snapshot_id,
+        )?;
+        Ok(())
+    }
+
+    fn record_index_applied(self, snapshot: &SnapshotMetadata) -> Result<()> {
+        self.journal.record_index_applied(
+            self.operation_id,
+            self.project_id,
+            self.workspace_id,
+            &snapshot.snapshot_id,
+        )?;
+        Ok(())
+    }
+
+    fn record_verified(self, snapshot: &SnapshotMetadata) -> Result<()> {
+        self.journal.record_verified(
+            self.operation_id,
+            self.project_id,
+            self.workspace_id,
+            &snapshot.snapshot_id,
+        )?;
+        Ok(())
+    }
 }
 
 fn apply_snapshot_inner(
@@ -261,6 +345,7 @@ fn apply_snapshot_inner(
     snapshot: &SnapshotMetadata,
     fault: Option<SnapshotApplyFaultPoint>,
     allow_lfs_sidecars: bool,
+    journal: Option<ApplyJournalContext<'_>>,
 ) -> Result<VerificationDetails> {
     plan_apply_snapshot(target, source, snapshot)?;
     if allow_lfs_sidecars {
@@ -272,6 +357,9 @@ fn apply_snapshot_inner(
     ensure_no_reparse_points_before_materialization(target)?;
     ensure_snapshot_paths_supported(source, snapshot, &target_platform_key)?;
     ensure_snapshot_materialization_supported(source, snapshot, &target_platform_key)?;
+    if let Some(journal) = journal {
+        journal.record_target_apply_start(snapshot)?;
+    }
     fetch_snapshot_refs(target, source, snapshot)?;
     fetch_missing_blobs_on_demand(target, &snapshot.head_oid)?;
     fetch_missing_blobs_on_demand(target, &snapshot.index_tree_oid)?;
@@ -284,14 +372,27 @@ fn apply_snapshot_inner(
         target.run(&["checkout", "--detach", &snapshot.head_oid])?;
     }
     target.run(&["reset", "--hard", &snapshot.head_oid])?;
+    if let Some(journal) = journal {
+        journal.record_base_applied(snapshot)?;
+    }
     inject_apply_fault(fault, SnapshotApplyFaultPoint::AfterBaseApply)?;
     inject_apply_disk_full_fault(fault, SnapshotApplyFaultPoint::DuringTargetApplyDiskFull)?;
     target.run(&["read-tree", "--reset", "-u", &snapshot.work_commit_oid])?;
+    if let Some(journal) = journal {
+        journal.record_work_applied(snapshot)?;
+    }
     inject_apply_fault(fault, SnapshotApplyFaultPoint::AfterWorkApply)?;
     target.run(&["read-tree", "--reset", &snapshot.index_commit_oid])?;
+    if let Some(journal) = journal {
+        journal.record_index_applied(snapshot)?;
+    }
     inject_apply_fault(fault, SnapshotApplyFaultPoint::AfterIndexApply)?;
     inject_apply_fault(fault, SnapshotApplyFaultPoint::DuringVerification)?;
-    verify_snapshot(target, snapshot)
+    let verification = verify_snapshot(target, snapshot)?;
+    if let Some(journal) = journal {
+        journal.record_verified(snapshot)?;
+    }
+    Ok(verification)
 }
 
 pub fn plan_apply_snapshot(
@@ -743,7 +844,7 @@ fn unix_nanos() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{StatusCounts, manifest::Manifest};
+    use crate::{CrashJournal, CrashJournalPhase, StatusCounts, manifest::Manifest};
     use sha2::{Digest, Sha256};
     use std::fs;
 
@@ -894,6 +995,65 @@ large_file_threshold_mib = 1
         assert_eq!(target_status.counts.unstaged, 1);
         assert_eq!(target_status.counts.untracked, 1);
         assert!(!target_path.join(".env").exists());
+    }
+
+    #[test]
+    fn apply_snapshot_with_journal_records_local_apply_phases() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        fs::write(source_path.join("notes.md"), "carry me\n").unwrap();
+        let manifest = manifest();
+        let snapshot = create_snapshot(&source, &manifest).unwrap();
+        clone_repo(&source_path, &target_path);
+        let target = GitRepo::new(&target_path);
+        let journal = CrashJournal::open(temp.path().join("apply.jsonl"));
+
+        apply_snapshot_with_journal(
+            &target,
+            &source,
+            &snapshot,
+            &journal,
+            "op-apply",
+            &manifest.project_id,
+            "workspace-target",
+        )
+        .unwrap();
+
+        let replay = journal.replay().unwrap();
+        assert_eq!(replay.operations.len(), 1);
+        let operation = &replay.operations[0];
+        assert_eq!(operation.operation_id, "op-apply");
+        assert!(operation.terminal);
+        assert_eq!(operation.latest_phase, Some(CrashJournalPhase::Verified));
+        assert_eq!(
+            operation
+                .records
+                .iter()
+                .map(|record| record.phase)
+                .collect::<Vec<_>>(),
+            vec![
+                CrashJournalPhase::TargetApplyStart,
+                CrashJournalPhase::BaseApplied,
+                CrashJournalPhase::WorkApplied,
+                CrashJournalPhase::IndexApplied,
+                CrashJournalPhase::Verified,
+            ]
+        );
+        for record in &operation.records {
+            assert_eq!(
+                record.project_id.as_deref(),
+                Some(manifest.project_id.as_str())
+            );
+            assert_eq!(record.workspace_id.as_deref(), Some("workspace-target"));
+            assert_eq!(
+                record.snapshot_id.as_deref(),
+                Some(snapshot.snapshot_id.as_str())
+            );
+        }
     }
 
     #[test]
