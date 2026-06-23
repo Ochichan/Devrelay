@@ -146,6 +146,10 @@ impl AdaptiveDebouncer {
         drain
     }
 
+    pub fn flush_for_sleep_or_lock(&mut self, now: Duration) -> DebounceDrain {
+        self.flush_all(now, DebounceFlushReason::SleepOrLock)
+    }
+
     fn take_due_checkpoint(
         &mut self,
         workspace_id: &str,
@@ -395,6 +399,29 @@ mod tests {
             assert_eq!(publishes.publishes.len(), 1);
             assert_eq!(publishes.publishes[0].reason, reason);
         }
+    }
+
+    #[test]
+    fn sleep_or_lock_flushes_pending_work_immediately() {
+        let mut debouncer = AdaptiveDebouncer::new(policy());
+        debouncer.observe_change(change("w_main", 1, &["src/lib.rs"]), seconds(0));
+
+        let checkpoints = debouncer.flush_for_sleep_or_lock(seconds(1));
+        assert_eq!(checkpoints.checkpoints.len(), 1);
+        assert_eq!(
+            checkpoints.checkpoints[0].reason,
+            DebounceFlushReason::SleepOrLock
+        );
+        assert!(checkpoints.publishes.is_empty());
+
+        debouncer.record_checkpoint_completed("w_main", 1, seconds(1));
+        let publishes = debouncer.flush_for_sleep_or_lock(seconds(2));
+        assert!(publishes.checkpoints.is_empty());
+        assert_eq!(publishes.publishes.len(), 1);
+        assert_eq!(
+            publishes.publishes[0].reason,
+            DebounceFlushReason::SleepOrLock
+        );
     }
 
     #[test]

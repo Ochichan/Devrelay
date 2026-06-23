@@ -998,7 +998,7 @@ Conventions:
 - [x] Add max publish interval.
 - [x] Add immediate flush on explicit checkpoint.
 - [x] Add immediate flush on handoff.
-- [ ] Add immediate flush on sleep/lock signal where available.
+- [x] Add immediate flush on sleep/lock signal where available.
 - [x] Add debounce tests.
 - [x] Add coalescing tests.
 
