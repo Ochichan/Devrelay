@@ -2067,21 +2067,21 @@ Conventions:
 
 ## Immediate Next 10 Checklist
 
-- [ ] Add stable error codes and JSON error output to the existing CLI.
-- [ ] Add `SnapshotMetadata` schema tests and golden JSON fixtures.
+- [x] Add stable error codes and JSON error output to the existing CLI.
+- [x] Add `SnapshotMetadata` schema tests and golden JSON fixtures.
 - [x] Expand Git round-trip fixtures for staged delete.
 - [x] Expand Git round-trip fixtures for unstaged delete.
 - [x] Expand Git round-trip fixtures for binary files.
 - [x] Expand Git round-trip fixtures for executable bit.
 - [x] Expand Git round-trip fixtures for Unicode paths.
 - [x] Add apply journal records to local apply.
-- [ ] Create SQLite schema and migrations for local project/session/snapshot data.
-- [ ] Add `devrelay project add/list` and local registry config.
-- [ ] Move snapshot metadata persistence into the registry.
-- [ ] Add recovery timeline CLI.
-- [ ] Add dirty target backup snapshot rather than only refusal.
-- [ ] Add a minimal agent process.
-- [ ] Make CLI call the agent in dev mode.
+- [x] Create SQLite schema and migrations for local project/session/snapshot data.
+- [x] Add `devrelay project add/list` and local registry config.
+- [x] Move snapshot metadata persistence into the registry.
+- [x] Add recovery timeline CLI.
+- [x] Add dirty target backup snapshot rather than only refusal.
+- [x] Add a minimal agent process.
+- [x] Make CLI call the agent in dev mode.
 
 ## Non-Negotiable Safety Checklist
 
