@@ -1833,7 +1833,7 @@ Conventions:
 ### M13 Exit Gate
 
 - [ ] Independent security review has no unresolved critical findings.
-- [ ] Revocation blocks new access and lease operations.
+- [x] Revocation blocks new access and lease operations.
 - [ ] Diagnostic export excludes source/snapshot by default.
 - [ ] Fault injection produces zero data loss in supported states.
 - [ ] Secret hard-block regression count is zero.

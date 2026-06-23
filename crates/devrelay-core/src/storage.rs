@@ -3594,6 +3594,40 @@ mod tests {
     }
 
     #[test]
+    fn revoked_target_cannot_receive_lease_at_handoff_commit() {
+        let (mut db, _session, lease) = setup_publish_db(1, LeaseState::Active);
+        let handoff = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 600)
+            .unwrap();
+        db.mark_handoff_target_verified(&handoff.handoff_id)
+            .unwrap();
+        db.mark_handoff_source_ready(&handoff.handoff_id).unwrap();
+        db.revoke_device_at(
+            "device-b",
+            "device-security",
+            "lost after verify",
+            true,
+            202,
+        )
+        .unwrap();
+
+        let err = db
+            .commit_handoff(
+                &handoff.handoff_id,
+                "gen-1",
+                handoff.expires_at_unix_seconds.saturating_sub(1),
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("handoff commit rejected"));
+        assert!(err.to_string().contains("device-b"));
+        let lease = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(lease.holder_device_id.as_deref(), Some("device-a"));
+        assert_eq!(lease.epoch, 1);
+        assert_eq!(lease.state, LeaseState::HandoffPending);
+    }
+
+    #[test]
     fn concurrent_publish_preserves_stale_snapshot_without_latest_change() {
         let (mut db, session, lease) = setup_publish_db(1, LeaseState::Active);
         let first = publish_metadata("s1_000000000000000000000105", &session.session_id);
