@@ -144,6 +144,9 @@ pub use storage::{
     InactiveForkPublishResult, MetadataDb, PairingStartRequest,
 };
 pub use transport_security::{
-    CONTROL_ALPN_PROTOCOL, RustlsIdentity, ValidatedDeviceCertificate, build_rustls_client_config,
-    build_rustls_server_config, validate_device_certificate,
+    CONTROL_ALPN_PROTOCOL, CONTROL_PROTOCOL_VERSION, ControlPlaneReplayCache,
+    ControlPlaneRequestEnvelope, ControlPlaneTransportPolicy, RustlsIdentity,
+    ValidatedDeviceCertificate, build_rustls_client_config, build_rustls_server_config,
+    negotiate_control_protocol_version, validate_control_request_envelope,
+    validate_device_certificate,
 };

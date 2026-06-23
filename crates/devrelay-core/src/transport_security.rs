@@ -7,9 +7,18 @@ use rustls::client::ClientConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::server::{ServerConfig, WebPkiClientVerifier};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+pub const CONTROL_PROTOCOL_VERSION: u32 = 1;
 pub const CONTROL_ALPN_PROTOCOL: &[u8] = b"devrelay-control/1";
+pub const DEFAULT_MAX_CLOCK_SKEW_SECONDS: u64 = 300;
+pub const DEFAULT_REPLAY_WINDOW_SECONDS: u64 = 300;
+pub const DEFAULT_CONNECTION_TIMEOUT_MILLIS: u64 = 10_000;
+pub const DEFAULT_REQUEST_TIMEOUT_MILLIS: u64 = 30_000;
+
+const MIN_REPLAY_NONCE_LEN: usize = 16;
+const MAX_REPLAY_NONCE_LEN: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustlsIdentity {
@@ -25,6 +34,149 @@ pub struct ValidatedDeviceCertificate {
     pub signing_public_key_hex: String,
     pub network_public_key_hex: String,
     pub expires_at_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ControlPlaneTransportPolicy {
+    pub protocol_version: u32,
+    pub max_clock_skew_seconds: u64,
+    pub replay_window_seconds: u64,
+    pub connection_timeout_millis: u64,
+    pub request_timeout_millis: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ControlPlaneRequestEnvelope {
+    pub protocol_version: u32,
+    pub sent_at_unix_seconds: u64,
+    pub replay_nonce: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ControlPlaneReplayCache {
+    seen: BTreeMap<String, u64>,
+}
+
+impl Default for ControlPlaneTransportPolicy {
+    fn default() -> Self {
+        Self {
+            protocol_version: CONTROL_PROTOCOL_VERSION,
+            max_clock_skew_seconds: DEFAULT_MAX_CLOCK_SKEW_SECONDS,
+            replay_window_seconds: DEFAULT_REPLAY_WINDOW_SECONDS,
+            connection_timeout_millis: DEFAULT_CONNECTION_TIMEOUT_MILLIS,
+            request_timeout_millis: DEFAULT_REQUEST_TIMEOUT_MILLIS,
+        }
+    }
+}
+
+impl ControlPlaneTransportPolicy {
+    pub fn validate(&self) -> Result<()> {
+        if self.protocol_version == 0 {
+            return Err(DevRelayError::Config(
+                "control protocol version must be non-zero".to_string(),
+            ));
+        }
+        if self.max_clock_skew_seconds == 0 {
+            return Err(DevRelayError::Config(
+                "max clock skew must be non-zero".to_string(),
+            ));
+        }
+        if self.replay_window_seconds == 0 {
+            return Err(DevRelayError::Config(
+                "replay window must be non-zero".to_string(),
+            ));
+        }
+        if self.connection_timeout_millis == 0 {
+            return Err(DevRelayError::Config(
+                "connection timeout must be non-zero".to_string(),
+            ));
+        }
+        if self.request_timeout_millis == 0 {
+            return Err(DevRelayError::Config(
+                "request timeout must be non-zero".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl ControlPlaneReplayCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn remember(
+        &mut self,
+        nonce: &str,
+        now_unix_seconds: u64,
+        replay_window_seconds: u64,
+    ) -> Result<()> {
+        self.prune(now_unix_seconds, replay_window_seconds);
+        if self.seen.contains_key(nonce) {
+            return Err(DevRelayError::Config(format!(
+                "control request replay nonce {nonce} was already used"
+            )));
+        }
+        self.seen.insert(nonce.to_string(), now_unix_seconds);
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.seen.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
+    }
+
+    fn prune(&mut self, now_unix_seconds: u64, replay_window_seconds: u64) {
+        self.seen.retain(|_, seen_at| {
+            *seen_at > now_unix_seconds
+                || now_unix_seconds.saturating_sub(*seen_at) <= replay_window_seconds
+        });
+    }
+}
+
+pub fn negotiate_control_protocol_version(
+    client_supported_versions: &[u32],
+    policy: &ControlPlaneTransportPolicy,
+) -> Result<u32> {
+    policy.validate()?;
+    if client_supported_versions.contains(&policy.protocol_version) {
+        return Ok(policy.protocol_version);
+    }
+    Err(DevRelayError::Config(format!(
+        "control protocol version mismatch: server requires {}, client offered {:?}",
+        policy.protocol_version, client_supported_versions
+    )))
+}
+
+pub fn validate_control_request_envelope(
+    policy: &ControlPlaneTransportPolicy,
+    envelope: &ControlPlaneRequestEnvelope,
+    now_unix_seconds: u64,
+    replay_cache: &mut ControlPlaneReplayCache,
+) -> Result<()> {
+    policy.validate()?;
+    if envelope.protocol_version != policy.protocol_version {
+        return Err(DevRelayError::Config(format!(
+            "control request protocol version {} does not match expected {}",
+            envelope.protocol_version, policy.protocol_version
+        )));
+    }
+    validate_replay_nonce(&envelope.replay_nonce)?;
+    let clock_delta = now_unix_seconds.abs_diff(envelope.sent_at_unix_seconds);
+    if clock_delta > policy.max_clock_skew_seconds {
+        return Err(DevRelayError::Config(format!(
+            "control request timestamp skew {clock_delta}s exceeds max {}s",
+            policy.max_clock_skew_seconds
+        )));
+    }
+    replay_cache.remember(
+        &envelope.replay_nonce,
+        now_unix_seconds,
+        policy.replay_window_seconds,
+    )
 }
 
 pub fn build_rustls_server_config(
@@ -207,6 +359,23 @@ fn signed_certificate_payload(certificate: &DeviceCertificate) -> Result<Vec<u8>
     serde_json::to_vec(&payload).map_err(Into::into)
 }
 
+fn validate_replay_nonce(nonce: &str) -> Result<()> {
+    if nonce.len() < MIN_REPLAY_NONCE_LEN || nonce.len() > MAX_REPLAY_NONCE_LEN {
+        return Err(DevRelayError::Config(format!(
+            "control request replay nonce must be between {MIN_REPLAY_NONCE_LEN} and {MAX_REPLAY_NONCE_LEN} characters"
+        )));
+    }
+    if !nonce
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(DevRelayError::Config(
+            "control request replay nonce must be base64url-safe".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn decode_hex_array<const N: usize>(field: &str, value: &str) -> Result<[u8; N]> {
     let expected_len = N * 2;
     if value.len() != expected_len {
@@ -261,6 +430,129 @@ mod tests {
 
         assert!(server.to_string().contains("trusted client root"));
         assert!(client.to_string().contains("trusted server root"));
+    }
+
+    #[test]
+    fn negotiates_control_protocol_version() {
+        let policy = ControlPlaneTransportPolicy::default();
+
+        let negotiated =
+            negotiate_control_protocol_version(&[0, CONTROL_PROTOCOL_VERSION], &policy)
+                .expect("protocol negotiation");
+        let err = negotiate_control_protocol_version(&[0, 99], &policy).unwrap_err();
+
+        assert_eq!(negotiated, CONTROL_PROTOCOL_VERSION);
+        assert!(err.to_string().contains("version mismatch"));
+    }
+
+    #[test]
+    fn validates_control_request_timestamp_and_replay_nonce() {
+        let policy = ControlPlaneTransportPolicy::default();
+        let envelope = ControlPlaneRequestEnvelope {
+            protocol_version: CONTROL_PROTOCOL_VERSION,
+            sent_at_unix_seconds: 1_000,
+            replay_nonce: "nonce_1234567890".to_string(),
+        };
+        let mut cache = ControlPlaneReplayCache::new();
+
+        validate_control_request_envelope(&policy, &envelope, 1_001, &mut cache)
+            .expect("valid request envelope");
+        let replay =
+            validate_control_request_envelope(&policy, &envelope, 1_002, &mut cache).unwrap_err();
+
+        assert_eq!(cache.len(), 1);
+        assert!(replay.to_string().contains("already used"));
+    }
+
+    #[test]
+    fn rejects_control_request_clock_skew_and_protocol_mismatch() {
+        let policy = ControlPlaneTransportPolicy::default();
+        let stale = ControlPlaneRequestEnvelope {
+            protocol_version: CONTROL_PROTOCOL_VERSION,
+            sent_at_unix_seconds: 1_000,
+            replay_nonce: "nonce_stale_1234".to_string(),
+        };
+        let future = ControlPlaneRequestEnvelope {
+            protocol_version: CONTROL_PROTOCOL_VERSION,
+            sent_at_unix_seconds: 1_701,
+            replay_nonce: "nonce_future_123".to_string(),
+        };
+        let wrong_version = ControlPlaneRequestEnvelope {
+            protocol_version: CONTROL_PROTOCOL_VERSION + 1,
+            sent_at_unix_seconds: 1_000,
+            replay_nonce: "nonce_version_12".to_string(),
+        };
+
+        let stale_err = validate_control_request_envelope(
+            &policy,
+            &stale,
+            1_301 + policy.max_clock_skew_seconds,
+            &mut ControlPlaneReplayCache::new(),
+        )
+        .unwrap_err();
+        let future_err = validate_control_request_envelope(
+            &policy,
+            &future,
+            1_400,
+            &mut ControlPlaneReplayCache::new(),
+        )
+        .unwrap_err();
+        let version_err = validate_control_request_envelope(
+            &policy,
+            &wrong_version,
+            1_000,
+            &mut ControlPlaneReplayCache::new(),
+        )
+        .unwrap_err();
+
+        assert!(stale_err.to_string().contains("timestamp skew"));
+        assert!(future_err.to_string().contains("timestamp skew"));
+        assert!(version_err.to_string().contains("protocol version"));
+    }
+
+    #[test]
+    fn rejects_short_or_unsafe_replay_nonce() {
+        let policy = ControlPlaneTransportPolicy::default();
+        let short = ControlPlaneRequestEnvelope {
+            protocol_version: CONTROL_PROTOCOL_VERSION,
+            sent_at_unix_seconds: 1_000,
+            replay_nonce: "short".to_string(),
+        };
+        let unsafe_nonce = ControlPlaneRequestEnvelope {
+            protocol_version: CONTROL_PROTOCOL_VERSION,
+            sent_at_unix_seconds: 1_000,
+            replay_nonce: "nonce with spaces".to_string(),
+        };
+
+        let short_err = validate_control_request_envelope(
+            &policy,
+            &short,
+            1_000,
+            &mut ControlPlaneReplayCache::new(),
+        )
+        .unwrap_err();
+        let unsafe_err = validate_control_request_envelope(
+            &policy,
+            &unsafe_nonce,
+            1_000,
+            &mut ControlPlaneReplayCache::new(),
+        )
+        .unwrap_err();
+
+        assert!(short_err.to_string().contains("between"));
+        assert!(unsafe_err.to_string().contains("base64url-safe"));
+    }
+
+    #[test]
+    fn default_control_transport_policy_sets_bounded_timeouts() {
+        let policy = ControlPlaneTransportPolicy::default();
+
+        policy.validate().unwrap();
+
+        assert_eq!(policy.connection_timeout_millis, 10_000);
+        assert_eq!(policy.request_timeout_millis, 30_000);
+        assert_eq!(policy.max_clock_skew_seconds, 300);
+        assert_eq!(policy.replay_window_seconds, 300);
     }
 
     #[test]

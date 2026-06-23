@@ -811,12 +811,12 @@ Conventions:
 - [x] Validate device certificate.
 - [x] Pin fabric root.
 - [x] Check revocation denylist.
-- [ ] Add protocol version negotiation.
-- [ ] Add request timestamp.
-- [ ] Add replay nonce.
-- [ ] Add max clock skew policy.
-- [ ] Add connection timeout.
-- [ ] Add request timeout.
+- [x] Add protocol version negotiation.
+- [x] Add request timestamp.
+- [x] Add replay nonce.
+- [x] Add max clock skew policy.
+- [x] Add connection timeout.
+- [x] Add request timeout.
 - [x] Add expired cert test.
 - [x] Add revoked cert test.
 - [x] Add wrong fabric test.
