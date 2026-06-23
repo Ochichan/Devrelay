@@ -30,7 +30,8 @@ cargo run -p devrelay-cli -- status --repo . --manifest devrelay_spec_bundle/dev
 ```
 
 Individual local checks are available through `just fmt-check`, `just clippy`,
-and `just test`.
+and `just test`. Supply-chain checks are available through `just audit`,
+`just dependency-inventory`, and `just tooling`.
 
 `status` and `checkpoint` must be run inside an actual Git repository. This
 project directory is only the DevRelay implementation workspace unless you run

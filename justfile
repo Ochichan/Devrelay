@@ -11,3 +11,10 @@ test:
 
 preflight: fmt-check clippy test
 
+audit:
+    cargo audit --deny warnings
+
+dependency-inventory:
+    python3 scripts/dependency_inventory.py --out target/dependency-inventory
+
+tooling: audit dependency-inventory

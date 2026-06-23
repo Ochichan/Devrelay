@@ -49,10 +49,10 @@ Conventions:
 - [x] Run clippy in CI.
 - [x] Run unit tests in CI.
 - [x] Run integration tests in CI.
-- [ ] Publish CI artifacts for failed integration test logs.
+- [x] Publish CI artifacts for failed integration test logs.
 - [x] Add minimum Rust version enforcement.
-- [ ] Add dependency audit tooling.
-- [ ] Add license/dependency inventory tooling.
+- [x] Add dependency audit tooling.
+- [x] Add license/dependency inventory tooling.
 
 ### Documentation Baseline
 

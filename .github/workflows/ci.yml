@@ -33,5 +33,48 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        shell: bash
+        run: |
+          mkdir -p ci-artifacts
+          set +e
+          cargo test --workspace 2>&1 | tee "ci-artifacts/cargo-test-${{ matrix.os }}.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
 
+      - name: Upload failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-test-logs-${{ matrix.os }}
+          path: ci-artifacts/*.log
+          if-no-files-found: ignore
+
+  dependency-tooling:
+    name: Dependency tooling
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build dependency inventory
+        run: python3 scripts/dependency_inventory.py --out dependency-inventory
+
+      - name: Upload dependency inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-inventory
+          path: dependency-inventory/
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Dependency audit
+        run: cargo audit --deny warnings
