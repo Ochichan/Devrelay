@@ -771,20 +771,20 @@ Conventions:
 
 ### M4.2 Pairing Protocol
 
-- [ ] Define pairing session schema.
-- [ ] Generate ephemeral pairing key.
-- [ ] Start pairing session on new device.
-- [ ] Discover anchor or accept manual address.
-- [ ] Compute handshake transcript.
-- [ ] Derive short authentication string.
-- [ ] Show code on both devices.
-- [ ] Require user confirmation.
-- [ ] Issue device certificate.
-- [ ] Persist paired device.
-- [ ] Expire old pairing sessions.
-- [ ] Add pairing abort.
-- [ ] Add pairing replay test.
-- [ ] Add mismatched-code test.
+- [x] Define pairing session schema.
+- [x] Generate ephemeral pairing key.
+- [x] Start pairing session on new device.
+- [x] Discover anchor or accept manual address.
+- [x] Compute handshake transcript.
+- [x] Derive short authentication string.
+- [x] Show code on both devices.
+- [x] Require user confirmation.
+- [x] Issue device certificate.
+- [x] Persist paired device.
+- [x] Expire old pairing sessions.
+- [x] Add pairing abort.
+- [x] Add pairing replay test.
+- [x] Add mismatched-code test.
 
 ### M4.3 mDNS Discovery
 

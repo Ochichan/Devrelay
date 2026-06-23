@@ -11,20 +11,20 @@ use devrelay_core::AgentRpcClient;
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, ApplySnapshotParams, ApplySnapshotResult,
     CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome, DeviceIdentity,
-    DiagnosticsExportParams, DiagnosticsExportResult, ErrorInfo, FabricIdentityBundle,
-    FabricIdentityStore, GitRepo, LocalConfig, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
-    METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
-    METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
-    METHOD_STATUS_GET, Manifest, MetadataDb, PathDecision, PatternConfig, PortablePathsPolicy,
-    ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
-    ProjectsRemoveParams, ProjectsShowParams, RecoverListParams, RecoverListResult,
-    RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult, ServiceTemplate,
-    ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetParams,
-    StatusGetResult, StatusSummary, StoredSession, StoredSnapshot, UntrackedPolicy,
-    WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
-    classify_untracked_paths, create_snapshot, linux_systemd_user_template,
-    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file, workspace_id_for,
-    write_snapshot_file,
+    DevicePublicIdentity, DiagnosticsExportParams, DiagnosticsExportResult, ErrorInfo,
+    FabricIdentityBundle, FabricIdentityStore, GitRepo, LocalConfig, METHOD_APPLY_SNAPSHOT,
+    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
+    METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, MetadataDb, PairingSession,
+    PairingStartRequest, PathDecision, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
+    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
+    RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
+    RecoverShowResult, ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind,
+    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
+    StoredSession, StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
+    WorkspaceState, apply_snapshot, classify_untracked_paths, create_snapshot,
+    linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
+    read_snapshot_file, workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -99,6 +99,10 @@ enum Command {
     Manifest {
         #[command(subcommand)]
         command: ManifestCommand,
+    },
+    Pairing {
+        #[command(subcommand)]
+        command: PairingCommand,
     },
     Project {
         #[command(subcommand)]
@@ -244,6 +248,42 @@ enum IdentityCommand {
         json: bool,
     },
     RecoveryExport {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PairingCommand {
+    Start {
+        #[arg(long)]
+        peer_device_id: String,
+        #[arg(long)]
+        peer_name: String,
+        #[arg(long)]
+        peer_signing_public_key: String,
+        #[arg(long)]
+        peer_network_public_key: String,
+        #[arg(long)]
+        peer_ephemeral_public_key: String,
+        #[arg(long)]
+        anchor: Option<String>,
+        #[arg(long, default_value_t = 300)]
+        ttl_seconds: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    Confirm {
+        pairing_id: String,
+        #[arg(long)]
+        code: String,
+        #[arg(long, default_value_t = 31_536_000)]
+        certificate_ttl_seconds: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    Abort {
+        pairing_id: String,
         #[arg(long)]
         json: bool,
     },
@@ -630,6 +670,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         },
+        Command::Pairing { command } => handle_pairing_command(command)?,
         Command::Project { command } => handle_project_command(command, &agent_options)?,
         Command::Projects { command } => handle_projects_command(command, &agent_options)?,
         Command::Workspace { command } => match command {
@@ -1122,6 +1163,105 @@ fn render_identity_bundle(bundle: &FabricIdentityBundle, json: bool) -> anyhow::
                 "unavailable"
             }
         );
+    }
+    Ok(())
+}
+
+fn handle_pairing_command(command: PairingCommand) -> anyhow::Result<()> {
+    match command {
+        PairingCommand::Start {
+            peer_device_id,
+            peer_name,
+            peer_signing_public_key,
+            peer_network_public_key,
+            peer_ephemeral_public_key,
+            anchor,
+            ttl_seconds,
+            json,
+        } => {
+            let (bundle, mut registry) = open_identity_bundle(true)?;
+            let session = registry.db.start_pairing_session(PairingStartRequest {
+                fabric_id: &bundle.root.fabric_id,
+                local_device_id: &bundle.device.device_id,
+                peer_device_id: &peer_device_id,
+                peer_display_name: &peer_name,
+                peer_signing_public_key_hex: &peer_signing_public_key,
+                peer_network_public_key_hex: &peer_network_public_key,
+                peer_ephemeral_public_key_hex: &peer_ephemeral_public_key,
+                anchor_address: anchor.as_deref(),
+                ttl_seconds,
+            })?;
+            render_pairing_session(&session, json)
+        }
+        PairingCommand::Confirm {
+            pairing_id,
+            code,
+            certificate_ttl_seconds,
+            json,
+        } => {
+            let (bundle, registry) = open_identity_bundle(true)?;
+            let session = registry
+                .db
+                .get_pairing_session(&pairing_id)?
+                .ok_or_else(|| {
+                    DevRelayError::Config(format!("unknown pairing session {pairing_id}"))
+                })?;
+            let peer = DevicePublicIdentity {
+                device_id: session.peer_device_id.clone(),
+                display_name: session.peer_display_name.clone(),
+                fabric_id: session.fabric_id.clone(),
+                signing_public_key_hex: session.peer_signing_public_key_hex.clone(),
+                network_public_key_hex: session.peer_network_public_key_hex.clone(),
+                platform_key: "unknown".to_string(),
+                architecture: "unknown".to_string(),
+                created_at_unix_seconds: session.created_at_unix_seconds,
+                last_seen_unix_seconds: devrelay_core::unix_now_seconds(),
+            };
+            if peer.fabric_id != bundle.root.fabric_id {
+                return Err(DevRelayError::Config(
+                    "pairing session fabric does not match local identity".to_string(),
+                )
+                .into());
+            }
+            let home = DevRelayHome::resolve()?;
+            let store = FabricIdentityStore::new(home);
+            let now = devrelay_core::unix_now_seconds();
+            let certificate =
+                store.issue_device_certificate(&peer, now, certificate_ttl_seconds)?;
+            let certificate_json = serde_json::to_string(&certificate)?;
+            let mut db = registry.db;
+            let confirmed =
+                db.confirm_pairing_session(&pairing_id, &code, &certificate_json, now)?;
+            render_pairing_session(&confirmed, json)
+        }
+        PairingCommand::Abort { pairing_id, json } => {
+            let registry = open_device_registry()?;
+            let mut db = registry.db;
+            let aborted =
+                db.abort_pairing_session(&pairing_id, devrelay_core::unix_now_seconds())?;
+            render_pairing_session(&aborted, json)
+        }
+    }
+}
+
+fn render_pairing_session(session: &PairingSession, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(session)?);
+    } else {
+        println!(
+            "pairing: {} ({})",
+            session.pairing_id,
+            session.state.as_str()
+        );
+        println!(
+            "  peer: {} ({})",
+            session.peer_display_name, session.peer_device_id
+        );
+        if let Some(anchor) = &session.anchor_address {
+            println!("  anchor: {anchor}");
+        }
+        println!("  code: {}", session.short_authentication_string);
+        println!("  expires: {}", session.expires_at_unix_seconds);
     }
     Ok(())
 }

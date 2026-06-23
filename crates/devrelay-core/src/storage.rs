@@ -7,8 +7,10 @@
 use crate::{
     DeviceIdentity, DevicePublicIdentity, FabricRootIdentity, HandoffJournalPhase,
     HandoffJournalRecord, HandoffRecord, HandoffRecoveryOutcome, HandoffState, LeaseRecord,
-    LeaseState, Result, SessionState, SnapshotMetadata, StoredSession, StoredSnapshot,
-    generate_handoff_id, generate_session_id, unix_now_seconds,
+    LeaseState, PairingSession, PairingState, Result, SessionState, SnapshotMetadata,
+    StoredSession, StoredSnapshot, compute_handshake_transcript_hash,
+    derive_short_authentication_string, generate_ephemeral_pairing_key, generate_handoff_id,
+    generate_pairing_id, generate_session_id, unix_now_seconds, validate_key_hex,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction};
 use std::collections::BTreeSet;
@@ -243,6 +245,38 @@ CREATE INDEX idx_device_public_identities_fabric
     ON device_public_identities(fabric_id, device_id);
 "#,
     },
+    Migration {
+        version: 7,
+        name: "pairing_sessions",
+        sql: r#"
+CREATE TABLE pairing_sessions (
+    pairing_id TEXT PRIMARY KEY,
+    fabric_id TEXT NOT NULL,
+    local_device_id TEXT NOT NULL,
+    peer_device_id TEXT NOT NULL,
+    peer_display_name TEXT NOT NULL,
+    peer_signing_public_key_hex TEXT NOT NULL,
+    peer_network_public_key_hex TEXT NOT NULL,
+    anchor_address TEXT,
+    local_ephemeral_public_key_hex TEXT NOT NULL,
+    peer_ephemeral_public_key_hex TEXT NOT NULL,
+    transcript_hash_hex TEXT NOT NULL,
+    short_authentication_string TEXT NOT NULL,
+    state TEXT NOT NULL,
+    certificate_json TEXT,
+    expires_at_unix_seconds INTEGER NOT NULL,
+    confirmed_at_unix_seconds INTEGER,
+    aborted_at_unix_seconds INTEGER,
+    created_at_unix_seconds INTEGER NOT NULL,
+    FOREIGN KEY(fabric_id) REFERENCES fabric_roots(fabric_id)
+);
+
+CREATE INDEX idx_pairing_sessions_fabric_state
+    ON pairing_sessions(fabric_id, state, expires_at_unix_seconds);
+CREATE INDEX idx_pairing_sessions_peer
+    ON pairing_sessions(peer_device_id, state);
+"#,
+    },
 ];
 
 pub struct MetadataDb {
@@ -279,6 +313,18 @@ pub struct InactiveForkPublishResult {
     pub fork_session: StoredSession,
     pub snapshot: StoredSnapshot,
     pub canonical_latest_snapshot_id: Option<String>,
+}
+
+pub struct PairingStartRequest<'a> {
+    pub fabric_id: &'a str,
+    pub local_device_id: &'a str,
+    pub peer_device_id: &'a str,
+    pub peer_display_name: &'a str,
+    pub peer_signing_public_key_hex: &'a str,
+    pub peer_network_public_key_hex: &'a str,
+    pub peer_ephemeral_public_key_hex: &'a str,
+    pub anchor_address: Option<&'a str>,
+    pub ttl_seconds: u64,
 }
 
 impl MetadataDb {
@@ -520,6 +566,296 @@ WHERE device_id = ?1
             )
             .optional()
             .map_err(Into::into)
+    }
+
+    pub fn start_pairing_session(
+        &mut self,
+        request: PairingStartRequest<'_>,
+    ) -> Result<PairingSession> {
+        validate_non_empty("fabric_id", request.fabric_id)?;
+        validate_non_empty("local_device_id", request.local_device_id)?;
+        validate_non_empty("peer_device_id", request.peer_device_id)?;
+        validate_non_empty("peer_display_name", request.peer_display_name)?;
+        validate_key_hex(
+            "peer_signing_public_key_hex",
+            request.peer_signing_public_key_hex,
+        )?;
+        validate_key_hex(
+            "peer_network_public_key_hex",
+            request.peer_network_public_key_hex,
+        )?;
+        validate_key_hex(
+            "peer_ephemeral_public_key_hex",
+            request.peer_ephemeral_public_key_hex,
+        )?;
+
+        let tx = self.conn.transaction()?;
+        let fabric_exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM fabric_roots WHERE fabric_id = ?1)",
+            [request.fabric_id],
+            |row| row.get(0),
+        )?;
+        if !fabric_exists {
+            return Err(crate::DevRelayError::Config(format!(
+                "unknown fabric {}",
+                request.fabric_id
+            )));
+        }
+
+        let ephemeral = generate_ephemeral_pairing_key()?;
+        let transcript_hash_hex = compute_handshake_transcript_hash(
+            request.fabric_id,
+            request.local_device_id,
+            request.peer_device_id,
+            &ephemeral.public_key_hex,
+            request.peer_ephemeral_public_key_hex,
+            request.anchor_address,
+        )?;
+        let short_authentication_string = derive_short_authentication_string(&transcript_hash_hex)?;
+        let now = unix_now_seconds();
+        let session = PairingSession {
+            pairing_id: generate_pairing_id(),
+            fabric_id: request.fabric_id.to_string(),
+            local_device_id: request.local_device_id.to_string(),
+            peer_device_id: request.peer_device_id.to_string(),
+            peer_display_name: request.peer_display_name.to_string(),
+            peer_signing_public_key_hex: request.peer_signing_public_key_hex.to_string(),
+            peer_network_public_key_hex: request.peer_network_public_key_hex.to_string(),
+            anchor_address: request.anchor_address.map(ToString::to_string),
+            local_ephemeral_public_key_hex: ephemeral.public_key_hex,
+            peer_ephemeral_public_key_hex: request.peer_ephemeral_public_key_hex.to_string(),
+            transcript_hash_hex,
+            short_authentication_string,
+            state: PairingState::Pending,
+            certificate_json: None,
+            expires_at_unix_seconds: now.saturating_add(request.ttl_seconds.max(1)),
+            confirmed_at_unix_seconds: None,
+            aborted_at_unix_seconds: None,
+            created_at_unix_seconds: now,
+        };
+        tx.execute(
+            r#"
+INSERT INTO pairing_sessions (
+    pairing_id,
+    fabric_id,
+    local_device_id,
+    peer_device_id,
+    peer_display_name,
+    peer_signing_public_key_hex,
+    peer_network_public_key_hex,
+    anchor_address,
+    local_ephemeral_public_key_hex,
+    peer_ephemeral_public_key_hex,
+    transcript_hash_hex,
+    short_authentication_string,
+    state,
+    certificate_json,
+    expires_at_unix_seconds,
+    confirmed_at_unix_seconds,
+    aborted_at_unix_seconds,
+    created_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+"#,
+            rusqlite::params![
+                session.pairing_id.as_str(),
+                session.fabric_id.as_str(),
+                session.local_device_id.as_str(),
+                session.peer_device_id.as_str(),
+                session.peer_display_name.as_str(),
+                session.peer_signing_public_key_hex.as_str(),
+                session.peer_network_public_key_hex.as_str(),
+                session.anchor_address.as_deref(),
+                session.local_ephemeral_public_key_hex.as_str(),
+                session.peer_ephemeral_public_key_hex.as_str(),
+                session.transcript_hash_hex.as_str(),
+                session.short_authentication_string.as_str(),
+                session.state.as_str(),
+                session.certificate_json.as_deref(),
+                session.expires_at_unix_seconds as i64,
+                session.confirmed_at_unix_seconds.map(|value| value as i64),
+                session.aborted_at_unix_seconds.map(|value| value as i64),
+                session.created_at_unix_seconds as i64,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(session)
+    }
+
+    pub fn get_pairing_session(&self, pairing_id: &str) -> Result<Option<PairingSession>> {
+        self.conn
+            .query_row(
+                pairing_session_select_sql("WHERE pairing_id = ?1").as_str(),
+                [pairing_id],
+                pairing_session_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn confirm_pairing_session(
+        &mut self,
+        pairing_id: &str,
+        observed_code: &str,
+        certificate_json: &str,
+        now_unix_seconds: u64,
+    ) -> Result<PairingSession> {
+        serde_json::from_str::<serde_json::Value>(certificate_json)?;
+        let tx = self.conn.transaction()?;
+        let session = tx
+            .query_row(
+                pairing_session_select_sql("WHERE pairing_id = ?1").as_str(),
+                [pairing_id],
+                pairing_session_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| {
+                crate::DevRelayError::Config(format!("unknown pairing session {pairing_id}"))
+            })?;
+        if session.state.is_terminal() {
+            return Err(crate::DevRelayError::Config(format!(
+                "pairing session is already {}",
+                session.state.as_str()
+            )));
+        }
+        if now_unix_seconds > session.expires_at_unix_seconds {
+            tx.execute(
+                "UPDATE pairing_sessions SET state = ?1 WHERE pairing_id = ?2",
+                (PairingState::Expired.as_str(), pairing_id),
+            )?;
+            tx.commit()?;
+            return Err(crate::DevRelayError::Config(
+                "pairing session expired".to_string(),
+            ));
+        }
+        if observed_code != session.short_authentication_string {
+            return Err(crate::DevRelayError::Config(
+                "pairing code mismatch".to_string(),
+            ));
+        }
+
+        tx.execute(
+            r#"
+UPDATE pairing_sessions
+SET state = ?1,
+    certificate_json = ?2,
+    confirmed_at_unix_seconds = ?3
+WHERE pairing_id = ?4 AND state = ?5
+"#,
+            (
+                PairingState::Confirmed.as_str(),
+                certificate_json,
+                now_unix_seconds as i64,
+                pairing_id,
+                PairingState::Pending.as_str(),
+            ),
+        )?;
+        tx.execute(
+            r#"
+INSERT INTO device_public_identities (
+    device_id,
+    fabric_id,
+    display_name,
+    signing_public_key_hex,
+    network_public_key_hex,
+    platform_key,
+    architecture,
+    created_at_unix_seconds,
+    last_seen_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+ON CONFLICT(device_id) DO UPDATE SET
+    fabric_id = excluded.fabric_id,
+    display_name = excluded.display_name,
+    signing_public_key_hex = excluded.signing_public_key_hex,
+    network_public_key_hex = excluded.network_public_key_hex,
+    last_seen_unix_seconds = excluded.last_seen_unix_seconds
+"#,
+            (
+                session.peer_device_id.as_str(),
+                session.fabric_id.as_str(),
+                session.peer_display_name.as_str(),
+                session.peer_signing_public_key_hex.as_str(),
+                session.peer_network_public_key_hex.as_str(),
+                "unknown",
+                "unknown",
+                session.created_at_unix_seconds as i64,
+                now_unix_seconds as i64,
+            ),
+        )?;
+        tx.commit()?;
+        self.get_pairing_session(pairing_id)?.ok_or_else(|| {
+            crate::DevRelayError::Config("pairing confirmation disappeared".to_string())
+        })
+    }
+
+    pub fn abort_pairing_session(
+        &mut self,
+        pairing_id: &str,
+        now_unix_seconds: u64,
+    ) -> Result<PairingSession> {
+        let tx = self.conn.transaction()?;
+        let session = tx
+            .query_row(
+                pairing_session_select_sql("WHERE pairing_id = ?1").as_str(),
+                [pairing_id],
+                pairing_session_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| {
+                crate::DevRelayError::Config(format!("unknown pairing session {pairing_id}"))
+            })?;
+        if session.state.is_terminal() {
+            return Err(crate::DevRelayError::Config(format!(
+                "pairing session is already {}",
+                session.state.as_str()
+            )));
+        }
+        tx.execute(
+            "UPDATE pairing_sessions SET state = ?1, aborted_at_unix_seconds = ?2 WHERE pairing_id = ?3",
+            (
+                PairingState::Aborted.as_str(),
+                now_unix_seconds as i64,
+                pairing_id,
+            ),
+        )?;
+        tx.commit()?;
+        self.get_pairing_session(pairing_id)?
+            .ok_or_else(|| crate::DevRelayError::Config("pairing abort disappeared".to_string()))
+    }
+
+    pub fn expire_pairing_sessions(
+        &mut self,
+        now_unix_seconds: u64,
+    ) -> Result<Vec<PairingSession>> {
+        let ids = {
+            let mut statement = self.conn.prepare(
+                r#"
+SELECT pairing_id
+FROM pairing_sessions
+WHERE state = ?1 AND expires_at_unix_seconds < ?2
+ORDER BY expires_at_unix_seconds ASC, pairing_id ASC
+"#,
+            )?;
+            let rows = statement.query_map(
+                (PairingState::Pending.as_str(), now_unix_seconds as i64),
+                |row| row.get::<_, String>(0),
+            )?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let tx = self.conn.transaction()?;
+        for id in &ids {
+            tx.execute(
+                "UPDATE pairing_sessions SET state = ?1 WHERE pairing_id = ?2",
+                (PairingState::Expired.as_str(), id.as_str()),
+            )?;
+        }
+        tx.commit()?;
+        ids.into_iter()
+            .map(|id| {
+                self.get_pairing_session(&id)?.ok_or_else(|| {
+                    crate::DevRelayError::Config("expired pairing disappeared".to_string())
+                })
+            })
+            .collect()
     }
 
     pub fn ensure_default_session(
@@ -1563,6 +1899,69 @@ fn device_public_identity_from_row(
     })
 }
 
+fn pairing_session_select_sql(where_clause: &str) -> String {
+    format!(
+        r#"
+SELECT pairing_id,
+       fabric_id,
+       local_device_id,
+       peer_device_id,
+       peer_display_name,
+       peer_signing_public_key_hex,
+       peer_network_public_key_hex,
+       anchor_address,
+       local_ephemeral_public_key_hex,
+       peer_ephemeral_public_key_hex,
+       transcript_hash_hex,
+       short_authentication_string,
+       state,
+       certificate_json,
+       expires_at_unix_seconds,
+       confirmed_at_unix_seconds,
+       aborted_at_unix_seconds,
+       created_at_unix_seconds
+FROM pairing_sessions
+{where_clause}
+"#
+    )
+}
+
+fn pairing_session_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
+    Ok(PairingSession {
+        pairing_id: row.get(0)?,
+        fabric_id: row.get(1)?,
+        local_device_id: row.get(2)?,
+        peer_device_id: row.get(3)?,
+        peer_display_name: row.get(4)?,
+        peer_signing_public_key_hex: row.get(5)?,
+        peer_network_public_key_hex: row.get(6)?,
+        anchor_address: row.get(7)?,
+        local_ephemeral_public_key_hex: row.get(8)?,
+        peer_ephemeral_public_key_hex: row.get(9)?,
+        transcript_hash_hex: row.get(10)?,
+        short_authentication_string: row.get(11)?,
+        state: PairingState::parse(&row.get::<_, String>(12)?),
+        certificate_json: row.get(13)?,
+        expires_at_unix_seconds: row.get::<_, i64>(14)?.max(0) as u64,
+        confirmed_at_unix_seconds: row
+            .get::<_, Option<i64>>(15)?
+            .map(|value| value.max(0) as u64),
+        aborted_at_unix_seconds: row
+            .get::<_, Option<i64>>(16)?
+            .map(|value| value.max(0) as u64),
+        created_at_unix_seconds: row.get::<_, i64>(17)?.max(0) as u64,
+    })
+}
+
+fn validate_non_empty(field: &str, value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Err(crate::DevRelayError::Config(format!(
+            "{field} must not be empty"
+        )));
+    }
+    Ok(())
+}
+
 fn stored_session_from_row(row: &Row<'_>) -> rusqlite::Result<StoredSession> {
     let archived_at_unix_seconds = row
         .get::<_, Option<i64>>(6)?
@@ -1779,6 +2178,7 @@ mod tests {
             "handoff_journal",
             "fabric_roots",
             "device_public_identities",
+            "pairing_sessions",
             "devices",
             "task_runs",
         ] {
@@ -1799,6 +2199,8 @@ mod tests {
         assert!(index_exists(&db, "idx_handoff_journal_handoff"));
         assert!(index_exists(&db, "idx_handoff_journal_project_phase"));
         assert!(index_exists(&db, "idx_device_public_identities_fabric"));
+        assert!(index_exists(&db, "idx_pairing_sessions_fabric_state"));
+        assert!(index_exists(&db, "idx_pairing_sessions_peer"));
 
         let journal_mode: String = db
             .connection()
@@ -1899,6 +2301,28 @@ mod tests {
                 "{column}"
             );
         }
+        for column in [
+            "pairing_id",
+            "fabric_id",
+            "local_device_id",
+            "peer_device_id",
+            "peer_display_name",
+            "peer_signing_public_key_hex",
+            "peer_network_public_key_hex",
+            "anchor_address",
+            "local_ephemeral_public_key_hex",
+            "peer_ephemeral_public_key_hex",
+            "transcript_hash_hex",
+            "short_authentication_string",
+            "state",
+            "certificate_json",
+            "expires_at_unix_seconds",
+            "confirmed_at_unix_seconds",
+            "aborted_at_unix_seconds",
+            "created_at_unix_seconds",
+        ] {
+            assert!(column_exists(&db, "pairing_sessions", column), "{column}");
+        }
         assert!(column_exists(&db, "task_runs", "task_run_id"));
         assert!(column_exists(&db, "task_runs", "metadata_json"));
     }
@@ -1961,6 +2385,12 @@ mod tests {
         assert!(foreign_key_exists(
             &db,
             "device_public_identities",
+            "fabric_id",
+            "fabric_roots"
+        ));
+        assert!(foreign_key_exists(
+            &db,
+            "pairing_sessions",
             "fabric_id",
             "fabric_roots"
         ));
@@ -2051,6 +2481,143 @@ mod tests {
             db.get_device_public_identity(&device.device_id).unwrap(),
             Some(device)
         );
+    }
+
+    fn setup_pairing_db() -> (MetadataDb, FabricRootIdentity) {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.keep().join("metadata.sqlite");
+        let db = MetadataDb::open(&path).unwrap();
+        let root = FabricRootIdentity {
+            fabric_id: "f_1234567890abcdef12345678".to_string(),
+            fabric_name: "Test Fabric".to_string(),
+            root_public_key_hex: "a".repeat(64),
+            created_at_unix_seconds: 100,
+            rotation_epoch: 0,
+        };
+        db.upsert_fabric_root_identity(&root).unwrap();
+        (db, root)
+    }
+
+    fn pairing_start_request(root: &FabricRootIdentity) -> PairingStartRequest<'_> {
+        PairingStartRequest {
+            fabric_id: &root.fabric_id,
+            local_device_id: "d_local",
+            peer_device_id: "d_peer",
+            peer_display_name: "Peer Laptop",
+            peer_signing_public_key_hex: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            peer_network_public_key_hex: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            peer_ephemeral_public_key_hex: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            anchor_address: Some("192.0.2.1:7000"),
+            ttl_seconds: 60,
+        }
+    }
+
+    #[test]
+    fn pairing_session_confirms_and_persists_paired_device() {
+        let (mut db, root) = setup_pairing_db();
+        let session = db
+            .start_pairing_session(pairing_start_request(&root))
+            .unwrap();
+        assert!(session.pairing_id.starts_with("pa_"));
+        assert_eq!(session.state, PairingState::Pending);
+        assert_eq!(session.anchor_address.as_deref(), Some("192.0.2.1:7000"));
+        assert_eq!(session.short_authentication_string.len(), 6);
+
+        let confirmed = db
+            .confirm_pairing_session(
+                &session.pairing_id,
+                &session.short_authentication_string,
+                r#"{"certificate":"issued"}"#,
+                session.created_at_unix_seconds + 1,
+            )
+            .unwrap();
+        assert_eq!(confirmed.state, PairingState::Confirmed);
+        assert!(confirmed.confirmed_at_unix_seconds.is_some());
+        assert_eq!(
+            db.get_device_public_identity("d_peer")
+                .unwrap()
+                .unwrap()
+                .display_name,
+            "Peer Laptop"
+        );
+    }
+
+    #[test]
+    fn pairing_replay_cannot_confirm_twice() {
+        let (mut db, root) = setup_pairing_db();
+        let session = db
+            .start_pairing_session(pairing_start_request(&root))
+            .unwrap();
+        db.confirm_pairing_session(
+            &session.pairing_id,
+            &session.short_authentication_string,
+            r#"{"certificate":"issued"}"#,
+            session.created_at_unix_seconds + 1,
+        )
+        .unwrap();
+
+        let err = db
+            .confirm_pairing_session(
+                &session.pairing_id,
+                &session.short_authentication_string,
+                r#"{"certificate":"issued"}"#,
+                session.created_at_unix_seconds + 2,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("already confirmed"));
+    }
+
+    #[test]
+    fn pairing_mismatched_code_does_not_persist_device() {
+        let (mut db, root) = setup_pairing_db();
+        let session = db
+            .start_pairing_session(pairing_start_request(&root))
+            .unwrap();
+        let wrong_code = if session.short_authentication_string == "000000" {
+            "111111"
+        } else {
+            "000000"
+        };
+
+        let err = db
+            .confirm_pairing_session(
+                &session.pairing_id,
+                wrong_code,
+                r#"{"certificate":"issued"}"#,
+                session.created_at_unix_seconds + 1,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("code mismatch"));
+        assert_eq!(
+            db.get_pairing_session(&session.pairing_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            PairingState::Pending
+        );
+        assert!(db.get_device_public_identity("d_peer").unwrap().is_none());
+    }
+
+    #[test]
+    fn pairing_expire_and_abort_paths_are_terminal() {
+        let (mut db, root) = setup_pairing_db();
+        let session = db
+            .start_pairing_session(pairing_start_request(&root))
+            .unwrap();
+        let expired = db
+            .expire_pairing_sessions(session.expires_at_unix_seconds + 1)
+            .unwrap();
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].state, PairingState::Expired);
+
+        let session = db
+            .start_pairing_session(pairing_start_request(&root))
+            .unwrap();
+        let aborted = db
+            .abort_pairing_session(&session.pairing_id, session.created_at_unix_seconds + 1)
+            .unwrap();
+        assert_eq!(aborted.state, PairingState::Aborted);
+        assert!(aborted.aborted_at_unix_seconds.is_some());
     }
 
     #[test]
@@ -2734,7 +3301,7 @@ WHERE snapshot_id = ?1
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 6);
+        assert_eq!(count, 7);
     }
 
     #[test]

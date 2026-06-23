@@ -1553,6 +1553,109 @@ fn identity_commands_create_public_fabric_identity() {
 }
 
 #[test]
+fn pairing_commands_start_confirm_and_abort() {
+    let root = std::env::temp_dir().join(format!("devrelay-pairing-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let peer_signing = "b".repeat(64);
+    let peer_network = "c".repeat(64);
+    let peer_ephemeral = "d".repeat(64);
+
+    let start = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "pairing",
+            "start",
+            "--peer-device-id",
+            "d_peer",
+            "--peer-name",
+            "Peer Laptop",
+            "--peer-signing-public-key",
+        ])
+        .arg(&peer_signing)
+        .args(["--peer-network-public-key"])
+        .arg(&peer_network)
+        .args(["--peer-ephemeral-public-key"])
+        .arg(&peer_ephemeral)
+        .args(["--anchor", "192.0.2.1:7000", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        start.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&start.stderr)
+    );
+    let start_json: serde_json::Value = serde_json::from_slice(&start.stdout).unwrap();
+    let pairing_id = start_json["pairing_id"].as_str().unwrap();
+    let code = start_json["short_authentication_string"].as_str().unwrap();
+    assert!(pairing_id.starts_with("pa_"));
+    assert_eq!(start_json["state"], "pending");
+    assert_eq!(start_json["anchor_address"], "192.0.2.1:7000");
+    assert_eq!(code.len(), 6);
+
+    let confirm = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["pairing", "confirm", pairing_id, "--code", code, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        confirm.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&confirm.stderr)
+    );
+    let confirm_json: serde_json::Value = serde_json::from_slice(&confirm.stdout).unwrap();
+    assert_eq!(confirm_json["state"], "confirmed");
+    let certificate: serde_json::Value =
+        serde_json::from_str(confirm_json["certificate_json"].as_str().unwrap()).unwrap();
+    assert_eq!(certificate["device_id"], "d_peer");
+    assert!(
+        certificate["signature_hex"]
+            .as_str()
+            .is_some_and(|value| value.len() == 128)
+    );
+
+    let start_abort = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "pairing",
+            "start",
+            "--peer-device-id",
+            "d_peer_abort",
+            "--peer-name",
+            "Peer Abort",
+            "--peer-signing-public-key",
+        ])
+        .arg(&peer_signing)
+        .args(["--peer-network-public-key"])
+        .arg(&peer_network)
+        .args(["--peer-ephemeral-public-key"])
+        .arg(&peer_ephemeral)
+        .args(["--json"])
+        .output()
+        .unwrap();
+    assert!(
+        start_abort.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&start_abort.stderr)
+    );
+    let start_abort_json: serde_json::Value = serde_json::from_slice(&start_abort.stdout).unwrap();
+    let abort_id = start_abort_json["pairing_id"].as_str().unwrap();
+    let abort = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["pairing", "abort", abort_id, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        abort.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&abort.stderr)
+    );
+    let abort_json: serde_json::Value = serde_json::from_slice(&abort.stdout).unwrap();
+    assert_eq!(abort_json["state"], "aborted");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn project_registry_commands_round_trip() {
     let root = std::env::temp_dir().join(format!(
         "devrelay-project-test-{}-{}",

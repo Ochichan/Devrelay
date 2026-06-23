@@ -46,6 +46,7 @@ mod ipc;
 mod lease;
 mod logging;
 pub mod manifest;
+mod pairing;
 mod policy;
 mod rpc;
 mod service;
@@ -76,8 +77,8 @@ pub use handoff::{
 };
 pub use home::{AnchorLayout, DevRelayHome};
 pub use identity::{
-    DevicePublicIdentity, FABRIC_ID_PREFIX, FabricIdentityBundle, FabricIdentityStore,
-    FabricRootIdentity, RecoveryExportStatus,
+    DeviceCertificate, DevicePublicIdentity, FABRIC_ID_PREFIX, FabricIdentityBundle,
+    FabricIdentityStore, FabricRootIdentity, RecoveryExportStatus,
 };
 pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 #[cfg(unix)]
@@ -91,6 +92,11 @@ pub use manifest::{
     DirtyTargetPolicy, EnvironmentConfig, EnvironmentKind, EnvironmentProfile, HandoffConfig,
     Manifest, PatternConfig, PortablePathsPolicy, RestoreTerminals, SecretConfig, SecretMode,
     SyncConfig, SyncMode, TaskCacheMode, TaskConfig, TaskSandbox, UntrackedPolicy, WorkspaceConfig,
+};
+pub use pairing::{
+    PAIRING_ID_PREFIX, PairingEphemeralKey, PairingSession, PairingState,
+    compute_handshake_transcript_hash, derive_short_authentication_string,
+    generate_ephemeral_pairing_key, generate_pairing_id, validate_key_hex,
 };
 pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
 #[cfg(unix)]
@@ -123,5 +129,5 @@ pub use snapshot_schema::SnapshotMetadata;
 pub use snapshot_store::{SnapshotStore, StoredSnapshot};
 pub use storage::{
     CanonicalPublishRequest, CanonicalPublishResult, InactiveForkPublishRequest,
-    InactiveForkPublishResult, MetadataDb,
+    InactiveForkPublishResult, MetadataDb, PairingStartRequest,
 };

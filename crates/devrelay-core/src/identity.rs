@@ -5,7 +5,7 @@
 //! `DEVRELAY_HOME/identity` with owner-only permissions on Unix platforms.
 
 use crate::{DevRelayError, DevRelayHome, LocalConfig, Result, unix_now_seconds};
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -38,6 +38,19 @@ pub struct DevicePublicIdentity {
     pub architecture: String,
     pub created_at_unix_seconds: u64,
     pub last_seen_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceCertificate {
+    pub certificate_id: String,
+    pub fabric_id: String,
+    pub device_id: String,
+    pub signing_public_key_hex: String,
+    pub network_public_key_hex: String,
+    pub issuer_root_public_key_hex: String,
+    pub issued_at_unix_seconds: u64,
+    pub expires_at_unix_seconds: u64,
+    pub signature_hex: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,6 +110,46 @@ impl FabricIdentityStore {
     pub fn public_bundle_from_store(&self, config: &LocalConfig) -> Result<FabricIdentityBundle> {
         let secrets = self.load_secrets()?;
         self.public_bundle(config, &secrets)
+    }
+
+    pub fn issue_device_certificate(
+        &self,
+        device: &DevicePublicIdentity,
+        issued_at_unix_seconds: u64,
+        ttl_seconds: u64,
+    ) -> Result<DeviceCertificate> {
+        let secrets = self.load_secrets()?;
+        if device.fabric_id != secrets.fabric_id {
+            return Err(DevRelayError::Config(
+                "cannot issue certificate for a different fabric".to_string(),
+            ));
+        }
+        let root_key = SigningKey::from_bytes(&secrets.root_secret_key);
+        let issuer_root_public_key_hex = hex_encode(&root_key.verifying_key().to_bytes());
+        let expires_at_unix_seconds = issued_at_unix_seconds.saturating_add(ttl_seconds.max(1));
+        let payload = serde_json::json!({
+            "schema": 1,
+            "fabric_id": device.fabric_id,
+            "device_id": device.device_id,
+            "signing_public_key_hex": device.signing_public_key_hex,
+            "network_public_key_hex": device.network_public_key_hex,
+            "issuer_root_public_key_hex": issuer_root_public_key_hex,
+            "issued_at_unix_seconds": issued_at_unix_seconds,
+            "expires_at_unix_seconds": expires_at_unix_seconds,
+        });
+        let payload_bytes = serde_json::to_vec(&payload)?;
+        let signature = root_key.sign(&payload_bytes);
+        Ok(DeviceCertificate {
+            certificate_id: format!("cert_{}", &blake3::hash(&payload_bytes).to_hex()[..24]),
+            fabric_id: device.fabric_id.clone(),
+            device_id: device.device_id.clone(),
+            signing_public_key_hex: device.signing_public_key_hex.clone(),
+            network_public_key_hex: device.network_public_key_hex.clone(),
+            issuer_root_public_key_hex,
+            issued_at_unix_seconds,
+            expires_at_unix_seconds,
+            signature_hex: hex_encode(&signature.to_bytes()),
+        })
     }
 
     fn create_secrets(&self) -> Result<FabricSecrets> {
@@ -349,5 +402,34 @@ mod tests {
         assert!(!encoded.contains("private"));
         assert!(encoded.contains("root_public_key_hex"));
         assert!(encoded.contains("network_public_key_hex"));
+    }
+
+    #[test]
+    fn issues_device_certificate_for_same_fabric() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path());
+        let config = LocalConfig::new_for_local_device();
+        let store = FabricIdentityStore::new(home);
+        let bundle = store.open_or_create(&config).unwrap();
+
+        let cert = store
+            .issue_device_certificate(&bundle.device, 100, 60)
+            .unwrap();
+        assert!(cert.certificate_id.starts_with("cert_"));
+        assert_eq!(cert.fabric_id, bundle.root.fabric_id);
+        assert_eq!(cert.device_id, bundle.device.device_id);
+        assert_eq!(
+            cert.issuer_root_public_key_hex,
+            bundle.root.root_public_key_hex
+        );
+        assert_eq!(cert.expires_at_unix_seconds, 160);
+        assert_eq!(cert.signature_hex.len(), 128);
+
+        let mut wrong_fabric = bundle.device.clone();
+        wrong_fabric.fabric_id = "f_other".to_string();
+        let err = store
+            .issue_device_certificate(&wrong_fabric, 100, 60)
+            .unwrap_err();
+        assert!(err.to_string().contains("different fabric"));
     }
 }
