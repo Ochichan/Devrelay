@@ -44,6 +44,7 @@ mod crash_journal;
 mod data_plane;
 mod debounce;
 mod discovery;
+mod environment;
 mod error;
 mod events;
 mod fs_safety;
@@ -120,6 +121,10 @@ pub use discovery::{
     DISCOVERY_TXT_DEVICE_ID, DISCOVERY_TXT_FABRIC_HINT, DISCOVERY_TXT_PORT, DISCOVERY_TXT_PROTOCOL,
     DiscoveryAdvertisement, DiscoveryRole, DiscoveryService, build_discovery_advertisement,
     truncated_fabric_hint,
+};
+pub use environment::{
+    EnvironmentProfileSelection, EnvironmentSelectionContext, environment_profile_command_scope,
+    profile_targets_platform, select_environment_profile,
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{

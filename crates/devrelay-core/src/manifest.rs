@@ -108,11 +108,12 @@ pub struct EnvironmentProfile {
     pub timeout_seconds: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EnvironmentKind {
     Nix,
     Devcontainer,
+    Native,
     Script,
     Manual,
 }

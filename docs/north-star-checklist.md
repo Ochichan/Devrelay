@@ -1341,15 +1341,15 @@ Conventions:
 
 ### M9.2 Profile Selection
 
-- [ ] Detect current platform key.
-- [ ] Match manifest profile targets.
-- [ ] Prefer Nix when compatible.
-- [ ] Prefer Dev Container after Nix.
-- [ ] Prefer native declarative tool manager after Dev Container.
-- [ ] Use trusted bootstrap script after declarative options.
-- [ ] Fall back to manual profile.
-- [ ] Explain selected profile.
-- [ ] Add profile selection tests.
+- [x] Detect current platform key.
+- [x] Match manifest profile targets.
+- [x] Prefer Nix when compatible.
+- [x] Prefer Dev Container after Nix.
+- [x] Prefer native declarative tool manager after Dev Container.
+- [x] Use trusted bootstrap script after declarative options.
+- [x] Fall back to manual profile.
+- [x] Explain selected profile.
+- [x] Add profile selection tests.
 
 ### M9.3 Nix Adapter
 
