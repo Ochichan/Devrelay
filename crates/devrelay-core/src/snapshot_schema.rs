@@ -21,8 +21,11 @@ pub struct SnapshotMetadata {
     pub snapshot_id: String,
     pub project_id: String,
     pub project_name: String,
+    #[serde(default)]
     pub session_id: Option<String>,
+    #[serde(default)]
     pub parent_snapshot_id: Option<String>,
+    #[serde(default)]
     pub source_device_id: Option<String>,
     pub branch: Option<String>,
     pub head_oid: String,
@@ -245,6 +248,21 @@ mod tests {
         assert_eq!(metadata.source_device_id, None);
         assert_eq!(metadata.operation_capsule, None);
         metadata.validate().expect("fixture should validate");
+    }
+
+    #[test]
+    fn migrates_legacy_v1_fixture_without_optional_context_fields() {
+        let metadata: SnapshotMetadata = serde_json::from_str(include_str!(
+            "../tests/fixtures/snapshot_metadata_v1_legacy_minimal.json"
+        ))
+        .expect("legacy fixture should deserialize");
+
+        assert_eq!(metadata.schema_version, SNAPSHOT_SCHEMA_VERSION);
+        assert_eq!(metadata.session_id, None);
+        assert_eq!(metadata.parent_snapshot_id, None);
+        assert_eq!(metadata.source_device_id, None);
+        assert_eq!(metadata.operation_capsule, None);
+        metadata.validate().expect("legacy fixture should validate");
     }
 
     #[test]

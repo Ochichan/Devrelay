@@ -1779,7 +1779,7 @@ Conventions:
 - [ ] Define metadata schema migration support window.
 - [ ] Define snapshot schema migration support window.
 - [ ] Add rollback expectations.
-- [ ] Add migration tests from old fixtures.
+- [x] Add migration tests from old fixtures.
 
 ### M13.5 Backup Anchor
 

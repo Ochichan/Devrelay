@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "s1_89abcdef0123456701234567",
+  "project_id": "12345678",
+  "project_name": "roundtrip",
+  "branch": "main",
+  "head_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "index_tree_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "index_commit_oid": "cccccccccccccccccccccccccccccccccccccccc",
+  "work_tree_oid": "dddddddddddddddddddddddddddddddddddddddd",
+  "work_commit_oid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "source_status": {
+    "staged": 1,
+    "unstaged": 1,
+    "untracked": 1,
+    "ignored": 0,
+    "unmerged": 0
+  },
+  "included_untracked": [
+    "notes.md"
+  ],
+  "excluded": [
+    {
+      "path": ".env",
+      "decision": "exclude",
+      "reason": "secret-filename"
+    }
+  ],
+  "state_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "created_at_unix_seconds": 1782090000
+}
