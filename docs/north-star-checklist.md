@@ -1758,7 +1758,7 @@ Conventions:
 - [x] Add fuzz target for network API payloads.
 - [x] Add fuzz corpus seeds.
 - [x] Add fuzz run documentation.
-- [ ] Add CI/nightly fuzz plan.
+- [x] Add CI/nightly fuzz plan.
 
 ### M13.3 Secret Scanning
 

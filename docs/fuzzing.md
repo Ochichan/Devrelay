@@ -63,6 +63,13 @@ Replace `manifest_parser` with another target name and pass the matching corpus
 directory. Longer unattended runs should use `-max_total_time` or `-runs` so
 they terminate predictably in automation.
 
+## Nightly CI
+
+`.github/workflows/fuzz.yml` runs on a daily schedule and by manual dispatch.
+It first compiles every harness and runs the committed corpus once, then runs
+each target through `cargo-fuzz` for 60 seconds. Failed runs upload
+`fuzz/artifacts/<target>/` for local reproduction.
+
 ## Crash Reproduction
 
 When `cargo-fuzz` finds a crash, it writes an artifact under
