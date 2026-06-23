@@ -6,17 +6,19 @@ use devrelay_core::{
     DiagnosticsExportParams, DiagnosticsExportResult, GitRepo, IpcConnection, IpcLimits,
     IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
     ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RPC_PROTOCOL_VERSION,
-    RecoverOpenParams, RecoverOpenResult, RpcError, RpcRequest, RpcResponse,
-    RpcVersionNegotiationParams, RpcVersionNegotiationResult, SnapshotStore, SnapshotsListParams,
-    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection,
-    UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
-    classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
+    RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
+    RecoverShowResult, RpcError, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
+    RpcVersionNegotiationResult, SnapshotStore, SnapshotsListParams, SnapshotsListResult,
+    StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection, UnixIpcListener,
+    WorkspaceRegistryEntry, WorkspaceState, apply_snapshot, classify_untracked_paths,
+    plan_apply_snapshot, workspace_id_for,
 };
 use devrelay_core::{
     DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
     METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_OPEN, METHOD_RPC_NEGOTIATE,
-    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
+    METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
+    MetadataDb,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -113,6 +115,8 @@ impl AgentState {
             METHOD_CHECKPOINT_CREATE.to_string(),
             METHOD_SNAPSHOTS_LIST.to_string(),
             METHOD_APPLY_SNAPSHOT.to_string(),
+            METHOD_RECOVER_LIST.to_string(),
+            METHOD_RECOVER_SHOW.to_string(),
             METHOD_RECOVER_OPEN.to_string(),
             METHOD_DIAGNOSTICS_EXPORT.to_string(),
         ]
@@ -243,6 +247,8 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_CHECKPOINT_CREATE => handle_checkpoint_create(id, request.params, state),
         METHOD_SNAPSHOTS_LIST => handle_snapshots_list(id, request.params, state),
         METHOD_APPLY_SNAPSHOT => handle_apply_snapshot(id, request.params, state),
+        METHOD_RECOVER_LIST => handle_recover_list(id, request.params, state),
+        METHOD_RECOVER_SHOW => handle_recover_show(id, request.params, state),
         METHOD_RECOVER_OPEN => handle_recover_open(id, request.params, state),
         METHOD_DIAGNOSTICS_EXPORT => handle_diagnostics_export(id, request.params, state),
         method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
@@ -410,6 +416,61 @@ fn handle_apply_snapshot(
     };
 
     match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_recover_list(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: RecoverListParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let config = match state.config.lock() {
+        Ok(config) => config,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let snapshots = match recover_list_snapshots(&state.home, &config, params.project.as_deref()) {
+        Ok(snapshots) => snapshots,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+
+    match serde_json::to_value(RecoverListResult { snapshots }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_recover_show(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: RecoverShowParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let config = match state.config.lock() {
+        Ok(config) => config,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let (_, _, snapshot) = match find_recovery_snapshot(
+        &state.home,
+        &config,
+        params.project.as_deref(),
+        &params.snapshot_id,
+    ) {
+        Ok(found) => found,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+
+    match serde_json::to_value(RecoverShowResult { snapshot }) {
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }
@@ -687,6 +748,32 @@ fn handle_projects_remove(
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }
+}
+
+#[cfg(unix)]
+fn recover_list_snapshots(
+    home: &DevRelayHome,
+    config: &LocalConfig,
+    project: Option<&str>,
+) -> anyhow::Result<Vec<StoredSnapshot>> {
+    if let Some(project) = project {
+        let entry = find_project(config, project)
+            .ok_or_else(|| anyhow::anyhow!("unknown project {project}"))?;
+        let store = SnapshotStore::open(home, &entry.project_id)?;
+        return Ok(store.list_snapshots()?);
+    }
+
+    let mut snapshots = Vec::new();
+    for project in config.project_registry.projects.values() {
+        let store = SnapshotStore::open(home, &project.project_id)?;
+        snapshots.extend(store.list_snapshots()?);
+    }
+    snapshots.sort_by(|left, right| {
+        left.project_id
+            .cmp(&right.project_id)
+            .then(left.sequence_number.cmp(&right.sequence_number))
+    });
+    Ok(snapshots)
 }
 
 #[cfg(unix)]

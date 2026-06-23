@@ -31,6 +31,8 @@ pub const METHOD_PROJECTS_REMOVE: &str = "projects.remove";
 pub const METHOD_CHECKPOINT_CREATE: &str = "checkpoint.create";
 pub const METHOD_SNAPSHOTS_LIST: &str = "snapshots.list";
 pub const METHOD_APPLY_SNAPSHOT: &str = "apply.snapshot";
+pub const METHOD_RECOVER_LIST: &str = "recover.list";
+pub const METHOD_RECOVER_SHOW: &str = "recover.show";
 pub const METHOD_RECOVER_OPEN: &str = "recover.open";
 pub const METHOD_DIAGNOSTICS_EXPORT: &str = "diagnostics.export";
 
@@ -263,6 +265,27 @@ pub struct ApplySnapshotResult {
     pub snapshot: StoredSnapshot,
     pub plan: Option<ApplyPlan>,
     pub verification: Option<VerificationDetails>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoverListParams {
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoverListResult {
+    pub snapshots: Vec<StoredSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoverShowParams {
+    pub snapshot_id: String,
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoverShowResult {
+    pub snapshot: StoredSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -503,6 +526,20 @@ mod tests {
 
     #[test]
     fn recover_open_defaults_register_to_false() {
+        let list: RecoverListParams = serde_json::from_value(json!({
+            "project": null
+        }))
+        .unwrap();
+        assert_eq!(list.project, None);
+
+        let show: RecoverShowParams = serde_json::from_value(json!({
+            "snapshot_id": "snap_abc",
+            "project": "12345678"
+        }))
+        .unwrap();
+        assert_eq!(show.snapshot_id, "snap_abc");
+        assert_eq!(show.project.as_deref(), Some("12345678"));
+
         let params: RecoverOpenParams = serde_json::from_value(json!({
             "snapshot_id": "snap_abc",
             "path": "/tmp/recovery"

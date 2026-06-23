@@ -469,6 +469,37 @@ fn foreground_serves_recover_open_rpc() {
         .as_str()
         .unwrap();
 
+    let listed = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "recover-list",
+            "method": "recover.list",
+            "params": { "project": "Recover Project" }
+        }),
+    );
+    assert_eq!(
+        listed["result"]["snapshots"][0]["snapshot_id"].as_str(),
+        Some(snapshot_id)
+    );
+
+    let recover_show = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "recover-show",
+            "method": "recover.show",
+            "params": {
+                "snapshot_id": snapshot_id,
+                "project": "Recover Project"
+            }
+        }),
+    );
+    assert_eq!(
+        recover_show["result"]["snapshot"]["snapshot_id"].as_str(),
+        Some(snapshot_id)
+    );
+
     let opened = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
         json!({

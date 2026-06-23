@@ -11,13 +11,15 @@ use devrelay_core::AgentRpcClient;
 use devrelay_core::{
     CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome, ErrorInfo,
     GitRepo, LocalConfig, METHOD_CHECKPOINT_CREATE, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_STATUS_GET, Manifest, PathDecision,
-    PatternConfig, PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
-    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, SnapshotMetadata, SnapshotStore,
-    StatusGetParams, StatusGetResult, StatusSummary, StoredSnapshot, UntrackedPolicy,
-    WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
-    classify_untracked_paths, create_snapshot, plan_apply_snapshot, read_snapshot_file,
-    workspace_id_for, write_snapshot_file,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
+    METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, PathDecision, PatternConfig,
+    PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
+    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RecoverListParams,
+    RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
+    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
+    StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
+    apply_snapshot, classify_untracked_paths, create_snapshot, plan_apply_snapshot,
+    read_snapshot_file, workspace_id_for, write_snapshot_file,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -492,100 +494,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         },
-        Command::Recover { command } => match command {
-            RecoverCommand::List {
-                project,
-                config,
-                json,
-            } => {
-                let (_, local_config) = load_or_default_config(config)?;
-                let home = DevRelayHome::resolve()?;
-                let snapshots = recover_list_snapshots(&home, &local_config, project.as_deref())?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&snapshots)?);
-                } else {
-                    for snapshot in snapshots {
-                        println!(
-                            "{} {} #{}",
-                            snapshot.project_id, snapshot.snapshot_id, snapshot.sequence_number
-                        );
-                    }
-                }
-            }
-            RecoverCommand::Show {
-                snapshot_id,
-                project,
-                config,
-                json,
-            } => {
-                let (_, local_config) = load_or_default_config(config)?;
-                let home = DevRelayHome::resolve()?;
-                let (_, _, snapshot) =
-                    find_recovery_snapshot(&home, &local_config, project.as_deref(), &snapshot_id)?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&snapshot)?);
-                } else {
-                    println!(
-                        "snapshot: {} #{}",
-                        snapshot.snapshot_id, snapshot.sequence_number
-                    );
-                    println!("  project: {}", snapshot.project_id);
-                    if let Some(label) = snapshot.label {
-                        println!("  label: {label}");
-                    }
-                }
-            }
-            RecoverCommand::Open {
-                snapshot_id,
-                path,
-                project,
-                config,
-                register,
-                name,
-                json,
-            } => {
-                let (config_path, mut local_config) = load_or_default_config(config)?;
-                let home = DevRelayHome::resolve()?;
-                let (project_entry, store, snapshot) =
-                    find_recovery_snapshot(&home, &local_config, project.as_deref(), &snapshot_id)?;
-                let source_path = recovery_source_path(&project_entry)?;
-                let target = prepare_recovery_workspace(&path, &source_path)?;
-                let snapshot_source = GitRepo::new(store.snapshot_repo_path());
-                let verification = apply_snapshot(&target, &snapshot_source, &snapshot.metadata)?;
-                let registered_workspace = if register {
-                    let workspace = register_recovery_workspace(
-                        &mut local_config,
-                        &project_entry.project_id,
-                        target.path(),
-                    )?;
-                    local_config.save(&config_path)?;
-                    Some(workspace)
-                } else {
-                    None
-                };
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "recovered": snapshot,
-                            "path": target.path(),
-                            "name": name,
-                            "registered": registered_workspace,
-                            "verification": verification,
-                        }))?
-                    );
-                } else {
-                    println!("recovered snapshot: {}", snapshot.snapshot_id);
-                    println!("  path: {}", target.path().display());
-                    if let Some(name) = name {
-                        println!("  name: {name}");
-                    }
-                    if registered_workspace.is_some() {
-                        println!("  registered: true");
-                    }
-                }
-            }
-        },
+        Command::Recover { command } => handle_recover_command(command, &agent_options)?,
         Command::Snapshot { command } => match command {
             SnapshotCommand::List { project, json } => {
                 let home = DevRelayHome::resolve()?;
@@ -1094,6 +1003,207 @@ fn render_checkpoint(
         println!("  snapshot repo: {}", result.snapshot_repo.display());
         if let Some(out) = out {
             println!("  snapshot file: {}", out.display());
+        }
+    }
+    Ok(())
+}
+
+fn handle_recover_command(
+    command: RecoverCommand,
+    agent_options: &AgentOptions,
+) -> anyhow::Result<()> {
+    match command {
+        RecoverCommand::List {
+            project,
+            config,
+            json,
+        } => {
+            let snapshots = if should_route_config_command(agent_options, config.as_ref()) {
+                recover_list_via_agent(agent_options, project)?
+            } else {
+                recover_list_direct(project, config)?
+            };
+            render_recover_list(&snapshots, json)
+        }
+        RecoverCommand::Show {
+            snapshot_id,
+            project,
+            config,
+            json,
+        } => {
+            let snapshot = if should_route_config_command(agent_options, config.as_ref()) {
+                recover_show_via_agent(agent_options, snapshot_id, project)?
+            } else {
+                recover_show_direct(snapshot_id, project, config)?
+            };
+            render_recover_show(&snapshot, json)
+        }
+        RecoverCommand::Open {
+            snapshot_id,
+            path,
+            project,
+            config,
+            register,
+            name,
+            json,
+        } => {
+            let result = if should_route_config_command(agent_options, config.as_ref()) {
+                recover_open_via_agent(agent_options, snapshot_id, path, project, register, name)?
+            } else {
+                recover_open_direct(snapshot_id, path, project, config, register, name)?
+            };
+            render_recover_open(&result, json)
+        }
+    }
+}
+
+fn recover_list_direct(
+    project: Option<String>,
+    config: Option<PathBuf>,
+) -> anyhow::Result<Vec<StoredSnapshot>> {
+    let (_, local_config) = load_or_default_config(config)?;
+    let home = DevRelayHome::resolve()?;
+    recover_list_snapshots(&home, &local_config, project.as_deref())
+}
+
+fn recover_show_direct(
+    snapshot_id: String,
+    project: Option<String>,
+    config: Option<PathBuf>,
+) -> anyhow::Result<StoredSnapshot> {
+    let (_, local_config) = load_or_default_config(config)?;
+    let home = DevRelayHome::resolve()?;
+    let (_, _, snapshot) =
+        find_recovery_snapshot(&home, &local_config, project.as_deref(), &snapshot_id)?;
+    Ok(snapshot)
+}
+
+fn recover_open_direct(
+    snapshot_id: String,
+    path: PathBuf,
+    project: Option<String>,
+    config: Option<PathBuf>,
+    register: bool,
+    name: Option<String>,
+) -> anyhow::Result<RecoverOpenResult> {
+    let (config_path, mut local_config) = load_or_default_config(config)?;
+    let home = DevRelayHome::resolve()?;
+    let (project_entry, store, snapshot) =
+        find_recovery_snapshot(&home, &local_config, project.as_deref(), &snapshot_id)?;
+    let source_path = recovery_source_path(&project_entry)?;
+    let target = prepare_recovery_workspace(&path, &source_path)?;
+    let snapshot_source = GitRepo::new(store.snapshot_repo_path());
+    let verification = apply_snapshot(&target, &snapshot_source, &snapshot.metadata)?;
+    let registered = if register {
+        let workspace = register_recovery_workspace(
+            &mut local_config,
+            &project_entry.project_id,
+            target.path(),
+        )?;
+        local_config.save(&config_path)?;
+        Some(workspace)
+    } else {
+        None
+    };
+    Ok(RecoverOpenResult {
+        recovered: snapshot,
+        path: target.path().to_path_buf(),
+        name,
+        registered,
+        verification,
+    })
+}
+
+fn recover_list_via_agent(
+    agent_options: &AgentOptions,
+    project: Option<String>,
+) -> anyhow::Result<Vec<StoredSnapshot>> {
+    let result: RecoverListResult = call_agent(
+        agent_options,
+        METHOD_RECOVER_LIST,
+        RecoverListParams { project },
+    )?;
+    Ok(result.snapshots)
+}
+
+fn recover_show_via_agent(
+    agent_options: &AgentOptions,
+    snapshot_id: String,
+    project: Option<String>,
+) -> anyhow::Result<StoredSnapshot> {
+    let result: RecoverShowResult = call_agent(
+        agent_options,
+        METHOD_RECOVER_SHOW,
+        RecoverShowParams {
+            snapshot_id,
+            project,
+        },
+    )?;
+    Ok(result.snapshot)
+}
+
+fn recover_open_via_agent(
+    agent_options: &AgentOptions,
+    snapshot_id: String,
+    path: PathBuf,
+    project: Option<String>,
+    register: bool,
+    name: Option<String>,
+) -> anyhow::Result<RecoverOpenResult> {
+    call_agent(
+        agent_options,
+        METHOD_RECOVER_OPEN,
+        RecoverOpenParams {
+            snapshot_id,
+            path: absolute_cli_path(path)?,
+            project,
+            register,
+            name,
+        },
+    )
+}
+
+fn render_recover_list(snapshots: &[StoredSnapshot], json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(snapshots)?);
+    } else {
+        for snapshot in snapshots {
+            println!(
+                "{} {} #{}",
+                snapshot.project_id, snapshot.snapshot_id, snapshot.sequence_number
+            );
+        }
+    }
+    Ok(())
+}
+
+fn render_recover_show(snapshot: &StoredSnapshot, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(snapshot)?);
+    } else {
+        println!(
+            "snapshot: {} #{}",
+            snapshot.snapshot_id, snapshot.sequence_number
+        );
+        println!("  project: {}", snapshot.project_id);
+        if let Some(label) = &snapshot.label {
+            println!("  label: {label}");
+        }
+    }
+    Ok(())
+}
+
+fn render_recover_open(result: &RecoverOpenResult, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(result)?);
+    } else {
+        println!("recovered snapshot: {}", result.recovered.snapshot_id);
+        println!("  path: {}", result.path.display());
+        if let Some(name) = &result.name {
+            println!("  name: {name}");
+        }
+        if result.registered.is_some() {
+            println!("  registered: true");
         }
     }
     Ok(())

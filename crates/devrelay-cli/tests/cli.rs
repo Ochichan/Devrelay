@@ -552,6 +552,205 @@ fn checkpoint_uses_agent_rpc_by_default_and_writes_out_file() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn recover_commands_use_agent_rpc_by_default() {
+    use devrelay_core::{
+        IpcConnection, IpcLimits, IpcTransport, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
+        METHOD_RECOVER_SHOW, RpcRequest, RpcResponse, UnixIpcListener,
+    };
+    use serde_json::json;
+
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-recover-agent-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+    let socket = root.join("agent.sock");
+    let recovered = root.join("recovered");
+    let snapshot_id = "s1_111111111111111111111111";
+    let metadata = json!({
+        "schema_version": 1,
+        "snapshot_id": snapshot_id,
+        "project_id": "agent-recover-project",
+        "project_name": "Agent Recover Project",
+        "session_id": null,
+        "parent_snapshot_id": null,
+        "source_device_id": null,
+        "branch": "main",
+        "head_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "index_tree_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "index_commit_oid": "cccccccccccccccccccccccccccccccccccccccc",
+        "work_tree_oid": "dddddddddddddddddddddddddddddddddddddddd",
+        "work_commit_oid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "source_status": {
+            "staged": 0,
+            "unstaged": 0,
+            "untracked": 1,
+            "ignored": 0,
+            "unmerged": 0
+        },
+        "included_untracked": ["notes.md"],
+        "excluded": [],
+        "state_hash": "recover-state-hash",
+        "created_at_unix_seconds": 1234567890_u64
+    });
+    let snapshot = json!({
+        "snapshot_id": snapshot_id,
+        "project_id": "agent-recover-project",
+        "session_id": null,
+        "parent_snapshot_id": null,
+        "sequence_number": 3,
+        "pinned": false,
+        "label": "recoverable",
+        "metadata": metadata,
+        "created_at_unix_seconds": 1234567890_u64
+    });
+    let verification = json!({
+        "head_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "index_tree_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "work_tree_oid": "dddddddddddddddddddddddddddddddddddddddd",
+        "state_hash": "recover-state-hash",
+        "included_untracked": ["notes.md"],
+        "excluded_paths": []
+    });
+
+    let listener = UnixIpcListener::bind(&socket).unwrap();
+    let expected_recovered = recovered.to_str().unwrap().to_string();
+    let handle = std::thread::spawn(move || {
+        for method in [
+            METHOD_RECOVER_LIST,
+            METHOD_RECOVER_SHOW,
+            METHOD_RECOVER_OPEN,
+        ] {
+            let mut connection = listener.accept().unwrap();
+            let request_bytes = connection.read_message(IpcLimits::default()).unwrap();
+            let request = RpcRequest::parse(&request_bytes).unwrap();
+            assert_eq!(request.method, method);
+            let result = match method {
+                METHOD_RECOVER_LIST => {
+                    assert_eq!(
+                        request.params["project"].as_str(),
+                        Some("agent-recover-project")
+                    );
+                    json!({ "snapshots": [snapshot.clone()] })
+                }
+                METHOD_RECOVER_SHOW => {
+                    assert_eq!(request.params["snapshot_id"].as_str(), Some(snapshot_id));
+                    assert_eq!(
+                        request.params["project"].as_str(),
+                        Some("agent-recover-project")
+                    );
+                    json!({ "snapshot": snapshot.clone() })
+                }
+                METHOD_RECOVER_OPEN => {
+                    assert_eq!(request.params["snapshot_id"].as_str(), Some(snapshot_id));
+                    assert_eq!(
+                        request.params["path"].as_str(),
+                        Some(expected_recovered.as_str())
+                    );
+                    assert_eq!(request.params["register"].as_bool(), Some(true));
+                    assert_eq!(request.params["name"].as_str(), Some("Recovered copy"));
+                    json!({
+                        "recovered": snapshot.clone(),
+                        "path": expected_recovered,
+                        "name": "Recovered copy",
+                        "registered": null,
+                        "verification": verification
+                    })
+                }
+                _ => unreachable!(),
+            };
+            let response = RpcResponse::success(request.required_id().unwrap(), result);
+            connection
+                .write_message(
+                    &serde_json::to_vec(&response).unwrap(),
+                    IpcLimits::default(),
+                )
+                .unwrap();
+        }
+    });
+
+    let list = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "recover",
+            "list",
+            "--project",
+            "agent-recover-project",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let list_json: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(list_json[0]["snapshot_id"].as_str(), Some(snapshot_id));
+
+    let show = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "recover",
+            "show",
+            snapshot_id,
+            "--project",
+            "agent-recover-project",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        show.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&show.stderr)
+    );
+    let show_json: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(show_json["snapshot_id"].as_str(), Some(snapshot_id));
+
+    let open = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "recover",
+            "open",
+            snapshot_id,
+            "--project",
+            "agent-recover-project",
+            "--path",
+            recovered.to_str().unwrap(),
+            "--register",
+            "--name",
+            "Recovered copy",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        open.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&open.stderr)
+    );
+    let open_json: serde_json::Value = serde_json::from_slice(&open.stdout).unwrap();
+    assert_eq!(
+        open_json["recovered"]["snapshot_id"].as_str(),
+        Some(snapshot_id)
+    );
+    assert_eq!(open_json["name"].as_str(), Some("Recovered copy"));
+    assert_eq!(
+        open_json["verification"]["included_untracked"][0].as_str(),
+        Some("notes.md")
+    );
+    handle.join().unwrap();
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn manifest_check_supports_json() {
     let output = devrelay()

@@ -534,7 +534,7 @@ Conventions:
 - [x] Route `status` through agent.
 - [x] Route project commands through agent.
 - [x] Route checkpoint through agent.
-- [ ] Route recover through agent.
+- [x] Route recover through agent.
 - [ ] Route apply through agent.
 - [ ] Preserve CLI JSON output compatibility.
 - [ ] Add fallback message when agent is unavailable.
