@@ -837,6 +837,79 @@ large_file_threshold_mib = 1
     }
 
     #[test]
+    fn snapshot_hard_blocks_default_secret_classes() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::create_dir_all(source_path.join(".ssh")).unwrap();
+        fs::write(source_path.join("safe.txt"), "carry me\n").unwrap();
+        fs::write(source_path.join(".env"), "DATABASE_URL=secret\n").unwrap();
+        fs::write(source_path.join(".ssh/id_ed25519"), "ssh-secret\n").unwrap();
+        fs::write(
+            source_path.join("private-note.txt"),
+            "-----BEGIN PRIVATE KEY-----\nsecret\n",
+        )
+        .unwrap();
+        fs::write(
+            source_path.join("token.txt"),
+            format!("api_key=github_pat_{}\n", "a".repeat(32)),
+        )
+        .unwrap();
+
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+
+        assert_eq!(snapshot.included_untracked, vec!["safe.txt"]);
+        for (path, reason) in [
+            (".env", crate::classification_reason::SECRET_FILENAME),
+            (
+                ".ssh/id_ed25519",
+                crate::classification_reason::SSH_CREDENTIAL_PATH,
+            ),
+            (
+                "private-note.txt",
+                crate::classification_reason::PRIVATE_KEY_CONTENT,
+            ),
+            (
+                "token.txt",
+                crate::classification_reason::TOKEN_PATTERN_CONTENT,
+            ),
+        ] {
+            assert!(
+                snapshot
+                    .excluded
+                    .iter()
+                    .any(|item| item.path == path && item.reason == reason),
+                "missing exclusion for {path} ({reason})"
+            );
+        }
+        let work_tree_paths = source
+            .run(&["ls-tree", "-r", "--name-only", &snapshot.work_tree_oid])
+            .unwrap();
+        assert!(work_tree_paths.contains("safe.txt"));
+        assert!(!work_tree_paths.contains(".env"));
+        assert!(!work_tree_paths.contains(".ssh/id_ed25519"));
+        assert!(!work_tree_paths.contains("private-note.txt"));
+        assert!(!work_tree_paths.contains("token.txt"));
+
+        clone_repo(&source_path, &target_path);
+        let target = GitRepo::new(&target_path);
+        apply_snapshot(&target, &source, &snapshot).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(target_path.join("safe.txt")).unwrap(),
+            "carry me\n"
+        );
+        for path in [".env", ".ssh/id_ed25519", "private-note.txt", "token.txt"] {
+            assert!(
+                !target_path.join(path).exists(),
+                "{path} should stay excluded"
+            );
+        }
+    }
+
+    #[test]
     fn snapshot_with_sidecars_captures_large_untracked_file_in_cas() {
         let temp = tempfile::tempdir().unwrap();
         let repo_path = temp.path().join("repo");

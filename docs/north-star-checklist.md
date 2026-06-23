@@ -1836,7 +1836,7 @@ Conventions:
 - [x] Revocation blocks new access and lease operations.
 - [ ] Diagnostic export excludes source/snapshot by default.
 - [ ] Fault injection produces zero data loss in supported states.
-- [ ] Secret hard-block regression count is zero.
+- [x] Secret hard-block regression count is zero.
 
 ## M14. Beta Product Loop
 
