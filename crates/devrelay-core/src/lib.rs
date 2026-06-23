@@ -173,8 +173,9 @@ pub use session::{
     SESSION_ID_PREFIX, SessionState, StoredSession, generate_session_id, unix_now_seconds,
 };
 pub use snapshot::{
-    ApplyPlan, VerificationDetails, apply_snapshot, create_snapshot, plan_apply_snapshot,
-    read_snapshot_file, verify_snapshot, write_snapshot_file,
+    ApplyPlan, SnapshotApplyFaultPoint, VerificationDetails, apply_snapshot,
+    apply_snapshot_with_fault_injection, create_snapshot, plan_apply_snapshot, read_snapshot_file,
+    verify_snapshot, write_snapshot_file,
 };
 pub use snapshot_schema::SnapshotMetadata;
 pub use snapshot_store::{SnapshotStore, SnapshotStoreFaultPoint, StoredSnapshot};

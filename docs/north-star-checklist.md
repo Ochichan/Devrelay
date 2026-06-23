@@ -1820,11 +1820,11 @@ Conventions:
 - [x] Inject crash during ref update.
 - [ ] Inject network cut during publish.
 - [x] Inject crash during metadata transaction.
-- [ ] Inject crash during target fetch.
-- [ ] Inject crash during base apply.
-- [ ] Inject crash during work apply.
-- [ ] Inject crash during index apply.
-- [ ] Inject crash during verification.
+- [x] Inject crash during target fetch.
+- [x] Inject crash during base apply.
+- [x] Inject crash during work apply.
+- [x] Inject crash during index apply.
+- [x] Inject crash during verification.
 - [ ] Inject crash during lease commit.
 - [ ] Inject disk-full during CAS upload.
 - [ ] Inject disk-full during target apply.

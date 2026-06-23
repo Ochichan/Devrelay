@@ -41,6 +41,27 @@ pub struct VerificationDetails {
     pub excluded_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotApplyFaultPoint {
+    AfterTargetFetch,
+    AfterBaseApply,
+    AfterWorkApply,
+    AfterIndexApply,
+    DuringVerification,
+}
+
+impl SnapshotApplyFaultPoint {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AfterTargetFetch => "after-target-fetch",
+            Self::AfterBaseApply => "after-base-apply",
+            Self::AfterWorkApply => "after-work-apply",
+            Self::AfterIndexApply => "after-index-apply",
+            Self::DuringVerification => "during-verification",
+        }
+    }
+}
+
 pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMetadata> {
     let status = repo.status()?;
     ensure_checkpoint_supported(repo, &status)?;
@@ -141,12 +162,31 @@ pub fn apply_snapshot(
     source: &GitRepo,
     snapshot: &SnapshotMetadata,
 ) -> Result<VerificationDetails> {
+    apply_snapshot_inner(target, source, snapshot, None)
+}
+
+pub fn apply_snapshot_with_fault_injection(
+    target: &GitRepo,
+    source: &GitRepo,
+    snapshot: &SnapshotMetadata,
+    fault: SnapshotApplyFaultPoint,
+) -> Result<VerificationDetails> {
+    apply_snapshot_inner(target, source, snapshot, Some(fault))
+}
+
+fn apply_snapshot_inner(
+    target: &GitRepo,
+    source: &GitRepo,
+    snapshot: &SnapshotMetadata,
+    fault: Option<SnapshotApplyFaultPoint>,
+) -> Result<VerificationDetails> {
     plan_apply_snapshot(target, source, snapshot)?;
     let target_platform_key = current_platform_key();
     ensure_no_reparse_points_before_materialization(target)?;
     ensure_snapshot_paths_supported(source, snapshot, &target_platform_key)?;
     ensure_snapshot_materialization_supported(source, snapshot, &target_platform_key)?;
     fetch_snapshot_refs(target, source, snapshot)?;
+    inject_apply_fault(fault, SnapshotApplyFaultPoint::AfterTargetFetch)?;
 
     if let Some(branch) = &snapshot.branch {
         target.run(&["checkout", "-B", branch, &snapshot.head_oid])?;
@@ -154,8 +194,12 @@ pub fn apply_snapshot(
         target.run(&["checkout", "--detach", &snapshot.head_oid])?;
     }
     target.run(&["reset", "--hard", &snapshot.head_oid])?;
+    inject_apply_fault(fault, SnapshotApplyFaultPoint::AfterBaseApply)?;
     target.run(&["read-tree", "--reset", "-u", &snapshot.work_commit_oid])?;
+    inject_apply_fault(fault, SnapshotApplyFaultPoint::AfterWorkApply)?;
     target.run(&["read-tree", "--reset", &snapshot.index_commit_oid])?;
+    inject_apply_fault(fault, SnapshotApplyFaultPoint::AfterIndexApply)?;
+    inject_apply_fault(fault, SnapshotApplyFaultPoint::DuringVerification)?;
     verify_snapshot(target, snapshot)
 }
 
@@ -248,6 +292,19 @@ fn fetch_snapshot_refs(
             &[],
         )
         .map_err(|err| DevRelayError::MissingSourceObject(err.to_string()))?;
+    Ok(())
+}
+
+fn inject_apply_fault(
+    configured: Option<SnapshotApplyFaultPoint>,
+    fault: SnapshotApplyFaultPoint,
+) -> Result<()> {
+    if configured == Some(fault) {
+        return Err(DevRelayError::Config(format!(
+            "injected apply fault at {}",
+            fault.as_str()
+        )));
+    }
     Ok(())
 }
 
@@ -608,6 +665,19 @@ portable_paths = "strict"
         repo.run(&["commit", "-m", "base"]).unwrap();
     }
 
+    fn clone_repo(source_path: &Path, target_path: &Path) {
+        GitRepo::new(source_path)
+            .run_with_env(
+                [
+                    OsString::from("clone"),
+                    source_path.as_os_str().to_os_string(),
+                    target_path.as_os_str().to_os_string(),
+                ],
+                &[],
+            )
+            .unwrap();
+    }
+
     #[test]
     fn creates_and_applies_snapshot_round_trip() {
         let temp = tempfile::tempdir().unwrap();
@@ -828,6 +898,79 @@ portable_paths = "strict"
         assert_eq!(plan.snapshot_id, snapshot.snapshot_id);
         assert_eq!(target.run(&["rev-parse", "HEAD"]).unwrap(), before_head);
         assert_eq!(target.status().unwrap(), before_status);
+    }
+
+    #[test]
+    fn apply_fault_injection_preserves_source_and_snapshot_refs() {
+        for (fault, label) in [
+            (
+                SnapshotApplyFaultPoint::AfterTargetFetch,
+                "after-target-fetch",
+            ),
+            (SnapshotApplyFaultPoint::AfterBaseApply, "after-base-apply"),
+            (SnapshotApplyFaultPoint::AfterWorkApply, "after-work-apply"),
+            (
+                SnapshotApplyFaultPoint::AfterIndexApply,
+                "after-index-apply",
+            ),
+            (
+                SnapshotApplyFaultPoint::DuringVerification,
+                "during-verification",
+            ),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let source_path = temp.path().join("source");
+            let target_path = temp.path().join("target");
+            let source = init_repo(&source_path);
+            commit_base(&source, &source_path);
+            fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+            fs::write(source_path.join("notes.md"), "carry me\n").unwrap();
+            let snapshot = create_snapshot(&source, &manifest()).unwrap();
+            clone_repo(&source_path, &target_path);
+            let target = GitRepo::new(&target_path);
+            let before_head = target.run(&["rev-parse", "HEAD"]).unwrap();
+            let before_status = target.status().unwrap();
+
+            let err = apply_snapshot_with_fault_injection(&target, &source, &snapshot, fault)
+                .unwrap_err();
+
+            assert!(
+                err.to_string()
+                    .contains(&format!("injected apply fault at {label}")),
+                "{fault:?} returned {err}"
+            );
+            assert_eq!(
+                fs::read_to_string(source_path.join("tracked.txt")).unwrap(),
+                "changed\n"
+            );
+            assert_eq!(
+                fs::read_to_string(source_path.join("notes.md")).unwrap(),
+                "carry me\n"
+            );
+            for git_ref in [snapshot.index_ref(), snapshot.work_ref()] {
+                assert!(
+                    source.run(&["rev-parse", "--verify", &git_ref]).is_ok(),
+                    "source ref {git_ref} should remain available after {fault:?}"
+                );
+                assert!(
+                    target.run(&["rev-parse", "--verify", &git_ref]).is_ok(),
+                    "target ref {git_ref} should be fetched before {fault:?}"
+                );
+            }
+
+            if fault == SnapshotApplyFaultPoint::AfterTargetFetch {
+                assert_eq!(target.run(&["rev-parse", "HEAD"]).unwrap(), before_head);
+                assert_eq!(target.status().unwrap(), before_status);
+                assert!(!target_path.join("notes.md").exists());
+            }
+            if matches!(
+                fault,
+                SnapshotApplyFaultPoint::AfterIndexApply
+                    | SnapshotApplyFaultPoint::DuringVerification
+            ) {
+                verify_snapshot(&target, &snapshot).unwrap();
+            }
+        }
     }
 
     #[test]
