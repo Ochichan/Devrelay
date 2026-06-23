@@ -403,6 +403,155 @@ fn project_commands_use_agent_rpc_by_default() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn checkpoint_uses_agent_rpc_by_default_and_writes_out_file() {
+    use devrelay_core::{
+        IpcConnection, IpcLimits, IpcTransport, METHOD_CHECKPOINT_CREATE, RpcRequest, RpcResponse,
+        UnixIpcListener,
+    };
+    use serde_json::json;
+
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-checkpoint-agent-test-{}-{}",
+        std::process::id(),
+        "repo"
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+    init_git_repo(&root);
+    write_manifest(
+        &root,
+        "agent-checkpoint-project",
+        "Agent Checkpoint Project",
+    );
+    git(&root, &["add", "devrelay.toml"]);
+    git(&root, &["commit", "-m", "manifest"]);
+
+    let manifest = root.join("devrelay.toml");
+    let socket = root.join("agent.sock");
+    let out = root.join("agent-snapshot.json");
+    let snapshot_repo = root.join("snapshots.git");
+    let metadata = json!({
+        "schema_version": 1,
+        "snapshot_id": "s1_0123456789abcdef01234567",
+        "project_id": "agent-checkpoint-project",
+        "project_name": "Agent Checkpoint Project",
+        "session_id": null,
+        "parent_snapshot_id": null,
+        "source_device_id": null,
+        "branch": "main",
+        "head_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "index_tree_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "index_commit_oid": "cccccccccccccccccccccccccccccccccccccccc",
+        "work_tree_oid": "dddddddddddddddddddddddddddddddddddddddd",
+        "work_commit_oid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "source_status": {
+            "staged": 0,
+            "unstaged": 1,
+            "untracked": 1,
+            "ignored": 0,
+            "unmerged": 0
+        },
+        "included_untracked": ["notes.md"],
+        "excluded": [],
+        "state_hash": "agent-state-hash",
+        "created_at_unix_seconds": 1234567890_u64
+    });
+    let checkpoint = json!({
+        "snapshot_id": "s1_0123456789abcdef01234567",
+        "project_id": "agent-checkpoint-project",
+        "session_id": null,
+        "parent_snapshot_id": null,
+        "sequence_number": 7,
+        "pinned": true,
+        "label": "agent checkpoint",
+        "metadata": metadata,
+        "created_at_unix_seconds": 1234567890_u64
+    });
+
+    let listener = UnixIpcListener::bind(&socket).unwrap();
+    let expected_repo = root.to_str().unwrap().to_string();
+    let expected_manifest = manifest.to_str().unwrap().to_string();
+    let expected_snapshot_repo = snapshot_repo.to_str().unwrap().to_string();
+    let handle = std::thread::spawn(move || {
+        let mut connection = listener.accept().unwrap();
+        let request_bytes = connection.read_message(IpcLimits::default()).unwrap();
+        let request = RpcRequest::parse(&request_bytes).unwrap();
+        assert_eq!(request.method, METHOD_CHECKPOINT_CREATE);
+        assert_eq!(
+            request.params["repo"].as_str(),
+            Some(expected_repo.as_str())
+        );
+        assert_eq!(
+            request.params["manifest"].as_str(),
+            Some(expected_manifest.as_str())
+        );
+        assert_eq!(request.params["label"].as_str(), Some("agent checkpoint"));
+        assert_eq!(request.params["pin"].as_bool(), Some(true));
+        let response = RpcResponse::success(
+            request.required_id().unwrap(),
+            json!({
+                "checkpoint": checkpoint,
+                "snapshot_repo": expected_snapshot_repo
+            }),
+        );
+        connection
+            .write_message(
+                &serde_json::to_vec(&response).unwrap(),
+                IpcLimits::default(),
+            )
+            .unwrap();
+    });
+
+    let output = devrelay()
+        .args([
+            "--agent-socket",
+            socket.to_str().unwrap(),
+            "checkpoint",
+            "--repo",
+            root.to_str().unwrap(),
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--label",
+            "agent checkpoint",
+            "--pin",
+            "--out",
+            out.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        stdout["checkpoint"]["snapshot_id"].as_str(),
+        Some("s1_0123456789abcdef01234567")
+    );
+    assert_eq!(stdout["checkpoint"]["sequence_number"].as_i64(), Some(7));
+    assert_eq!(
+        stdout["snapshot_file"].as_str(),
+        Some(out.to_str().unwrap())
+    );
+    assert_eq!(
+        stdout["snapshot_repo"].as_str(),
+        Some(snapshot_repo.to_str().unwrap())
+    );
+    let written: serde_json::Value = serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
+    assert_eq!(
+        written["snapshot_id"].as_str(),
+        Some("s1_0123456789abcdef01234567")
+    );
+    handle.join().unwrap();
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn manifest_check_supports_json() {
     let output = devrelay()
@@ -800,6 +949,7 @@ fn checkpoint_persists_snapshot_store_and_exports_json() {
     let checkpoint = devrelay()
         .env("DEVRELAY_HOME", &home)
         .args([
+            "--direct",
             "checkpoint",
             "--repo",
             root.to_str().unwrap(),
@@ -952,6 +1102,7 @@ fn recover_list_show_and_open_restores_snapshot_without_touching_source() {
     let checkpoint = devrelay()
         .env("DEVRELAY_HOME", &home)
         .args([
+            "--direct",
             "checkpoint",
             "--repo",
             root.to_str().unwrap(),
@@ -1178,6 +1329,7 @@ fn recover_open_refuses_dirty_target() {
     let checkpoint = devrelay()
         .env("DEVRELAY_HOME", &home)
         .args([
+            "--direct",
             "checkpoint",
             "--repo",
             root.to_str().unwrap(),
@@ -1300,6 +1452,7 @@ fn apply_dirty_policy_snapshots_backup_and_can_use_new_workspace() {
     let checkpoint = devrelay()
         .env("DEVRELAY_HOME", &home)
         .args([
+            "--direct",
             "checkpoint",
             "--repo",
             source.to_str().unwrap(),

@@ -9,14 +9,15 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(unix)]
 use devrelay_core::AgentRpcClient;
 use devrelay_core::{
-    DevRelayError, DevRelayHome, ErrorInfo, GitRepo, LocalConfig, METHOD_PROJECTS_ADD,
-    METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_STATUS_GET,
-    Manifest, PathDecision, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
-    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
-    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
-    StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
-    apply_snapshot, classify_untracked_paths, create_snapshot, plan_apply_snapshot,
-    read_snapshot_file, workspace_id_for, write_snapshot_file,
+    CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome, ErrorInfo,
+    GitRepo, LocalConfig, METHOD_CHECKPOINT_CREATE, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_STATUS_GET, Manifest, PathDecision,
+    PatternConfig, PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
+    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, SnapshotMetadata, SnapshotStore,
+    StatusGetParams, StatusGetResult, StatusSummary, StoredSnapshot, UntrackedPolicy,
+    WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
+    classify_untracked_paths, create_snapshot, plan_apply_snapshot, read_snapshot_file,
+    workspace_id_for, write_snapshot_file,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -666,46 +667,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             label,
             pin,
             json,
-        } => {
-            let manifest = Manifest::load(&manifest)
-                .with_context(|| format!("failed to load {}", manifest.display()))?;
-            let repo = GitRepo::new(repo);
-            let home = DevRelayHome::resolve()?;
-            home.create_base_dirs()?;
-            let mut store = SnapshotStore::open(&home, &manifest.project_id)?;
-            let stored = store.checkpoint(&repo, &manifest, pin, label)?;
-            if let Some(out) = &out {
-                write_snapshot_file(out, &stored.metadata)?;
-            }
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "checkpoint": stored,
-                        "snapshot_file": out,
-                        "snapshot_repo": store.snapshot_repo_path(),
-                    }))?
-                );
-            } else {
-                println!("checkpoint: {}", stored.snapshot_id);
-                println!("  sequence: {}", stored.sequence_number);
-                println!("  pinned: {}", stored.pinned);
-                if let Some(label) = &stored.label {
-                    println!("  label: {label}");
-                }
-                println!("  head: {}", stored.metadata.head_oid);
-                println!("  index: {}", stored.metadata.index_tree_oid);
-                println!("  work: {}", stored.metadata.work_tree_oid);
-                println!(
-                    "  included untracked: {}",
-                    stored.metadata.included_untracked.len()
-                );
-                println!("  snapshot repo: {}", store.snapshot_repo_path().display());
-                if let Some(out) = &out {
-                    println!("  snapshot file: {}", out.display());
-                }
-            }
-        }
+        } => handle_checkpoint(repo, manifest, out, label, pin, json, &agent_options)?,
         Command::Apply {
             repo,
             source,
@@ -1037,6 +999,101 @@ fn render_projects_list(projects: &[ProjectRegistryEntry], json: bool) -> anyhow
             println!("{} ({})", project.display_name, project.project_id);
             println!("  path: {}", project.local_path.display());
             println!("  workspaces: {}", project.workspaces.len());
+        }
+    }
+    Ok(())
+}
+
+fn handle_checkpoint(
+    repo: PathBuf,
+    manifest: PathBuf,
+    out: Option<PathBuf>,
+    label: Option<String>,
+    pin: bool,
+    json: bool,
+    agent_options: &AgentOptions,
+) -> anyhow::Result<()> {
+    let result = if agent_options.direct {
+        checkpoint_direct(repo, manifest, label, pin)?
+    } else {
+        checkpoint_via_agent(agent_options, repo, manifest, label, pin)?
+    };
+    if let Some(out) = &out {
+        write_snapshot_file(out, &result.checkpoint.metadata)?;
+    }
+    render_checkpoint(&result, out.as_ref(), json)
+}
+
+fn checkpoint_direct(
+    repo: PathBuf,
+    manifest: PathBuf,
+    label: Option<String>,
+    pin: bool,
+) -> anyhow::Result<CheckpointCreateResult> {
+    let manifest = Manifest::load(&manifest)
+        .with_context(|| format!("failed to load {}", manifest.display()))?;
+    let repo = GitRepo::new(repo);
+    let home = DevRelayHome::resolve()?;
+    home.create_base_dirs()?;
+    let mut store = SnapshotStore::open(&home, &manifest.project_id)?;
+    let checkpoint = store.checkpoint(&repo, &manifest, pin, label)?;
+    Ok(CheckpointCreateResult {
+        checkpoint,
+        snapshot_repo: store.snapshot_repo_path().to_path_buf(),
+    })
+}
+
+fn checkpoint_via_agent(
+    agent_options: &AgentOptions,
+    repo: PathBuf,
+    manifest: PathBuf,
+    label: Option<String>,
+    pin: bool,
+) -> anyhow::Result<CheckpointCreateResult> {
+    call_agent(
+        agent_options,
+        METHOD_CHECKPOINT_CREATE,
+        CheckpointCreateParams {
+            repo: absolute_cli_path(repo)?,
+            manifest: Some(absolute_cli_path(manifest)?),
+            label,
+            pin,
+        },
+    )
+}
+
+fn render_checkpoint(
+    result: &CheckpointCreateResult,
+    out: Option<&PathBuf>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let stored = &result.checkpoint;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "checkpoint": stored,
+                "snapshot_file": out,
+                "snapshot_repo": result.snapshot_repo,
+            }))?
+        );
+    } else {
+        println!("checkpoint: {}", stored.snapshot_id);
+        println!("  sequence: {}", stored.sequence_number);
+        println!("  pinned: {}", stored.pinned);
+        if let Some(label) = &stored.label {
+            println!("  label: {label}");
+        }
+        println!("  head: {}", stored.metadata.head_oid);
+        println!("  index: {}", stored.metadata.index_tree_oid);
+        println!("  work: {}", stored.metadata.work_tree_oid);
+        println!(
+            "  included untracked: {}",
+            stored.metadata.included_untracked.len()
+        );
+        println!("  snapshot repo: {}", result.snapshot_repo.display());
+        if let Some(out) = out {
+            println!("  snapshot file: {}", out.display());
         }
     }
     Ok(())

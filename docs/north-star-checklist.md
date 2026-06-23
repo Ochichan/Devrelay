@@ -533,7 +533,7 @@ Conventions:
 - [x] Add CLI global `--agent-socket`.
 - [x] Route `status` through agent.
 - [x] Route project commands through agent.
-- [ ] Route checkpoint through agent.
+- [x] Route checkpoint through agent.
 - [ ] Route recover through agent.
 - [ ] Route apply through agent.
 - [ ] Preserve CLI JSON output compatibility.
