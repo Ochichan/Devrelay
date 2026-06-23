@@ -343,6 +343,56 @@ portable_paths = "strict"
 }
 
 #[test]
+fn doctor_line_endings_reports_missing_policy_and_target_risk() {
+    let repo = std::env::temp_dir().join(format!(
+        "devrelay-doctor-line-endings-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+
+    let output = devrelay()
+        .args([
+            "doctor",
+            "line-endings",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--target-platform",
+            "windows-native-x86_64",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["target_platform_key"], "windows-native-x86_64");
+    assert_eq!(value["gitattributes_present"], false);
+    assert!(
+        value["tracked_file_count"].as_u64().unwrap() >= 1,
+        "tracked_file_count should include README.md"
+    );
+    let warnings = value["warnings"].as_array().unwrap();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| { warning["code"] == "missing-gitattributes-policy" })
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| { warning["code"] == "risky-target-line-ending-config" })
+    );
+
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[test]
 fn audit_list_and_export_redact_by_default() {
     use devrelay_core::{AuditEventInput, AuditEventType, AuditOutcome, DevRelayHome, MetadataDb};
 

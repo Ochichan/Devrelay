@@ -1616,12 +1616,12 @@ Conventions:
 
 ### M11.3 Line Endings
 
-- [ ] Read `.gitattributes`.
-- [ ] Detect missing policy.
-- [ ] Detect conflicting `core.autocrlf`.
-- [ ] Verify by Git semantic hash.
-- [ ] Add warning for risky target config.
-- [ ] Add line-ending tests.
+- [x] Read `.gitattributes`.
+- [x] Detect missing policy.
+- [x] Detect conflicting `core.autocrlf`.
+- [x] Verify by Git semantic hash.
+- [x] Add warning for risky target config.
+- [x] Add line-ending tests.
 
 ### M11.4 Executable Bit
 

@@ -47,6 +47,7 @@ mod home;
 mod identity;
 mod ipc;
 mod lease;
+mod line_ending_doctor;
 mod logging;
 pub mod manifest;
 mod pairing;
@@ -103,6 +104,10 @@ pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 #[cfg(unix)]
 pub use ipc::{UnixIpcConnection, UnixIpcListener};
 pub use lease::{LeaseRecord, LeaseState};
+pub use line_ending_doctor::{
+    LineEndingDoctorReport, LineEndingHashMismatch, LineEndingWarning, LineEndingWarningCode,
+    run_line_ending_doctor,
+};
 pub use logging::{
     LogRedactor, LogRotation, StructuredLogFile, StructuredLogFormat, StructuredLogLevel,
     StructuredLogRecord,

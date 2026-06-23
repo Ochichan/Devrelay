@@ -14,12 +14,12 @@ use devrelay_core::{
     DevRelayError, DevRelayHome, DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord,
     DiagnosticsExportParams, DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole,
     DiscoveryService, ErrorInfo, FabricIdentityBundle, FabricIdentityStore,
-    GitPerformanceDoctorReport, GitRepo, LocalConfig, LogRedactor, METHOD_APPLY_SNAPSHOT,
-    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
-    METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, MetadataDb, PairingSession,
-    PairingStartRequest, PathDecision, PathPortabilityDoctorReport, PatternConfig,
-    PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
+    GitPerformanceDoctorReport, GitRepo, LineEndingDoctorReport, LocalConfig, LogRedactor,
+    METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
+    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
+    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
+    MetadataDb, PairingSession, PairingStartRequest, PathDecision, PathPortabilityDoctorReport,
+    PatternConfig, PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
     ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RecoverListParams,
     RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
     ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore,
@@ -27,8 +27,8 @@ use devrelay_core::{
     UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
     build_discovery_advertisement, classify_untracked_paths, create_snapshot, current_platform_key,
     linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
-    read_snapshot_file, run_git_performance_doctor, run_path_portability_doctor, workspace_id_for,
-    write_snapshot_file,
+    read_snapshot_file, run_git_performance_doctor, run_line_ending_doctor,
+    run_path_portability_doctor, workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -277,6 +277,14 @@ enum DoctorCommand {
         repo: PathBuf,
         #[arg(long, default_value = "devrelay.toml")]
         manifest: PathBuf,
+        #[arg(long)]
+        target_platform: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    LineEndings {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
         #[arg(long)]
         target_platform: Option<String>,
         #[arg(long)]
@@ -1393,6 +1401,16 @@ fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
                 run_path_portability_doctor(&GitRepo::new(repo_root), &manifest, &target_platform)?;
             render_path_portability_doctor(&report, json)
         }
+        DoctorCommand::LineEndings {
+            repo,
+            target_platform,
+            json,
+        } => {
+            let repo = GitRepo::new(resolve_git_root(&repo)?);
+            let target_platform = target_platform.unwrap_or_else(current_platform_key);
+            let report = run_line_ending_doctor(&repo, &target_platform)?;
+            render_line_ending_doctor(&report, json)
+        }
     }
 }
 
@@ -1453,6 +1471,48 @@ fn render_path_portability_doctor(
                 println!("  - {:?}: {}", issue.code, issue.path);
                 println!("    {}", issue.message);
                 for action in &issue.safe_actions {
+                    println!("    action: {action}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn render_line_ending_doctor(report: &LineEndingDoctorReport, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!("line ending doctor: {}", report.repo.display());
+        println!("  target: {}", report.target_platform_key);
+        println!(
+            "  .gitattributes: {}",
+            if report.gitattributes_present {
+                report.gitattributes_path.display().to_string()
+            } else {
+                "<missing>".to_string()
+            }
+        );
+        println!(
+            "  policy lines: {}",
+            report.gitattributes_policy_lines.len()
+        );
+        println!(
+            "  core.autocrlf: {}",
+            report.core_autocrlf.as_deref().unwrap_or("<unset>")
+        );
+        println!("  tracked files checked: {}", report.tracked_file_count);
+        println!(
+            "  semantic hash mismatches: {}",
+            report.semantic_hash_mismatches.len()
+        );
+        if report.warnings.is_empty() {
+            println!("  warnings: none");
+        } else {
+            println!("  warnings: {}", report.warnings.len());
+            for warning in &report.warnings {
+                println!("  - {:?}: {}", warning.code, warning.message);
+                for action in &warning.safe_actions {
                     println!("    action: {action}");
                 }
             }
