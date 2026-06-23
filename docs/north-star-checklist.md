@@ -1819,7 +1819,7 @@ Conventions:
 - [x] Inject crash during snapshot object write.
 - [x] Inject crash during ref update.
 - [ ] Inject network cut during publish.
-- [ ] Inject crash during metadata transaction.
+- [x] Inject crash during metadata transaction.
 - [ ] Inject crash during target fetch.
 - [ ] Inject crash during base apply.
 - [ ] Inject crash during work apply.

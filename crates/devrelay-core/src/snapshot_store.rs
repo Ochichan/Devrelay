@@ -32,6 +32,7 @@ pub struct StoredSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotStoreFaultPoint {
     AfterSnapshotObjectImport,
+    DuringMetadataTransaction,
     AfterSourceIndexRefDelete,
 }
 
@@ -39,6 +40,7 @@ impl SnapshotStoreFaultPoint {
     fn as_str(self) -> &'static str {
         match self {
             Self::AfterSnapshotObjectImport => "after-snapshot-object-import",
+            Self::DuringMetadataTransaction => "during-metadata-transaction",
             Self::AfterSourceIndexRefDelete => "after-source-index-ref-delete",
         }
     }
@@ -218,6 +220,7 @@ WHERE project_id = ?1 AND snapshot_id = ?2
         label: Option<String>,
     ) -> Result<StoredSnapshot> {
         let metadata_json = serde_json::to_string(&metadata)?;
+        let fault = self.fault;
         self.db.transaction(|tx| {
             tx.execute(
                 "INSERT OR IGNORE INTO projects (project_id, display_name) VALUES (?1, ?2)",
@@ -227,6 +230,7 @@ WHERE project_id = ?1 AND snapshot_id = ?2
                 "UPDATE projects SET display_name = ?1 WHERE project_id = ?2",
                 (metadata.project_name.as_str(), metadata.project_id.as_str()),
             )?;
+            inject_fault(fault, SnapshotStoreFaultPoint::DuringMetadataTransaction)?;
             if let Some(session_id) = metadata.session_id.as_deref() {
                 tx.execute(
                     r#"
@@ -304,10 +308,7 @@ LIMIT 1
     }
 
     fn inject_fault(&self, fault: SnapshotStoreFaultPoint) -> Result<()> {
-        if self.fault == Some(fault) {
-            return Err(injected_fault(fault));
-        }
-        Ok(())
+        inject_fault(self.fault, fault)
     }
 }
 
@@ -361,12 +362,18 @@ fn remove_source_snapshot_refs(
     fault: Option<SnapshotStoreFaultPoint>,
 ) -> Result<()> {
     source.run(&["update-ref", "-d", &metadata.index_ref()])?;
-    if fault == Some(SnapshotStoreFaultPoint::AfterSourceIndexRefDelete) {
-        return Err(injected_fault(
-            SnapshotStoreFaultPoint::AfterSourceIndexRefDelete,
-        ));
-    }
+    inject_fault(fault, SnapshotStoreFaultPoint::AfterSourceIndexRefDelete)?;
     source.run(&["update-ref", "-d", &metadata.work_ref()])?;
+    Ok(())
+}
+
+fn inject_fault(
+    configured: Option<SnapshotStoreFaultPoint>,
+    fault: SnapshotStoreFaultPoint,
+) -> Result<()> {
+    if configured == Some(fault) {
+        return Err(injected_fault(fault));
+    }
     Ok(())
 }
 
@@ -504,6 +511,45 @@ portable_paths = "strict"
         assert!(
             imported_refs.contains("refs/devrelay/snapshots/"),
             "expected imported object refs to remain recoverable"
+        );
+    }
+
+    #[test]
+    fn fault_during_metadata_transaction_rolls_back_snapshot_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        let manifest = manifest();
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id)
+            .unwrap()
+            .with_fault_injection(SnapshotStoreFaultPoint::DuringMetadataTransaction);
+
+        let err = store
+            .checkpoint(&source, &manifest, true, Some("fault".to_string()))
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("injected fault at during-metadata-transaction")
+        );
+        assert!(store.list_snapshots().unwrap().is_empty());
+        assert_eq!(
+            fs::read_to_string(source_path.join("tracked.txt")).unwrap(),
+            "changed\n"
+        );
+        let imported_refs = store
+            .snapshot_repo()
+            .run(&[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/devrelay/snapshots",
+            ])
+            .unwrap();
+        assert!(
+            imported_refs.contains("refs/devrelay/snapshots/"),
+            "object refs should remain available for inspection after rollback"
         );
     }
 
