@@ -1366,14 +1366,14 @@ Conventions:
 
 ### M9.4 Dev Container Adapter
 
-- [ ] Detect `.devcontainer/devcontainer.json`.
-- [ ] Detect container engine availability.
-- [ ] Compute devcontainer fingerprint.
-- [ ] Pull/build image with user approval.
-- [ ] Prepare isolated workspace mount.
-- [ ] Run health check.
-- [ ] Capture logs.
-- [ ] Add adapter tests with mocked commands.
+- [x] Detect `.devcontainer/devcontainer.json`.
+- [x] Detect container engine availability.
+- [x] Compute devcontainer fingerprint.
+- [x] Pull/build image with user approval.
+- [x] Prepare isolated workspace mount.
+- [x] Run health check.
+- [x] Capture logs.
+- [x] Add adapter tests with mocked commands.
 
 ### M9.5 Native Bootstrap Adapter
 

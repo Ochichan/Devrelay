@@ -123,13 +123,17 @@ pub use discovery::{
     truncated_fabric_hint,
 };
 pub use environment::{
-    EnvironmentCommand, EnvironmentCommandOutput, EnvironmentCommandRunner,
-    EnvironmentProfileSelection, EnvironmentSelectionContext, NixAdapterReport, NixCacheWarmth,
-    NixDevelopHealthcheck, NixFlakeFiles, NixHealthState, NixPlaceholderPlan,
-    SystemEnvironmentCommandRunner, compute_nix_flake_fingerprint, detect_nix_availability,
-    detect_nix_flake_files, environment_profile_command_scope, estimate_nix_cache_warmth,
-    inspect_nix_environment, nix_lan_binary_cache_plan, nix_store_prefetch_plan,
-    profile_targets_platform, run_nix_develop_healthcheck, select_environment_profile,
+    ContainerEngine, DevContainerAdapterReport, DevContainerHealthState, DevContainerHealthcheck,
+    DevContainerImagePrepare, DevContainerMountPlan, DevContainerPrepareState, EnvironmentCommand,
+    EnvironmentCommandOutput, EnvironmentCommandRunner, EnvironmentProfileSelection,
+    EnvironmentSelectionContext, NixAdapterReport, NixCacheWarmth, NixDevelopHealthcheck,
+    NixFlakeFiles, NixHealthState, NixPlaceholderPlan, SystemEnvironmentCommandRunner,
+    compute_devcontainer_fingerprint, compute_nix_flake_fingerprint, detect_container_engine,
+    detect_devcontainer_config, detect_nix_availability, detect_nix_flake_files,
+    devcontainer_mount_plan, environment_profile_command_scope, estimate_nix_cache_warmth,
+    inspect_devcontainer_environment, inspect_nix_environment, nix_lan_binary_cache_plan,
+    nix_store_prefetch_plan, prepare_devcontainer_image, profile_targets_platform,
+    run_devcontainer_healthcheck, run_nix_develop_healthcheck, select_environment_profile,
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{

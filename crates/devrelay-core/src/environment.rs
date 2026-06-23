@@ -422,6 +422,312 @@ fn join_logs(stdout: &str, stderr: &str) -> String {
         .join("\n")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerEngine {
+    Docker,
+    Podman,
+}
+
+impl ContainerEngine {
+    pub const fn command(self) -> &'static str {
+        match self {
+            Self::Docker => "docker",
+            Self::Podman => "podman",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DevContainerPrepareState {
+    NoConfig,
+    EngineUnavailable,
+    ApprovalRequired,
+    Prepared,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DevContainerHealthState {
+    NotReady,
+    ShellReady,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevContainerMountPlan {
+    pub source: PathBuf,
+    pub target: String,
+    pub read_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevContainerImagePrepare {
+    pub state: DevContainerPrepareState,
+    pub command: Vec<String>,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub logs: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevContainerHealthcheck {
+    pub state: DevContainerHealthState,
+    pub command: Vec<String>,
+    pub shell_ready: bool,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub failure_logs: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevContainerAdapterReport {
+    pub config_path: Option<PathBuf>,
+    pub engine: Option<ContainerEngine>,
+    pub fingerprint: Option<String>,
+    pub mount_plan: Option<DevContainerMountPlan>,
+    pub image_prepare: DevContainerImagePrepare,
+    pub healthcheck: DevContainerHealthcheck,
+}
+
+pub fn inspect_devcontainer_environment(
+    root: &Path,
+    healthcheck: &[String],
+    allow_image_pull_or_build: bool,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<DevContainerAdapterReport> {
+    let config_path = detect_devcontainer_config(root);
+    let engine = detect_container_engine(root, runner)?;
+    let fingerprint = compute_devcontainer_fingerprint(root)?;
+    let mount_plan = config_path.as_ref().map(|_| devcontainer_mount_plan(root));
+    let image_prepare = prepare_devcontainer_image(
+        root,
+        config_path.is_some(),
+        engine,
+        allow_image_pull_or_build,
+        runner,
+    )?;
+    let healthcheck = run_devcontainer_healthcheck(root, healthcheck, image_prepare.state, runner)?;
+    Ok(DevContainerAdapterReport {
+        config_path,
+        engine,
+        fingerprint,
+        mount_plan,
+        image_prepare,
+        healthcheck,
+    })
+}
+
+pub fn detect_devcontainer_config(root: &Path) -> Option<PathBuf> {
+    let relative = PathBuf::from(".devcontainer/devcontainer.json");
+    root.join(&relative).is_file().then_some(relative)
+}
+
+pub fn detect_container_engine(
+    root: &Path,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<Option<ContainerEngine>> {
+    for engine in [ContainerEngine::Docker, ContainerEngine::Podman] {
+        match runner.run(
+            root,
+            &EnvironmentCommand::new(engine.command(), ["--version"]),
+        ) {
+            Ok(output) if output.succeeded() => return Ok(Some(engine)),
+            Ok(_) => {}
+            Err(DevRelayError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(None)
+}
+
+pub fn compute_devcontainer_fingerprint(root: &Path) -> Result<Option<String>> {
+    let files = devcontainer_fingerprint_files(root);
+    if files.is_empty() {
+        return Ok(None);
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"devrelay.devcontainer.v1\0");
+    for relative in files {
+        let bytes = fs::read(root.join(&relative))?;
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update(&[0]);
+        hasher.update(bytes.len().to_string().as_bytes());
+        hasher.update(&[0]);
+        hasher.update(&bytes);
+        hasher.update(&[0]);
+    }
+    Ok(Some(hasher.finalize().to_hex().to_string()))
+}
+
+pub fn devcontainer_mount_plan(root: &Path) -> DevContainerMountPlan {
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("workspace");
+    DevContainerMountPlan {
+        source: root.to_path_buf(),
+        target: format!("/workspaces/{name}"),
+        read_only: false,
+    }
+}
+
+pub fn prepare_devcontainer_image(
+    root: &Path,
+    config_present: bool,
+    engine: Option<ContainerEngine>,
+    allow_image_pull_or_build: bool,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<DevContainerImagePrepare> {
+    let command = devcontainer_up_command(root);
+    if !config_present {
+        return Ok(devcontainer_prepare_terminal(
+            DevContainerPrepareState::NoConfig,
+            command,
+            None,
+            "",
+            "devcontainer.json was not found",
+        ));
+    }
+    if engine.is_none() {
+        return Ok(devcontainer_prepare_terminal(
+            DevContainerPrepareState::EngineUnavailable,
+            command,
+            None,
+            "",
+            "no supported container engine was found",
+        ));
+    }
+    if !allow_image_pull_or_build {
+        return Ok(devcontainer_prepare_terminal(
+            DevContainerPrepareState::ApprovalRequired,
+            command,
+            None,
+            "",
+            "image pull/build requires user approval",
+        ));
+    }
+
+    let output = runner.run(
+        root,
+        &EnvironmentCommand::new("devcontainer", command.clone()),
+    )?;
+    let prepared = output.succeeded();
+    Ok(DevContainerImagePrepare {
+        state: if prepared {
+            DevContainerPrepareState::Prepared
+        } else {
+            DevContainerPrepareState::Failed
+        },
+        command,
+        exit_code: output.status_code,
+        logs: if prepared {
+            String::new()
+        } else {
+            join_logs(&output.stdout, &output.stderr)
+        },
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
+pub fn run_devcontainer_healthcheck(
+    root: &Path,
+    healthcheck: &[String],
+    prepare_state: DevContainerPrepareState,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<DevContainerHealthcheck> {
+    let command = devcontainer_exec_command(root, healthcheck);
+    if prepare_state != DevContainerPrepareState::Prepared {
+        return Ok(DevContainerHealthcheck {
+            state: DevContainerHealthState::NotReady,
+            command,
+            shell_ready: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: "devcontainer image is not prepared".to_string(),
+            failure_logs: "devcontainer image is not prepared".to_string(),
+        });
+    }
+
+    let output = runner.run(
+        root,
+        &EnvironmentCommand::new("devcontainer", command.clone()),
+    )?;
+    let shell_ready = output.succeeded();
+    Ok(DevContainerHealthcheck {
+        state: if shell_ready {
+            DevContainerHealthState::ShellReady
+        } else {
+            DevContainerHealthState::Failed
+        },
+        command,
+        shell_ready,
+        exit_code: output.status_code,
+        failure_logs: if shell_ready {
+            String::new()
+        } else {
+            join_logs(&output.stdout, &output.stderr)
+        },
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
+fn devcontainer_fingerprint_files(root: &Path) -> Vec<PathBuf> {
+    [
+        ".devcontainer/devcontainer.json",
+        ".devcontainer/Dockerfile",
+        ".devcontainer/docker-compose.yml",
+        ".devcontainer/compose.yml",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .filter(|relative| root.join(relative).is_file())
+    .collect()
+}
+
+fn devcontainer_up_command(root: &Path) -> Vec<String> {
+    vec![
+        "up".to_string(),
+        "--workspace-folder".to_string(),
+        root.to_string_lossy().to_string(),
+    ]
+}
+
+fn devcontainer_exec_command(root: &Path, healthcheck: &[String]) -> Vec<String> {
+    let mut command = vec![
+        "exec".to_string(),
+        "--workspace-folder".to_string(),
+        root.to_string_lossy().to_string(),
+    ];
+    if healthcheck.is_empty() {
+        command.push("true".to_string());
+    } else {
+        command.extend(healthcheck.iter().cloned());
+    }
+    command
+}
+
+fn devcontainer_prepare_terminal(
+    state: DevContainerPrepareState,
+    command: Vec<String>,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> DevContainerImagePrepare {
+    DevContainerImagePrepare {
+        state,
+        command,
+        exit_code,
+        stdout: stdout.to_string(),
+        stderr: stderr.to_string(),
+        logs: stderr.to_string(),
+    }
+}
+
 fn kind_available(kind: EnvironmentKind, available_kinds: &BTreeSet<EnvironmentKind>) -> bool {
     kind == EnvironmentKind::Manual || available_kinds.contains(&kind)
 }
@@ -777,5 +1083,185 @@ portable_paths = "strict"
             vec!["develop", "--command", "true"]
         );
         assert_eq!(no_flake.healthcheck.state, NixHealthState::NoFlake);
+    }
+
+    #[test]
+    fn devcontainer_detects_config_and_computes_fingerprint() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_dir = temp.path().join(".devcontainer");
+        fs::create_dir(&config_dir).unwrap();
+        fs::write(
+            config_dir.join("devcontainer.json"),
+            r#"{"name":"demo","image":"ubuntu:24.04"}"#,
+        )
+        .unwrap();
+        fs::write(config_dir.join("Dockerfile"), "FROM ubuntu:24.04\n").unwrap();
+
+        assert_eq!(
+            detect_devcontainer_config(temp.path()),
+            Some(PathBuf::from(".devcontainer/devcontainer.json"))
+        );
+        let first = compute_devcontainer_fingerprint(temp.path())
+            .unwrap()
+            .unwrap();
+        let second = compute_devcontainer_fingerprint(temp.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, second);
+
+        fs::write(config_dir.join("Dockerfile"), "FROM ubuntu:26.04\n").unwrap();
+        let changed = compute_devcontainer_fingerprint(temp.path())
+            .unwrap()
+            .unwrap();
+        assert_ne!(first, changed);
+    }
+
+    #[test]
+    fn devcontainer_detects_container_engine_preference() {
+        let temp = tempfile::tempdir().unwrap();
+        let docker = FakeRunner::default().with_output(
+            "docker",
+            &["--version"],
+            EnvironmentCommandOutput::success("Docker version 26\n"),
+        );
+        assert_eq!(
+            detect_container_engine(temp.path(), &docker).unwrap(),
+            Some(ContainerEngine::Docker)
+        );
+
+        let podman = FakeRunner::default()
+            .with_output(
+                "docker",
+                &["--version"],
+                EnvironmentCommandOutput::failure(127, "docker missing"),
+            )
+            .with_output(
+                "podman",
+                &["--version"],
+                EnvironmentCommandOutput::success("podman version 5\n"),
+            );
+        assert_eq!(
+            detect_container_engine(temp.path(), &podman).unwrap(),
+            Some(ContainerEngine::Podman)
+        );
+    }
+
+    #[test]
+    fn devcontainer_requires_approval_before_image_prepare() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join(".devcontainer")).unwrap();
+        fs::write(
+            temp.path().join(".devcontainer/devcontainer.json"),
+            r#"{"name":"demo","image":"ubuntu:24.04"}"#,
+        )
+        .unwrap();
+        let runner = FakeRunner::default().with_output(
+            "docker",
+            &["--version"],
+            EnvironmentCommandOutput::success("Docker version 26\n"),
+        );
+
+        let report = inspect_devcontainer_environment(
+            temp.path(),
+            &["cargo".to_string(), "check".to_string()],
+            false,
+            &runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            report.image_prepare.state,
+            DevContainerPrepareState::ApprovalRequired
+        );
+        assert_eq!(report.healthcheck.state, DevContainerHealthState::NotReady);
+        assert!(report.mount_plan.is_some());
+    }
+
+    #[test]
+    fn devcontainer_runs_mocked_prepare_and_healthcheck() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join(".devcontainer")).unwrap();
+        fs::write(
+            temp.path().join(".devcontainer/devcontainer.json"),
+            r#"{"name":"demo","image":"ubuntu:24.04"}"#,
+        )
+        .unwrap();
+        let root = temp.path().to_string_lossy().to_string();
+        let runner = FakeRunner::default()
+            .with_output(
+                "docker",
+                &["--version"],
+                EnvironmentCommandOutput::success("Docker version 26\n"),
+            )
+            .with_output(
+                "devcontainer",
+                &["up", "--workspace-folder", &root],
+                EnvironmentCommandOutput::success("container ready\n"),
+            )
+            .with_output(
+                "devcontainer",
+                &["exec", "--workspace-folder", &root, "cargo", "check"],
+                EnvironmentCommandOutput::success("checked\n"),
+            );
+
+        let report = inspect_devcontainer_environment(
+            temp.path(),
+            &["cargo".to_string(), "check".to_string()],
+            true,
+            &runner,
+        )
+        .unwrap();
+
+        assert_eq!(report.engine, Some(ContainerEngine::Docker));
+        assert_eq!(
+            report.image_prepare.state,
+            DevContainerPrepareState::Prepared
+        );
+        assert_eq!(
+            report.healthcheck.state,
+            DevContainerHealthState::ShellReady
+        );
+        assert!(report.healthcheck.shell_ready);
+        assert_eq!(
+            report.mount_plan.as_ref().unwrap().target,
+            format!(
+                "/workspaces/{}",
+                temp.path().file_name().unwrap().to_string_lossy()
+            )
+        );
+    }
+
+    #[test]
+    fn devcontainer_captures_prepare_failure_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join(".devcontainer")).unwrap();
+        fs::write(
+            temp.path().join(".devcontainer/devcontainer.json"),
+            r#"{"name":"demo","image":"ubuntu:24.04"}"#,
+        )
+        .unwrap();
+        let root = temp.path().to_string_lossy().to_string();
+        let runner = FakeRunner::default()
+            .with_output(
+                "docker",
+                &["--version"],
+                EnvironmentCommandOutput::success("Docker version 26\n"),
+            )
+            .with_output(
+                "devcontainer",
+                &["up", "--workspace-folder", &root],
+                EnvironmentCommandOutput {
+                    status_code: Some(1),
+                    stdout: "pulling image\n".to_string(),
+                    stderr: "pull denied\n".to_string(),
+                },
+            );
+
+        let report = inspect_devcontainer_environment(temp.path(), &[], true, &runner).unwrap();
+
+        assert_eq!(report.image_prepare.state, DevContainerPrepareState::Failed);
+        assert!(report.image_prepare.logs.contains("pulling image"));
+        assert!(report.image_prepare.logs.contains("pull denied"));
+        assert_eq!(report.healthcheck.state, DevContainerHealthState::NotReady);
     }
 }
