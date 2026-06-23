@@ -5,7 +5,10 @@
 //! captured state and intentionally excludes non-semantic fields such as
 //! snapshot ID, creation time, project display name, and synthetic commit IDs.
 
-use crate::{ClassifiedPath, DevRelayError, PathDecision, Result, StatusCounts};
+use crate::{
+    ClassifiedPath, DevRelayError, GitOperationKind, OperationCapsule, PathDecision, Result,
+    StatusCounts,
+};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
@@ -28,6 +31,8 @@ pub struct SnapshotMetadata {
     pub work_tree_oid: String,
     pub work_commit_oid: String,
     pub source_status: StatusCounts,
+    #[serde(default)]
+    pub operation_capsule: Option<OperationCapsule>,
     pub included_untracked: Vec<String>,
     pub excluded: Vec<ClassifiedPath>,
     pub state_hash: String,
@@ -101,6 +106,9 @@ pub(crate) fn calculate_state_hash(metadata: &SnapshotMetadata) -> String {
     update_hash_field(&mut hasher, &metadata.head_oid);
     update_hash_field(&mut hasher, &metadata.index_tree_oid);
     update_hash_field(&mut hasher, &metadata.work_tree_oid);
+    if let Some(capsule) = &metadata.operation_capsule {
+        update_operation_capsule_hash(&mut hasher, capsule);
+    }
     for path in &included {
         update_hash_field(&mut hasher, "included");
         update_hash_field(&mut hasher, path);
@@ -111,6 +119,41 @@ pub(crate) fn calculate_state_hash(metadata: &SnapshotMetadata) -> String {
         update_hash_field(&mut hasher, &item.reason);
     }
     hasher.finalize().to_hex().to_string()
+}
+
+fn update_operation_capsule_hash(hasher: &mut blake3::Hasher, capsule: &OperationCapsule) {
+    update_hash_field(hasher, "operation-capsule");
+    update_hash_field(hasher, operation_kind_label(capsule.operation.kind));
+    update_hash_field(hasher, &capsule.operation.current_head_oid);
+    for oid in &capsule.operation.operation_oids {
+        update_hash_field(hasher, "operation-oid");
+        update_hash_field(hasher, oid);
+    }
+    if let Some(oid) = &capsule.operation.original_head_oid {
+        update_hash_field(hasher, "original-head");
+        update_hash_field(hasher, oid);
+    }
+    for entry in &capsule.unmerged_entries {
+        update_hash_field(hasher, "unmerged-entry");
+        update_hash_field(hasher, &entry.path);
+        for stage in &entry.stages {
+            update_hash_field(hasher, "stage");
+            update_hash_field(hasher, &stage.stage.to_string());
+            update_hash_field(hasher, &stage.mode);
+            update_hash_field(hasher, &stage.oid);
+        }
+    }
+}
+
+fn operation_kind_label(kind: GitOperationKind) -> &'static str {
+    match kind {
+        GitOperationKind::Merge => "merge",
+        GitOperationKind::CherryPick => "cherry-pick",
+        GitOperationKind::Revert => "revert",
+        GitOperationKind::RebaseMerge => "rebase-merge",
+        GitOperationKind::RebaseApply => "rebase-apply",
+        GitOperationKind::Sequencer => "sequencer",
+    }
 }
 
 fn decision_order(decision: PathDecision) -> u8 {
@@ -128,6 +171,7 @@ fn update_hash_field(hasher: &mut blake3::Hasher, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{GitOperationMetadata, IndexStageEntry, UnmergedIndexEntry};
 
     fn metadata() -> SnapshotMetadata {
         let mut metadata: SnapshotMetadata =
@@ -146,6 +190,7 @@ mod tests {
         assert_eq!(metadata.session_id, None);
         assert_eq!(metadata.parent_snapshot_id, None);
         assert_eq!(metadata.source_device_id, None);
+        assert_eq!(metadata.operation_capsule, None);
         metadata.validate().expect("fixture should validate");
     }
 
@@ -168,6 +213,7 @@ mod tests {
             "work_tree_oid",
             "work_commit_oid",
             "source_status",
+            "operation_capsule",
             "included_untracked",
             "excluded",
             "state_hash",
@@ -240,5 +286,55 @@ mod tests {
         second.work_tree_oid = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string();
 
         assert_ne!(calculate_state_hash(&first), calculate_state_hash(&second));
+    }
+
+    #[test]
+    fn operation_capsule_round_trips_and_contributes_to_state_hash() {
+        let mut first = metadata();
+        first.operation_capsule = Some(sample_operation_capsule("stage-one"));
+        let mut second = first.clone();
+        second.operation_capsule.as_mut().unwrap().unmerged_entries[0].stages[0].oid =
+            "stage-two".to_string();
+
+        assert_ne!(calculate_state_hash(&first), calculate_state_hash(&second));
+
+        first.state_hash = calculate_state_hash(&first);
+        let encoded = serde_json::to_string(&first).expect("metadata should serialize");
+        let decoded: SnapshotMetadata =
+            serde_json::from_str(&encoded).expect("metadata should deserialize");
+
+        assert_eq!(decoded.operation_capsule, first.operation_capsule);
+        assert!(encoded.contains("\"operation_capsule\""));
+    }
+
+    fn sample_operation_capsule(stage_oid: &str) -> OperationCapsule {
+        OperationCapsule {
+            operation: GitOperationMetadata {
+                kind: GitOperationKind::Merge,
+                current_head_oid: "1111111111111111111111111111111111111111".to_string(),
+                operation_oids: vec!["2222222222222222222222222222222222222222".to_string()],
+                original_head_oid: Some("3333333333333333333333333333333333333333".to_string()),
+            },
+            unmerged_entries: vec![UnmergedIndexEntry {
+                path: "conflict.txt".to_string(),
+                stages: vec![
+                    IndexStageEntry {
+                        stage: 1,
+                        mode: "100644".to_string(),
+                        oid: stage_oid.to_string(),
+                    },
+                    IndexStageEntry {
+                        stage: 2,
+                        mode: "100644".to_string(),
+                        oid: "ours".to_string(),
+                    },
+                    IndexStageEntry {
+                        stage: 3,
+                        mode: "100644".to_string(),
+                        oid: "theirs".to_string(),
+                    },
+                ],
+            }],
+        }
     }
 }

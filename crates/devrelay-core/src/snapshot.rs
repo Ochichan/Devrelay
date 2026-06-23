@@ -93,6 +93,7 @@ pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMe
         work_tree_oid,
         work_commit_oid,
         source_status: status.counts,
+        operation_capsule: None,
         included_untracked,
         excluded,
         state_hash: String::new(),
