@@ -1585,17 +1585,17 @@ Conventions:
 
 ### M11.1 Platform Identity
 
-- [ ] Define platform key format.
-- [ ] Detect Linux GNU x86_64.
-- [ ] Detect Linux aarch64.
-- [ ] Detect Darwin arm64.
-- [ ] Detect Darwin x86_64.
-- [ ] Detect Windows native x86_64.
-- [ ] Detect WSL2 Linux.
-- [ ] Detect WSL distro.
-- [ ] Detect WSL version.
-- [ ] Store platform capabilities.
-- [ ] Add platform detection tests.
+- [x] Define platform key format.
+- [x] Detect Linux GNU x86_64.
+- [x] Detect Linux aarch64.
+- [x] Detect Darwin arm64.
+- [x] Detect Darwin x86_64.
+- [x] Detect Windows native x86_64.
+- [x] Detect WSL2 Linux.
+- [x] Detect WSL distro.
+- [x] Detect WSL version.
+- [x] Store platform capabilities.
+- [x] Add platform detection tests.
 
 ### M11.2 Path Portability Doctor
 

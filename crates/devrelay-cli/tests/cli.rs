@@ -1584,11 +1584,12 @@ fn device_commands_show_generated_local_identity() {
     );
     let devices: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
     let local = devices.as_array().unwrap().first().unwrap();
+    let platform = devrelay_core::detect_platform_identity();
     let device_id = local["device_id"].as_str().unwrap();
     assert!(device_id.starts_with("d_"));
     assert!(!local["display_name"].as_str().unwrap().is_empty());
-    assert_eq!(local["platform_key"], std::env::consts::OS);
-    assert_eq!(local["architecture"], std::env::consts::ARCH);
+    assert_eq!(local["platform_key"], platform.platform_key);
+    assert_eq!(local["architecture"], platform.architecture);
     assert!(
         serde_json::from_str::<serde_json::Value>(local["capabilities_json"].as_str().unwrap())
             .unwrap()

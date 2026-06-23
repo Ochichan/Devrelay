@@ -25,8 +25,9 @@ use devrelay_core::{
     SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
     StoredSession, StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
     WorkspaceState, apply_snapshot, build_discovery_advertisement, classify_untracked_paths,
-    create_snapshot, linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
-    read_snapshot_file, run_git_performance_doctor, workspace_id_for, write_snapshot_file,
+    create_snapshot, current_platform_key, linux_systemd_user_template,
+    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file,
+    run_git_performance_doctor, workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -3476,7 +3477,7 @@ fn head_oid(repo: &GitRepo) -> Option<String> {
 }
 
 fn current_platform_profile() -> String {
-    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+    current_platform_key()
 }
 
 fn workspace_state_label(state: WorkspaceState) -> &'static str {

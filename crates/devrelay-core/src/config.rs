@@ -4,7 +4,10 @@
 //! plus a project registry index. Project manifests remain portable and
 //! repository-owned; this config is machine-local.
 
-use crate::{DevRelayError, Result};
+use crate::{
+    DevRelayError, Result, current_platform_architecture, current_platform_capabilities_json,
+    current_platform_key,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -494,15 +497,15 @@ fn default_device_display_name() -> String {
 }
 
 fn default_platform_key() -> String {
-    std::env::consts::OS.to_string()
+    current_platform_key()
 }
 
 fn default_architecture() -> String {
-    std::env::consts::ARCH.to_string()
+    current_platform_architecture()
 }
 
 fn default_capabilities_json() -> String {
-    r#"{"anchor":true,"local_snapshots":true}"#.to_string()
+    current_platform_capabilities_json()
 }
 
 fn default_mdns_enabled() -> bool {
@@ -543,6 +546,7 @@ mod tests {
     #[test]
     fn default_config_is_valid_and_serializes() {
         let config = LocalConfig::default();
+        let platform = crate::detect_platform_identity();
         config.validate().unwrap();
 
         let encoded = config.to_toml_string().unwrap();
@@ -552,9 +556,12 @@ mod tests {
         assert_eq!(decoded.fabric_name, "Personal Fabric");
         assert_eq!(decoded.device_id, "local-device");
         assert_eq!(decoded.device_name, "this-device");
-        assert_eq!(decoded.platform_key, std::env::consts::OS);
-        assert_eq!(decoded.architecture, std::env::consts::ARCH);
-        assert!(serde_json::from_str::<serde_json::Value>(&decoded.capabilities_json).is_ok());
+        assert_eq!(decoded.platform_key, platform.platform_key);
+        assert_eq!(decoded.architecture, platform.architecture);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&decoded.capabilities_json).unwrap(),
+            serde_json::to_value(platform.capabilities).unwrap()
+        );
         assert_eq!(decoded.paired_at_unix_seconds, None);
         assert_eq!(decoded.last_seen_unix_seconds, 0);
         assert_eq!(decoded.editor.command, "system");
@@ -567,13 +574,14 @@ mod tests {
     #[test]
     fn new_local_config_generates_device_identity() {
         let config = LocalConfig::new_for_local_device();
+        let platform = crate::detect_platform_identity();
         config.validate().unwrap();
 
         assert!(config.device_id.starts_with(DEVICE_ID_PREFIX));
         assert_eq!(config.device_id.len(), DEVICE_ID_PREFIX.len() + 24);
         assert!(!config.device_name.is_empty());
-        assert_eq!(config.platform_key, std::env::consts::OS);
-        assert_eq!(config.architecture, std::env::consts::ARCH);
+        assert_eq!(config.platform_key, platform.platform_key);
+        assert_eq!(config.architecture, platform.architecture);
         assert_eq!(config.paired_at_unix_seconds, None);
         assert!(config.last_seen_unix_seconds > 0);
 

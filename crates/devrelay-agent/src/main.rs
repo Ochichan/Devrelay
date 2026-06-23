@@ -6,7 +6,7 @@ use devrelay_core::{
     METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
     METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
     METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
-    MetadataDb, StructuredLogLevel,
+    MetadataDb, StructuredLogLevel, current_platform_key,
 };
 #[cfg(unix)]
 use devrelay_core::{
@@ -1675,7 +1675,7 @@ fn head_oid(repo: &GitRepo) -> Option<String> {
 
 #[cfg(unix)]
 fn current_platform_profile() -> String {
-    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+    current_platform_key()
 }
 
 #[cfg(unix)]
