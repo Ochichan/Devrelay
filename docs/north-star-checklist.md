@@ -1825,7 +1825,7 @@ Conventions:
 - [x] Inject crash during work apply.
 - [x] Inject crash during index apply.
 - [x] Inject crash during verification.
-- [ ] Inject crash during lease commit.
+- [x] Inject crash during lease commit.
 - [ ] Inject disk-full during CAS upload.
 - [ ] Inject disk-full during target apply.
 - [x] Add zero-data-loss assertions.

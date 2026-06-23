@@ -328,8 +328,22 @@ CREATE INDEX idx_device_revocations_revoked_at
     },
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataDbFaultPoint {
+    DuringLeaseCommit,
+}
+
+impl MetadataDbFaultPoint {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::DuringLeaseCommit => "during-lease-commit",
+        }
+    }
+}
+
 pub struct MetadataDb {
     conn: Connection,
+    fault: Option<MetadataDbFaultPoint>,
 }
 
 pub struct CanonicalPublishRequest<'a> {
@@ -386,9 +400,18 @@ impl MetadataDb {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
-        let mut db = Self { conn };
+        let mut db = Self { conn, fault: None };
         db.run_migrations()?;
         Ok(db)
+    }
+
+    pub fn with_fault_injection(mut self, fault: MetadataDbFaultPoint) -> Self {
+        self.fault = Some(fault);
+        self
+    }
+
+    pub fn set_fault_injection(&mut self, fault: Option<MetadataDbFaultPoint>) {
+        self.fault = fault;
     }
 
     pub fn connection(&self) -> &Connection {
@@ -1977,6 +2000,7 @@ INSERT INTO handoffs (
         observed_source_generation: &str,
         now_unix_seconds: u64,
     ) -> Result<HandoffRecord> {
+        let fault = self.fault;
         let tx = self.conn.transaction()?;
         let handoff = tx
             .query_row(
@@ -2038,6 +2062,7 @@ WHERE lease_id = ?4 AND epoch = ?5 AND handoff_id = ?6
                 "handoff commit lost lease state race".to_string(),
             ));
         }
+        inject_metadata_db_fault(fault, MetadataDbFaultPoint::DuringLeaseCommit)?;
         tx.execute(
             "UPDATE handoffs SET state = ?1, committed_at_unix_seconds = ?2 WHERE handoff_id = ?3",
             (
@@ -2625,6 +2650,19 @@ fn handoff_journal_record_from_row(row: &Row<'_>) -> rusqlite::Result<HandoffJou
         detail_json: row.get(5)?,
         created_at_unix_seconds: row.get::<_, i64>(6)?.max(0) as u64,
     })
+}
+
+fn inject_metadata_db_fault(
+    configured: Option<MetadataDbFaultPoint>,
+    fault: MetadataDbFaultPoint,
+) -> Result<()> {
+    if configured == Some(fault) {
+        return Err(crate::DevRelayError::Config(format!(
+            "injected metadata DB fault at {}",
+            fault.as_str()
+        )));
+    }
+    Ok(())
 }
 
 fn normalize_journal_detail(detail_json: Option<&str>) -> Result<String> {
@@ -3674,6 +3712,65 @@ mod tests {
             lease_audits[0].handoff_id.as_deref(),
             Some(handoff.handoff_id.as_str())
         );
+    }
+
+    #[test]
+    fn handoff_commit_fault_rolls_back_lease_transfer() {
+        let (mut db, _session, lease) = setup_publish_db(12, LeaseState::Active);
+        let handoff = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 60)
+            .unwrap();
+        db.mark_handoff_target_verified(&handoff.handoff_id)
+            .unwrap();
+        db.mark_handoff_source_ready(&handoff.handoff_id).unwrap();
+        db.set_fault_injection(Some(MetadataDbFaultPoint::DuringLeaseCommit));
+
+        let err = db
+            .commit_handoff(
+                &handoff.handoff_id,
+                "gen-1",
+                handoff.expires_at_unix_seconds - 1,
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("injected metadata DB fault at during-lease-commit")
+        );
+        let unchanged = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(unchanged.state, LeaseState::HandoffPending);
+        assert_eq!(unchanged.epoch, 12);
+        assert_eq!(unchanged.holder_device_id.as_deref(), Some("device-a"));
+        assert_eq!(
+            unchanged.handoff_id.as_deref(),
+            Some(handoff.handoff_id.as_str())
+        );
+        assert_eq!(
+            db.get_handoff(&handoff.handoff_id).unwrap().unwrap().state,
+            HandoffState::SourceReady
+        );
+        assert!(
+            !handoff_journal_phases(&db, &handoff.handoff_id)
+                .contains(&HandoffJournalPhase::LeaseCommitted)
+        );
+        assert!(
+            db.list_audit_events(Some("project123"), 100)
+                .unwrap()
+                .iter()
+                .all(|event| event.event_type != AuditEventType::LeaseTransferred)
+        );
+
+        db.set_fault_injection(None);
+        db.commit_handoff(
+            &handoff.handoff_id,
+            "gen-1",
+            handoff.expires_at_unix_seconds - 1,
+        )
+        .unwrap();
+        let committed = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(committed.state, LeaseState::Active);
+        assert_eq!(committed.epoch, 13);
+        assert_eq!(committed.holder_device_id.as_deref(), Some("device-b"));
     }
 
     #[test]

@@ -182,7 +182,7 @@ pub use snapshot_store::{SnapshotStore, SnapshotStoreFaultPoint, StoredSnapshot}
 pub use sparse::{PartialCloneState, SparseCheckoutReport, inspect_sparse_checkout};
 pub use storage::{
     CanonicalPublishRequest, CanonicalPublishResult, InactiveForkPublishRequest,
-    InactiveForkPublishResult, MetadataDb, PairingStartRequest,
+    InactiveForkPublishResult, MetadataDb, MetadataDbFaultPoint, PairingStartRequest,
 };
 pub use submodule::{
     SubmoduleReport, SubmoduleState, SubmoduleStatus, inspect_submodules,
