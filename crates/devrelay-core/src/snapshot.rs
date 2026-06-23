@@ -22,6 +22,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -48,6 +49,7 @@ pub struct VerificationDetails {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotApplyFaultPoint {
     AfterTargetFetch,
+    DuringTargetApplyDiskFull,
     AfterBaseApply,
     AfterWorkApply,
     AfterIndexApply,
@@ -58,6 +60,7 @@ impl SnapshotApplyFaultPoint {
     fn as_str(self) -> &'static str {
         match self {
             Self::AfterTargetFetch => "after-target-fetch",
+            Self::DuringTargetApplyDiskFull => "disk-full-during-target-apply",
             Self::AfterBaseApply => "after-base-apply",
             Self::AfterWorkApply => "after-work-apply",
             Self::AfterIndexApply => "after-index-apply",
@@ -240,6 +243,7 @@ fn apply_snapshot_inner(
     }
     target.run(&["reset", "--hard", &snapshot.head_oid])?;
     inject_apply_fault(fault, SnapshotApplyFaultPoint::AfterBaseApply)?;
+    inject_apply_disk_full_fault(fault, SnapshotApplyFaultPoint::DuringTargetApplyDiskFull)?;
     target.run(&["read-tree", "--reset", "-u", &snapshot.work_commit_oid])?;
     inject_apply_fault(fault, SnapshotApplyFaultPoint::AfterWorkApply)?;
     target.run(&["read-tree", "--reset", &snapshot.index_commit_oid])?;
@@ -349,6 +353,20 @@ fn inject_apply_fault(
             "injected apply fault at {}",
             fault.as_str()
         )));
+    }
+    Ok(())
+}
+
+fn inject_apply_disk_full_fault(
+    configured: Option<SnapshotApplyFaultPoint>,
+    fault: SnapshotApplyFaultPoint,
+) -> Result<()> {
+    if configured == Some(fault) {
+        return Err(io::Error::new(
+            io::ErrorKind::StorageFull,
+            format!("injected apply fault at {}", fault.as_str()),
+        )
+        .into());
     }
     Ok(())
 }
@@ -1335,6 +1353,10 @@ large_file_threshold_mib = 1
                 SnapshotApplyFaultPoint::AfterTargetFetch,
                 "after-target-fetch",
             ),
+            (
+                SnapshotApplyFaultPoint::DuringTargetApplyDiskFull,
+                "disk-full-during-target-apply",
+            ),
             (SnapshotApplyFaultPoint::AfterBaseApply, "after-base-apply"),
             (SnapshotApplyFaultPoint::AfterWorkApply, "after-work-apply"),
             (
@@ -1386,7 +1408,11 @@ large_file_threshold_mib = 1
                 );
             }
 
-            if fault == SnapshotApplyFaultPoint::AfterTargetFetch {
+            if matches!(
+                fault,
+                SnapshotApplyFaultPoint::AfterTargetFetch
+                    | SnapshotApplyFaultPoint::DuringTargetApplyDiskFull
+            ) {
                 assert_eq!(target.run(&["rev-parse", "HEAD"]).unwrap(), before_head);
                 assert_eq!(target.status().unwrap(), before_status);
                 assert!(!target_path.join("notes.md").exists());
@@ -1399,6 +1425,58 @@ large_file_threshold_mib = 1
                 verify_snapshot(&target, &snapshot).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn disk_full_during_target_apply_preserves_clean_target_and_can_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        fs::write(source_path.join("notes.md"), "carry me\n").unwrap();
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+        clone_repo(&source_path, &target_path);
+        let target = GitRepo::new(&target_path);
+        let before_head = target.run(&["rev-parse", "HEAD"]).unwrap();
+        let before_status = target.status().unwrap();
+        let before_tracked = fs::read_to_string(target_path.join("tracked.txt")).unwrap();
+
+        let err = apply_snapshot_with_fault_injection(
+            &target,
+            &source,
+            &snapshot,
+            SnapshotApplyFaultPoint::DuringTargetApplyDiskFull,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            &err,
+            DevRelayError::Io(io_err) if io_err.kind() == io::ErrorKind::StorageFull
+        ));
+        assert!(
+            err.to_string()
+                .contains(SnapshotApplyFaultPoint::DuringTargetApplyDiskFull.as_str())
+        );
+        assert_eq!(target.run(&["rev-parse", "HEAD"]).unwrap(), before_head);
+        assert_eq!(target.status().unwrap(), before_status);
+        assert_eq!(
+            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
+            before_tracked
+        );
+        assert!(!target_path.join("notes.md").exists());
+
+        apply_snapshot(&target, &source, &snapshot).unwrap();
+        verify_snapshot(&target, &snapshot).unwrap();
+        assert_eq!(
+            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
+            "changed\n"
+        );
+        assert_eq!(
+            fs::read_to_string(target_path.join("notes.md")).unwrap(),
+            "carry me\n"
+        );
     }
 
     #[test]

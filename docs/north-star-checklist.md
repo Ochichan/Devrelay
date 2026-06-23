@@ -1827,7 +1827,7 @@ Conventions:
 - [x] Inject crash during verification.
 - [x] Inject crash during lease commit.
 - [x] Inject disk-full during CAS upload.
-- [ ] Inject disk-full during target apply.
+- [x] Inject disk-full during target apply.
 - [x] Add zero-data-loss assertions.
 
 ### M13 Exit Gate
