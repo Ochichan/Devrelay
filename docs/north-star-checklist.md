@@ -542,10 +542,10 @@ Conventions:
 
 ### M2.5 Event Stream
 
-- [ ] Define event envelope.
-- [ ] Add monotonic event sequence.
-- [ ] Add event timestamp.
-- [ ] Add event replay cursor.
+- [x] Define event envelope.
+- [x] Add monotonic event sequence.
+- [x] Add event timestamp.
+- [x] Add event replay cursor.
 - [ ] Add `workspace.state.changed`.
 - [ ] Add `snapshot.local.created`.
 - [ ] Add `snapshot.apply.started`.

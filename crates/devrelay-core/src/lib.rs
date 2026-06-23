@@ -37,6 +37,7 @@
 
 mod config;
 mod error;
+mod events;
 mod git;
 mod home;
 mod ipc;
@@ -54,6 +55,10 @@ pub use config::{
     WorkspaceState, migrate_local_config, workspace_id_for,
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
+pub use events::{
+    EVENT_SCHEMA_VERSION, EventEnvelope, EventReplayCursor, EventSequence, EventSequencer,
+    EventTimestampMillis, EventType,
+};
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
 pub use home::DevRelayHome;
 pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
