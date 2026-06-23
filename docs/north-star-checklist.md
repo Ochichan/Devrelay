@@ -1835,7 +1835,7 @@ Conventions:
 - [ ] Independent security review has no unresolved critical findings.
 - [x] Revocation blocks new access and lease operations.
 - [x] Diagnostic export excludes source/snapshot by default.
-- [ ] Fault injection produces zero data loss in supported states.
+- [x] Fault injection produces zero data loss in supported states.
 - [x] Secret hard-block regression count is zero.
 
 ## M14. Beta Product Loop
