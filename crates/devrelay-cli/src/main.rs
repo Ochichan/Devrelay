@@ -9,17 +9,18 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(unix)]
 use devrelay_core::AgentRpcClient;
 use devrelay_core::{
-    AgentRole, AnchorLayout, AnchorMode, AnchorSnapshotRepo, ApplySnapshotParams,
-    ApplySnapshotResult, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
-    CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome, DeviceIdentity,
-    DevicePublicIdentity, DeviceRevocationRecord, DiagnosticsExportParams, DiagnosticsExportResult,
-    DiscoveryAdvertisement, DiscoveryRole, DiscoveryService, ErrorInfo, FabricIdentityBundle,
-    FabricIdentityStore, GitPerformanceDoctorReport, GitRepo, LineEndingDoctorReport, LocalConfig,
-    LogRedactor, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
-    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
-    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
-    MetadataDb, PairingSession, PairingStartRequest, PathDecision, PathPortabilityDoctorReport,
-    PatternConfig, PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
+    AgentRole, AnchorLayout, AnchorMode, AnchorSnapshotMaintenanceReport, AnchorSnapshotRepo,
+    ApplySnapshotParams, ApplySnapshotResult, AuditEventInput, AuditEventRecord, AuditEventType,
+    AuditOutcome, CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome,
+    DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord, DiagnosticsExportParams,
+    DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole, DiscoveryService, ErrorInfo,
+    FabricIdentityBundle, FabricIdentityStore, GitPerformanceDoctorReport, GitRepo,
+    LineEndingDoctorReport, LocalConfig, LogRedactor, METHOD_APPLY_SNAPSHOT,
+    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
+    METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, MetadataDb, PairingSession,
+    PairingStartRequest, PathDecision, PathPortabilityDoctorReport, PatternConfig,
+    PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
     ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RecoverListParams,
     RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
     SecretScannerConfig, ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind,
@@ -246,6 +247,14 @@ enum AnchorCommand {
         json: bool,
     },
     Status {
+        #[arg(long)]
+        json: bool,
+    },
+    Maintenance {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        gc: bool,
         #[arg(long)]
         json: bool,
     },
@@ -1215,6 +1224,15 @@ struct AnchorStatusOutput {
 }
 
 #[derive(Debug, Serialize)]
+struct AnchorMaintenanceOutput {
+    project_id: String,
+    gc_requested: bool,
+    known_snapshot_count: usize,
+    known_snapshot_ids: Vec<String>,
+    report: AnchorSnapshotMaintenanceReport,
+}
+
+#[derive(Debug, Serialize)]
 struct AnchorStartupRecord {
     version: u32,
     role: AgentRole,
@@ -1232,6 +1250,10 @@ fn handle_anchor_command(command: AnchorCommand) -> anyhow::Result<()> {
         AnchorCommand::Status { json } => {
             let status = anchor_status()?;
             render_anchor_status("anchor status", &status, json)
+        }
+        AnchorCommand::Maintenance { project, gc, json } => {
+            let output = anchor_maintenance(&project, gc)?;
+            render_anchor_maintenance(&output, json)
         }
     }
 }
@@ -1309,6 +1331,42 @@ fn write_anchor_startup_record(home: &DevRelayHome, config_path: &Path) -> anyho
     Ok(())
 }
 
+fn anchor_maintenance(project_id: &str, gc: bool) -> anyhow::Result<AnchorMaintenanceOutput> {
+    let home = DevRelayHome::resolve()?;
+    let anchor = AnchorSnapshotRepo::open_existing(&home, project_id)?;
+    let known_snapshot_ids = anchor_known_snapshot_ids(&home, project_id)?;
+    let report = if gc {
+        anchor.run_guarded_gc(&known_snapshot_ids)?
+    } else {
+        anchor.inspect_maintenance(&known_snapshot_ids)?
+    };
+    Ok(AnchorMaintenanceOutput {
+        project_id: project_id.to_string(),
+        gc_requested: gc,
+        known_snapshot_count: known_snapshot_ids.len(),
+        known_snapshot_ids,
+        report,
+    })
+}
+
+fn anchor_known_snapshot_ids(home: &DevRelayHome, project_id: &str) -> anyhow::Result<Vec<String>> {
+    let db = MetadataDb::open(home.anchor_metadata_db_path())?;
+    let mut statement = db.connection().prepare(
+        r#"
+SELECT snapshot_id
+FROM snapshots
+WHERE project_id = ?1
+ORDER BY sequence_number ASC, created_at_unix_seconds ASC
+"#,
+    )?;
+    let rows = statement.query_map([project_id], |row| row.get::<_, String>(0))?;
+    let mut snapshot_ids = Vec::new();
+    for row in rows {
+        snapshot_ids.push(row?);
+    }
+    Ok(snapshot_ids)
+}
+
 fn render_anchor_status(
     title: &str,
     status: &AnchorStatusOutput,
@@ -1328,6 +1386,23 @@ fn render_anchor_status(
         );
         println!("  cas: {}", status.layout.cas_root.display());
         println!("  startup: {}", status.layout.startup_path.display());
+    }
+    Ok(())
+}
+
+fn render_anchor_maintenance(output: &AnchorMaintenanceOutput, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(output)?);
+    } else {
+        println!("anchor maintenance: {}", output.project_id);
+        println!("  known snapshots: {}", output.known_snapshot_count);
+        println!("  orphan refs: {}", output.report.orphan_refs.len());
+        println!("  missing refs: {}", output.report.missing_refs.len());
+        println!(
+            "  repository bytes: {}",
+            output.report.repository_size.total_bytes
+        );
+        println!("  gc ran: {}", output.report.gc_ran);
     }
     Ok(())
 }

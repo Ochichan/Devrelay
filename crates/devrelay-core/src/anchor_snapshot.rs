@@ -43,6 +43,10 @@ impl AnchorSnapshotRepo {
         Self::open_with_policy(home, project_id, GitDataPlanePolicy::default())
     }
 
+    pub fn open_existing(home: &DevRelayHome, project_id: &str) -> Result<Self> {
+        Self::open_existing_with_policy(home, project_id, GitDataPlanePolicy::default())
+    }
+
     pub fn open_with_policy(
         home: &DevRelayHome,
         project_id: &str,
@@ -51,6 +55,25 @@ impl AnchorSnapshotRepo {
         home.create_anchor_dirs()?;
         let repo_path = anchor_project_snapshot_repo_path(home, project_id)?;
         ensure_bare_repo(&repo_path)?;
+        Ok(Self {
+            project_id: project_id.to_string(),
+            repo_path,
+            policy,
+        })
+    }
+
+    pub fn open_existing_with_policy(
+        home: &DevRelayHome,
+        project_id: &str,
+        policy: GitDataPlanePolicy,
+    ) -> Result<Self> {
+        home.create_anchor_dirs()?;
+        let repo_path = anchor_project_snapshot_repo_path(home, project_id)?;
+        if !repo_path.join("HEAD").exists() {
+            return Err(DevRelayError::Config(format!(
+                "anchor snapshot repo for project {project_id} does not exist"
+            )));
+        }
         Ok(Self {
             project_id: project_id.to_string(),
             repo_path,

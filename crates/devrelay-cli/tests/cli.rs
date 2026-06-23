@@ -1878,6 +1878,122 @@ fn project_add_in_anchor_mode_creates_anchor_project_repo() {
 }
 
 #[test]
+fn anchor_maintenance_reports_known_snapshot_refs_and_runs_gc() {
+    use devrelay_core::{
+        AnchorSnapshotRepo, CanonicalPublishRequest, DevRelayHome, GitRepo, LeaseRecord,
+        LeaseState, Manifest, MetadataDb, SnapshotStore,
+    };
+
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-anchor-maintenance-test-{}",
+        std::process::id()
+    ));
+    let source_path = root.join("source");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&source_path).unwrap();
+    init_git_repo(&source_path);
+    write_manifest(&source_path, "maint-project", "Maintenance Project");
+    git(&source_path, &["add", "devrelay.toml"]);
+    git(&source_path, &["commit", "-m", "manifest"]);
+
+    let home = DevRelayHome::new(&root);
+    let manifest = Manifest::load(source_path.join("devrelay.toml")).unwrap();
+    let source = GitRepo::new(&source_path);
+    std::fs::write(source_path.join("README.md"), "changed\n").unwrap();
+    let mut store = SnapshotStore::open(&home, &manifest.project_id).unwrap();
+    let stored = store.checkpoint(&source, &manifest, false, None).unwrap();
+    let anchor = AnchorSnapshotRepo::open(&home, &manifest.project_id).unwrap();
+    anchor
+        .import_snapshot_from_store(&store, &stored.snapshot_id)
+        .unwrap();
+
+    let mut db = MetadataDb::open(home.anchor_metadata_db_path()).unwrap();
+    let session = db
+        .ensure_default_session(&manifest.project_id, &manifest.name, None)
+        .unwrap();
+    let lease = LeaseRecord {
+        lease_id: "lease-maintenance".to_string(),
+        project_id: manifest.project_id.clone(),
+        session_id: session.session_id.clone(),
+        state: LeaseState::Active,
+        epoch: 1,
+        holder_device_id: Some("device-a".to_string()),
+        latest_snapshot_id: None,
+        handoff_id: None,
+    };
+    db.upsert_lease(&lease).unwrap();
+    let mut metadata = stored.metadata.clone();
+    metadata.session_id = Some(session.session_id.clone());
+    db.publish_snapshot_canonical(CanonicalPublishRequest {
+        lease_id: &lease.lease_id,
+        session_id: &session.session_id,
+        expected_epoch: 1,
+        holder_device_id: "device-a",
+        expected_latest_snapshot_id: None,
+        metadata: &metadata,
+        pinned: false,
+        label: Some("maintenance"),
+    })
+    .unwrap();
+
+    let inspect = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "anchor",
+            "maintenance",
+            "--project",
+            "maint-project",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        inspect.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&inspect.stderr)
+    );
+    let inspected: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(inspected["project_id"], "maint-project");
+    assert_eq!(inspected["known_snapshot_count"], 1);
+    assert_eq!(inspected["known_snapshot_ids"][0], stored.snapshot_id);
+    assert_eq!(
+        inspected["report"]["orphan_refs"].as_array().unwrap().len(),
+        0
+    );
+    assert_eq!(
+        inspected["report"]["missing_refs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(inspected["report"]["gc_ran"], false);
+
+    let gc = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "anchor",
+            "maintenance",
+            "--project",
+            "maint-project",
+            "--gc",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        gc.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&gc.stderr)
+    );
+    let gc: serde_json::Value = serde_json::from_slice(&gc.stdout).unwrap();
+    assert_eq!(gc["gc_requested"], true);
+    assert_eq!(gc["report"]["gc_ran"], true);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn device_commands_show_generated_local_identity() {
     let root = std::env::temp_dir().join(format!("devrelay-device-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

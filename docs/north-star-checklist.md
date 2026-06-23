@@ -891,7 +891,7 @@ Conventions:
 - [x] Fetch source snapshot into anchor repo.
 - [x] Serve target fetch from anchor repo.
 - [x] Add orphan snapshot scan.
-- [ ] Add anchor repo maintenance command.
+- [x] Add anchor repo maintenance command.
 - [x] Add anchor repo GC guard.
 - [x] Add anchor repo tests.
 
