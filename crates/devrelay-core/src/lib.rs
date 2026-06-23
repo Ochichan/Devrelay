@@ -39,6 +39,7 @@ mod audit;
 mod background_checkpoint;
 mod config;
 mod crash_journal;
+mod data_plane;
 mod debounce;
 mod discovery;
 mod error;
@@ -92,6 +93,11 @@ pub use config::{
 pub use crash_journal::{
     CrashJournal, CrashJournalFaultPoint, CrashJournalOperationReplay, CrashJournalPhase,
     CrashJournalRecord, CrashJournalReplay,
+};
+pub use data_plane::{
+    DEVRELAY_REF_NAMESPACE, DEVRELAY_SNAPSHOT_REF_NAMESPACE, GitDataPlanePolicy,
+    GitDataPlaneRefSpec, GitObjectInspection, GitRepositorySize, ensure_git_object_available,
+    inspect_git_object, inspect_git_repository_size, verify_git_repository_integrity,
 };
 pub use debounce::{
     AdaptiveDebouncer, BackgroundDebouncePolicy, DebounceDrain, DebounceFlushReason,

@@ -873,16 +873,16 @@ Conventions:
 ### M5.1 Git Object Data Plane
 
 - [ ] Choose first implementation strategy.
-- [ ] Define allowed ref namespace.
+- [x] Define allowed ref namespace.
 - [ ] Serve project snapshot bare repo.
-- [ ] Restrict fetch to `refs/devrelay/*`.
-- [ ] Restrict push to permitted snapshot refs.
+- [x] Restrict fetch to `refs/devrelay/*`.
+- [x] Restrict push to permitted snapshot refs.
 - [ ] Enforce project authorization.
-- [ ] Enforce object size limits.
-- [ ] Enforce repository quota.
-- [ ] Add object availability check.
-- [ ] Add object corruption detection.
-- [ ] Add data-plane integration tests.
+- [x] Enforce object size limits.
+- [x] Enforce repository quota.
+- [x] Add object availability check.
+- [x] Add object corruption detection.
+- [x] Add data-plane integration tests.
 
 ### M5.2 Anchor Snapshot Repos
 
