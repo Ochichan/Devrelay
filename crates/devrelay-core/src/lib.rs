@@ -76,9 +76,9 @@ pub use audit::{
 };
 pub use config::{
     AgentRole, AnchorMode, DEVICE_ID_PREFIX, DeviceIdentity, EditorPreference, LocalConfig,
-    ProjectRegistryEntry, ProjectRegistryIndex, RedactedLocalConfig, ResourceProfile,
-    WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry, WorkspaceState, generate_device_id,
-    migrate_local_config, workspace_id_for,
+    ProjectRegistryEntry, ProjectRegistryIndex, RedactedLocalConfig, ResourcePolicy,
+    ResourcePolicyLimits, ResourceProfile, WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry,
+    WorkspaceState, generate_device_id, migrate_local_config, workspace_id_for,
 };
 pub use debounce::{
     AdaptiveDebouncer, BackgroundDebouncePolicy, DebounceDrain, DebounceFlushReason,

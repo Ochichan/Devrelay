@@ -1028,18 +1028,18 @@ Conventions:
 
 ### M6.5 Resource Policy
 
-- [ ] Define adaptive profile.
-- [ ] Define instant profile.
-- [ ] Define eco profile.
-- [ ] Define custom profile.
-- [ ] Add CPU slot limit.
-- [ ] Add hashing concurrency limit.
-- [ ] Add network bandwidth cap.
+- [x] Define adaptive profile.
+- [x] Define instant profile.
+- [x] Define eco profile.
+- [x] Define custom profile.
+- [x] Add CPU slot limit.
+- [x] Add hashing concurrency limit.
+- [x] Add network bandwidth cap.
 - [ ] Add battery mode behavior.
 - [ ] Add low-power mode behavior.
 - [ ] Add foreground load detection.
 - [ ] Add resource policy persistence.
-- [ ] Add resource policy tests.
+- [x] Add resource policy tests.
 
 ### M6.6 Retention And Quota
 

@@ -56,9 +56,115 @@ pub struct EditorPreference {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ResourceProfile {
+    Adaptive,
+    Instant,
     Eco,
+    Custom,
     Balanced,
     Performance,
+}
+
+impl ResourceProfile {
+    pub fn canonical(self) -> Self {
+        match self {
+            Self::Balanced => Self::Adaptive,
+            Self::Performance => Self::Instant,
+            other => other,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResourcePolicyLimits {
+    pub cpu_slot_limit: usize,
+    pub hashing_concurrency_limit: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_bandwidth_kib_per_second: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResourcePolicy {
+    pub profile: ResourceProfile,
+    pub limits: ResourcePolicyLimits,
+}
+
+impl ResourcePolicy {
+    pub fn for_profile(profile: ResourceProfile) -> Self {
+        let parallelism = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1);
+        Self::for_profile_with_parallelism(profile, parallelism)
+    }
+
+    pub fn for_profile_with_parallelism(profile: ResourceProfile, parallelism: usize) -> Self {
+        let parallelism = parallelism.max(1);
+        let adaptive_slots = (parallelism / 2).max(1);
+        match profile.canonical() {
+            ResourceProfile::Adaptive => Self {
+                profile: ResourceProfile::Adaptive,
+                limits: ResourcePolicyLimits {
+                    cpu_slot_limit: adaptive_slots,
+                    hashing_concurrency_limit: adaptive_slots,
+                    network_bandwidth_kib_per_second: None,
+                },
+            },
+            ResourceProfile::Instant => Self {
+                profile: ResourceProfile::Instant,
+                limits: ResourcePolicyLimits {
+                    cpu_slot_limit: parallelism,
+                    hashing_concurrency_limit: parallelism,
+                    network_bandwidth_kib_per_second: None,
+                },
+            },
+            ResourceProfile::Eco => Self {
+                profile: ResourceProfile::Eco,
+                limits: ResourcePolicyLimits {
+                    cpu_slot_limit: 1,
+                    hashing_concurrency_limit: 1,
+                    network_bandwidth_kib_per_second: Some(1024),
+                },
+            },
+            ResourceProfile::Custom => Self {
+                profile: ResourceProfile::Custom,
+                limits: ResourcePolicyLimits {
+                    cpu_slot_limit: adaptive_slots,
+                    hashing_concurrency_limit: adaptive_slots,
+                    network_bandwidth_kib_per_second: None,
+                },
+            },
+            ResourceProfile::Balanced | ResourceProfile::Performance => unreachable!(),
+        }
+    }
+
+    pub fn custom(limits: ResourcePolicyLimits) -> Result<Self> {
+        limits.validate()?;
+        Ok(Self {
+            profile: ResourceProfile::Custom,
+            limits,
+        })
+    }
+}
+
+impl ResourcePolicyLimits {
+    pub fn validate(self) -> Result<()> {
+        if self.cpu_slot_limit == 0 {
+            return Err(DevRelayError::Config(
+                "resource policy cpu_slot_limit must be greater than zero".to_string(),
+            ));
+        }
+        if self.hashing_concurrency_limit == 0 {
+            return Err(DevRelayError::Config(
+                "resource policy hashing_concurrency_limit must be greater than zero".to_string(),
+            ));
+        }
+        if matches!(self.network_bandwidth_kib_per_second, Some(0)) {
+            return Err(DevRelayError::Config(
+                "resource policy network_bandwidth_kib_per_second must be greater than zero"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -372,6 +478,10 @@ impl LocalConfig {
         }
     }
 
+    pub fn resource_policy(&self) -> ResourcePolicy {
+        ResourcePolicy::for_profile(self.resource_profile)
+    }
+
     pub fn mark_device_seen_now(&mut self) {
         self.last_seen_unix_seconds = unix_now_seconds();
     }
@@ -602,6 +712,101 @@ mod tests {
             AgentRole::Anchor
         );
         assert_eq!(AgentRole::Anchor.label(), "anchor");
+    }
+
+    #[test]
+    fn resource_profiles_resolve_to_canonical_limits() {
+        assert_eq!(
+            ResourcePolicy::for_profile_with_parallelism(ResourceProfile::Adaptive, 8),
+            ResourcePolicy {
+                profile: ResourceProfile::Adaptive,
+                limits: ResourcePolicyLimits {
+                    cpu_slot_limit: 4,
+                    hashing_concurrency_limit: 4,
+                    network_bandwidth_kib_per_second: None,
+                },
+            }
+        );
+        assert_eq!(
+            ResourcePolicy::for_profile_with_parallelism(ResourceProfile::Instant, 8),
+            ResourcePolicy {
+                profile: ResourceProfile::Instant,
+                limits: ResourcePolicyLimits {
+                    cpu_slot_limit: 8,
+                    hashing_concurrency_limit: 8,
+                    network_bandwidth_kib_per_second: None,
+                },
+            }
+        );
+        assert_eq!(
+            ResourcePolicy::for_profile_with_parallelism(ResourceProfile::Eco, 8),
+            ResourcePolicy {
+                profile: ResourceProfile::Eco,
+                limits: ResourcePolicyLimits {
+                    cpu_slot_limit: 1,
+                    hashing_concurrency_limit: 1,
+                    network_bandwidth_kib_per_second: Some(1024),
+                },
+            }
+        );
+        assert_eq!(
+            ResourcePolicy::for_profile_with_parallelism(ResourceProfile::Balanced, 8).profile,
+            ResourceProfile::Adaptive
+        );
+        assert_eq!(
+            ResourcePolicy::for_profile_with_parallelism(ResourceProfile::Performance, 8).profile,
+            ResourceProfile::Instant
+        );
+    }
+
+    #[test]
+    fn custom_resource_policy_validates_limits() {
+        let custom = ResourcePolicy::custom(ResourcePolicyLimits {
+            cpu_slot_limit: 2,
+            hashing_concurrency_limit: 3,
+            network_bandwidth_kib_per_second: Some(2048),
+        })
+        .unwrap();
+
+        assert_eq!(custom.profile, ResourceProfile::Custom);
+        assert_eq!(custom.limits.cpu_slot_limit, 2);
+        assert_eq!(custom.limits.hashing_concurrency_limit, 3);
+        assert_eq!(custom.limits.network_bandwidth_kib_per_second, Some(2048));
+
+        let err = ResourcePolicy::custom(ResourcePolicyLimits {
+            cpu_slot_limit: 0,
+            hashing_concurrency_limit: 1,
+            network_bandwidth_kib_per_second: None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("cpu_slot_limit"));
+    }
+
+    #[test]
+    fn parses_all_resource_profile_labels() {
+        for (raw, expected) in [
+            ("adaptive", ResourceProfile::Adaptive),
+            ("instant", ResourceProfile::Instant),
+            ("eco", ResourceProfile::Eco),
+            ("custom", ResourceProfile::Custom),
+            ("balanced", ResourceProfile::Balanced),
+            ("performance", ResourceProfile::Performance),
+        ] {
+            let config = LocalConfig::parse(&format!(
+                r#"
+version = 1
+fabric_name = "Personal Fabric"
+device_name = "this-device"
+resource_profile = "{raw}"
+anchor_mode = "local-only"
+
+[editor]
+command = "system"
+"#
+            ))
+            .unwrap();
+            assert_eq!(config.resource_profile, expected);
+        }
     }
 
     #[test]
