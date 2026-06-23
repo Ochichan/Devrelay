@@ -840,7 +840,7 @@ Conventions:
 
 - [x] Add device revoke command.
 - [x] Add revocation record.
-- [ ] Reject revoked device connection.
+- [x] Reject revoked device connection.
 - [x] Reject revoked publish.
 - [x] Reject revoked lease operation.
 - [x] Emit audit event.
@@ -863,7 +863,7 @@ Conventions:
 ### M4 Exit Gate
 
 - [x] Pairing requires matching displayed code.
-- [ ] Revoked device cannot connect.
+- [x] Revoked device cannot connect.
 - [x] mDNS TXT records do not leak sensitive data.
 - [x] Transport tests cover expired, wrong-fabric, and revoked certificates.
 - [ ] Control API rejects unauthenticated requests.
