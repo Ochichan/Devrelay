@@ -41,6 +41,7 @@ mod events;
 mod git;
 mod home;
 mod ipc;
+mod logging;
 pub mod manifest;
 mod policy;
 mod rpc;
@@ -66,6 +67,10 @@ pub use home::DevRelayHome;
 pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 #[cfg(unix)]
 pub use ipc::{UnixIpcConnection, UnixIpcListener};
+pub use logging::{
+    LogRedactor, LogRotation, StructuredLogFile, StructuredLogFormat, StructuredLogLevel,
+    StructuredLogRecord,
+};
 pub use manifest::{
     DirtyTargetPolicy, EnvironmentConfig, EnvironmentKind, EnvironmentProfile, HandoffConfig,
     Manifest, PatternConfig, PortablePathsPolicy, RestoreTerminals, SecretConfig, SecretMode,

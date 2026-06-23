@@ -559,17 +559,17 @@ Conventions:
 
 ### M2.6 Structured Logs
 
-- [ ] Add JSON line log format.
-- [ ] Add human dev log format.
-- [ ] Add log rotation.
-- [ ] Add log retention.
-- [ ] Add request ID in logs.
-- [ ] Add operation ID in logs.
-- [ ] Add redaction helper.
-- [ ] Redact secret values.
-- [ ] Redact credentialed remote URLs.
-- [ ] Redact local paths in diagnostic mode when requested.
-- [ ] Add log tests for redaction.
+- [x] Add JSON line log format.
+- [x] Add human dev log format.
+- [x] Add log rotation.
+- [x] Add log retention.
+- [x] Add request ID in logs.
+- [x] Add operation ID in logs.
+- [x] Add redaction helper.
+- [x] Redact secret values.
+- [x] Redact credentialed remote URLs.
+- [x] Redact local paths in diagnostic mode when requested.
+- [x] Add log tests for redaction.
 
 ### M2.7 Service Templates
 

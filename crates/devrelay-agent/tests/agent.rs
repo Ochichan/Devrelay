@@ -99,6 +99,58 @@ fn foreground_serves_rpc_negotiate_and_agent_health() {
 
 #[cfg(unix)]
 #[test]
+fn foreground_writes_structured_rpc_logs_with_ids() {
+    use devrelay_core::{IpcLimits, UnixIpcConnection};
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-log-rpc-test");
+
+    let health = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "log-health",
+            "method": "agent.health"
+        }),
+    );
+    assert_eq!(health["result"]["status"], "ok");
+
+    let log_path = running.root.join("logs").join("agent.log");
+    let raw = std::fs::read_to_string(&log_path).unwrap();
+    let lines = raw
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+
+    let request_log = lines
+        .iter()
+        .find(|line| {
+            line["message"] == "RPC request received" && line["fields"]["method"] == "agent.health"
+        })
+        .expect("request log should be present");
+    assert_eq!(request_log["request_id"], "log-health");
+    assert!(
+        request_log["operation_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("op-")
+    );
+
+    let response_log = lines
+        .iter()
+        .find(|line| {
+            line["message"] == "RPC response sent" && line["fields"]["method"] == "agent.health"
+        })
+        .expect("response log should be present");
+    assert_eq!(response_log["request_id"], "log-health");
+    assert_eq!(response_log["operation_id"], request_log["operation_id"]);
+    assert_eq!(response_log["fields"]["status"], "ok");
+
+    running.stop();
+}
+
+#[cfg(unix)]
+#[test]
 fn foreground_serves_status_get_rpc() {
     use devrelay_core::{IpcLimits, UnixIpcConnection};
     use serde_json::json;

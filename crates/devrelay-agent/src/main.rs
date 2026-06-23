@@ -8,20 +8,20 @@ use devrelay_core::{
     IpcConnection, IpcLimits, IpcTransport, Manifest, ProjectRegistryEntry, ProjectResult,
     ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
     RPC_PROTOCOL_VERSION, RecoverListParams, RecoverListResult, RecoverOpenParams,
-    RecoverOpenResult, RecoverShowParams, RecoverShowResult, RpcError, RpcRequest, RpcResponse,
-    RpcVersionNegotiationParams, RpcVersionNegotiationResult, SnapshotApplyStartedEvent,
-    SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent, SnapshotStore, SnapshotsListParams,
-    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, TypedEventPayload,
-    UnixIpcConnection, UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState,
-    WorkspaceStateChangedEvent, apply_snapshot, classify_untracked_paths, plan_apply_snapshot,
-    workspace_id_for,
+    RecoverOpenResult, RecoverShowParams, RecoverShowResult, RpcError, RpcId, RpcRequest,
+    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
+    SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent,
+    SnapshotStore, SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult,
+    StoredSnapshot, StructuredLogFile, StructuredLogRecord, TypedEventPayload, UnixIpcConnection,
+    UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, WorkspaceStateChangedEvent,
+    apply_snapshot, classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
 };
 use devrelay_core::{
     DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
     METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE,
     METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
     METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE,
-    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb,
+    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb, StructuredLogLevel,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -31,7 +31,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc,
 };
 use std::thread;
@@ -65,6 +65,32 @@ enum LogLevel {
     Trace,
 }
 
+impl LogLevel {
+    fn structured(self) -> StructuredLogLevel {
+        match self {
+            Self::Error => StructuredLogLevel::Error,
+            Self::Warn => StructuredLogLevel::Warn,
+            Self::Info => StructuredLogLevel::Info,
+            Self::Debug => StructuredLogLevel::Debug,
+            Self::Trace => StructuredLogLevel::Trace,
+        }
+    }
+
+    fn enabled(self, level: StructuredLogLevel) -> bool {
+        level <= self.structured()
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct AgentHealth {
     status: &'static str,
@@ -87,6 +113,46 @@ struct AgentState {
     shutdown: Arc<AtomicBool>,
     #[cfg(unix)]
     events: Arc<AgentEventLog>,
+    #[cfg(unix)]
+    logger: AgentLogger,
+    #[cfg(unix)]
+    next_operation_id: Arc<AtomicU64>,
+}
+
+#[cfg(unix)]
+#[derive(Clone)]
+struct AgentLogger {
+    level: LogLevel,
+    file: Arc<Mutex<StructuredLogFile>>,
+}
+
+#[cfg(unix)]
+impl AgentLogger {
+    fn new(level: LogLevel, path: PathBuf) -> Self {
+        Self {
+            level,
+            file: Arc::new(Mutex::new(StructuredLogFile::new(path))),
+        }
+    }
+
+    fn log(&self, record: StructuredLogRecord) {
+        if !self.level.enabled(record.level) {
+            return;
+        }
+        if let Ok(file) = self.file.lock()
+            && let Err(err) = file.append(&record)
+        {
+            eprintln!("devrelay-agent log write error: {err}");
+        }
+        eprintln!(
+            "{}",
+            record.to_human_line(&devrelay_core::LogRedactor::new())
+        );
+    }
+
+    fn log_message(&self, level: StructuredLogLevel, target: &'static str, message: &'static str) {
+        self.log(StructuredLogRecord::new(level, target, message));
+    }
 }
 
 impl AgentState {
@@ -230,12 +296,22 @@ fn main() -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| home.agent_socket_path());
 
-    eprintln!(
-        "devrelay-agent started foreground={} log_level={:?} projects={} socket={}",
-        cli.foreground,
-        cli.log_level,
-        config.project_registry.projects.len(),
-        socket_path.display()
+    #[cfg(unix)]
+    let logger = AgentLogger::new(cli.log_level, home.log_dir().join("agent.log"));
+    #[cfg(unix)]
+    logger.log(
+        StructuredLogRecord::new(
+            StructuredLogLevel::Info,
+            "agent.lifecycle",
+            "devrelay-agent started",
+        )
+        .with_field("foreground", cli.foreground.to_string())
+        .with_field("log_level", cli.log_level.as_str())
+        .with_field(
+            "project_count",
+            config.project_registry.projects.len().to_string(),
+        )
+        .with_field("socket_path", socket_path.to_string_lossy().to_string()),
     );
 
     let state = AgentState {
@@ -248,6 +324,10 @@ fn main() -> anyhow::Result<()> {
         shutdown: Arc::clone(&shutdown),
         #[cfg(unix)]
         events: Arc::new(AgentEventLog::default()),
+        #[cfg(unix)]
+        logger,
+        #[cfg(unix)]
+        next_operation_id: Arc::new(AtomicU64::new(1)),
     };
 
     if cli.health {
@@ -266,7 +346,12 @@ fn main() -> anyhow::Result<()> {
         while !shutdown.load(Ordering::SeqCst) {
             thread::sleep(Duration::from_millis(100));
         }
-        eprintln!("devrelay-agent shutdown requested");
+        #[cfg(unix)]
+        state.logger.log_message(
+            StructuredLogLevel::Info,
+            "agent.lifecycle",
+            "devrelay-agent shutdown requested",
+        );
     }
     Ok(())
 }
@@ -291,7 +376,10 @@ fn run_ipc_server(listener: UnixIpcListener, state: AgentState) {
                     .name("devrelay-agent-rpc".to_string())
                     .spawn(move || handle_rpc_connection(connection, connection_state));
             }
-            Err(err) => eprintln!("devrelay-agent IPC accept error: {err}"),
+            Err(err) => state.logger.log(
+                StructuredLogRecord::new(StructuredLogLevel::Warn, "agent.ipc", "IPC accept error")
+                    .with_field("error", err.to_string()),
+            ),
         }
     }
 }
@@ -301,19 +389,38 @@ fn handle_rpc_connection(mut connection: UnixIpcConnection, state: AgentState) {
     let response = match connection.read_message(IpcLimits::default()) {
         Ok(bytes) => match RpcRequest::parse(&bytes) {
             Ok(request) if request.method == METHOD_EVENTS_SUBSCRIBE => {
-                handle_events_subscribe_connection(connection, request, state);
+                let operation_id = next_operation_id(&state);
+                log_rpc_request(&state, &request, &operation_id);
+                handle_events_subscribe_connection(connection, request, state, operation_id);
                 return;
             }
-            Ok(request) => handle_rpc_request(request, &state),
+            Ok(request) => {
+                let operation_id = next_operation_id(&state);
+                let request_id = request_id_string(request.id.as_ref());
+                let method = request.method.clone();
+                log_rpc_request(&state, &request, &operation_id);
+                let response = handle_rpc_request(request, &state);
+                log_rpc_response(
+                    &state,
+                    request_id.as_deref(),
+                    &operation_id,
+                    &method,
+                    response.error.is_some(),
+                );
+                response
+            }
             Err(error) => RpcResponse::error(None, error),
         },
         Err(err) => {
-            eprintln!("devrelay-agent IPC read error: {err}");
+            state.logger.log(
+                StructuredLogRecord::new(StructuredLogLevel::Warn, "agent.ipc", "IPC read error")
+                    .with_field("error", err.to_string()),
+            );
             return;
         }
     };
 
-    write_ipc_json(&mut connection, &response);
+    write_ipc_json(&state.logger, &mut connection, &response);
 }
 
 #[cfg(unix)]
@@ -321,15 +428,17 @@ fn handle_events_subscribe_connection(
     mut connection: UnixIpcConnection,
     request: RpcRequest,
     state: AgentState,
+    operation_id: String,
 ) {
     let id = match request.required_id() {
         Ok(id) => id,
         Err(error) => {
             let response = RpcResponse::error(None, error);
-            write_ipc_json(&mut connection, &response);
+            write_ipc_json(&state.logger, &mut connection, &response);
             return;
         }
     };
+    let request_id = request_id_string(Some(&id));
     let params = if request.params.is_null() {
         EventsSubscribeParams::default()
     } else {
@@ -338,7 +447,7 @@ fn handle_events_subscribe_connection(
             Err(err) => {
                 let response =
                     RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string()));
-                write_ipc_json(&mut connection, &response);
+                write_ipc_json(&state.logger, &mut connection, &response);
                 return;
             }
         }
@@ -347,7 +456,7 @@ fn handle_events_subscribe_connection(
         Ok(subscription) => subscription,
         Err(err) => {
             let response = RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
-            write_ipc_json(&mut connection, &response);
+            write_ipc_json(&state.logger, &mut connection, &response);
             return;
         }
     };
@@ -359,12 +468,23 @@ fn handle_events_subscribe_connection(
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
-    if !write_ipc_json(&mut connection, &response) {
+    log_rpc_response(
+        &state,
+        request_id.as_deref(),
+        &operation_id,
+        METHOD_EVENTS_SUBSCRIBE,
+        response.error.is_some(),
+    );
+    if !write_ipc_json(&state.logger, &mut connection, &response) {
         return;
     }
 
     for event in subscription.replay {
-        if !write_ipc_json(&mut connection, &EventStreamMessage::event(event)) {
+        if !write_ipc_json(
+            &state.logger,
+            &mut connection,
+            &EventStreamMessage::event(event),
+        ) {
             return;
         }
     }
@@ -375,7 +495,11 @@ fn handle_events_subscribe_connection(
             .recv_timeout(Duration::from_millis(100))
         {
             Ok(event) => {
-                if !write_ipc_json(&mut connection, &EventStreamMessage::event(event)) {
+                if !write_ipc_json(
+                    &state.logger,
+                    &mut connection,
+                    &EventStreamMessage::event(event),
+                ) {
                     return;
                 }
             }
@@ -386,19 +510,91 @@ fn handle_events_subscribe_connection(
 }
 
 #[cfg(unix)]
-fn write_ipc_json<T: Serialize>(connection: &mut UnixIpcConnection, value: &T) -> bool {
+fn write_ipc_json<T: Serialize>(
+    logger: &AgentLogger,
+    connection: &mut UnixIpcConnection,
+    value: &T,
+) -> bool {
     let bytes = match serde_json::to_vec(value) {
         Ok(bytes) => bytes,
         Err(err) => {
-            eprintln!("devrelay-agent IPC JSON serialization error: {err}");
+            logger.log(
+                StructuredLogRecord::new(
+                    StructuredLogLevel::Error,
+                    "agent.ipc",
+                    "IPC JSON serialization error",
+                )
+                .with_field("error", err.to_string()),
+            );
             return false;
         }
     };
     if let Err(err) = connection.write_message(&bytes, IpcLimits::default()) {
-        eprintln!("devrelay-agent IPC write error: {err}");
+        logger.log(
+            StructuredLogRecord::new(StructuredLogLevel::Warn, "agent.ipc", "IPC write error")
+                .with_field("error", err.to_string()),
+        );
         return false;
     }
     true
+}
+
+#[cfg(unix)]
+fn next_operation_id(state: &AgentState) -> String {
+    format!(
+        "op-{}-{}",
+        std::process::id(),
+        state.next_operation_id.fetch_add(1, Ordering::SeqCst)
+    )
+}
+
+#[cfg(unix)]
+fn request_id_string(id: Option<&RpcId>) -> Option<String> {
+    id.map(|id| match id {
+        RpcId::String(value) => value.clone(),
+        RpcId::Number(value) => value.to_string(),
+    })
+}
+
+#[cfg(unix)]
+fn log_rpc_request(state: &AgentState, request: &RpcRequest, operation_id: &str) {
+    let mut record = StructuredLogRecord::new(
+        StructuredLogLevel::Info,
+        "agent.rpc",
+        "RPC request received",
+    )
+    .with_operation_id(operation_id)
+    .with_field("method", request.method.clone());
+    if let Some(request_id) = request_id_string(request.id.as_ref()) {
+        record = record.with_request_id(request_id);
+    }
+    state.logger.log(record);
+}
+
+#[cfg(unix)]
+fn log_rpc_response(
+    state: &AgentState,
+    request_id: Option<&str>,
+    operation_id: &str,
+    method: &str,
+    is_error: bool,
+) {
+    let mut record = StructuredLogRecord::new(
+        if is_error {
+            StructuredLogLevel::Warn
+        } else {
+            StructuredLogLevel::Info
+        },
+        "agent.rpc",
+        "RPC response sent",
+    )
+    .with_operation_id(operation_id)
+    .with_field("method", method.to_string())
+    .with_field("status", if is_error { "error" } else { "ok" });
+    if let Some(request_id) = request_id {
+        record = record.with_request_id(request_id.to_string());
+    }
+    state.logger.log(record);
 }
 
 #[cfg(unix)]
