@@ -327,6 +327,28 @@ CREATE INDEX idx_device_revocations_revoked_at
     ON device_revocations(revoked_at_unix_seconds DESC, device_id);
 "#,
     },
+    Migration {
+        version: 10,
+        name: "command_trust_approvals",
+        sql: r#"
+CREATE TABLE command_trust_approvals (
+    approval_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    command_scope TEXT NOT NULL,
+    command_hash TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    consumed_at_unix_seconds INTEGER,
+    created_at_unix_seconds INTEGER NOT NULL DEFAULT (unixepoch()),
+    FOREIGN KEY(project_id) REFERENCES projects(project_id)
+);
+
+CREATE INDEX idx_command_trust_project_device_scope
+    ON command_trust_approvals(project_id, device_id, command_scope, created_at_unix_seconds DESC, approval_id DESC);
+CREATE INDEX idx_command_trust_hash
+    ON command_trust_approvals(project_id, device_id, command_scope, command_hash, created_at_unix_seconds DESC, approval_id DESC);
+"#,
+    },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -412,6 +434,70 @@ impl HandoffCommitSnapshotPreflight<'_> {
             self.cas_store,
         )
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandTrustDecision {
+    AllowOnce,
+    TrustThisVersion,
+    Reject,
+}
+
+impl CommandTrustDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AllowOnce => "allow-once",
+            Self::TrustThisVersion => "trust-this-version",
+            Self::Reject => "reject",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "allow-once" => Self::AllowOnce,
+            "trust-this-version" => Self::TrustThisVersion,
+            "reject" => Self::Reject,
+            _ => return None,
+        })
+    }
+
+    const fn is_approval(self) -> bool {
+        matches!(self, Self::AllowOnce | Self::TrustThisVersion)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandTrustStatus {
+    ApprovedOnce,
+    Trusted,
+    Rejected,
+    Changed,
+    Unapproved,
+}
+
+impl CommandTrustStatus {
+    pub const fn approved(self) -> bool {
+        matches!(self, Self::ApprovedOnce | Self::Trusted)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandTrustRecord {
+    pub approval_id: i64,
+    pub project_id: String,
+    pub device_id: String,
+    pub command_scope: String,
+    pub command_hash: String,
+    pub decision: CommandTrustDecision,
+    pub consumed_at_unix_seconds: Option<u64>,
+    pub created_at_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandTrustEvaluation {
+    pub status: CommandTrustStatus,
+    pub approval: Option<CommandTrustRecord>,
+    pub previous_hash: Option<String>,
 }
 
 impl MetadataDb {
@@ -585,6 +671,232 @@ FROM audit_events
                 .then(right.audit_id.cmp(&left.audit_id))
         });
         Ok(events)
+    }
+
+    pub fn record_command_trust_decision(
+        &mut self,
+        project_id: &str,
+        device_id: &str,
+        command_scope: &str,
+        command_hash: &str,
+        decision: CommandTrustDecision,
+    ) -> Result<CommandTrustRecord> {
+        self.record_command_trust_decision_at(
+            project_id,
+            device_id,
+            command_scope,
+            command_hash,
+            decision,
+            unix_now_seconds(),
+        )
+    }
+
+    pub fn record_command_trust_decision_at(
+        &mut self,
+        project_id: &str,
+        device_id: &str,
+        command_scope: &str,
+        command_hash: &str,
+        decision: CommandTrustDecision,
+        created_at_unix_seconds: u64,
+    ) -> Result<CommandTrustRecord> {
+        validate_command_trust_input(project_id, device_id, command_scope, command_hash)?;
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            r#"
+INSERT INTO command_trust_approvals (
+    project_id,
+    device_id,
+    command_scope,
+    command_hash,
+    decision,
+    consumed_at_unix_seconds,
+    created_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+"#,
+            (
+                project_id,
+                device_id,
+                command_scope,
+                command_hash,
+                decision.as_str(),
+                Option::<i64>::None,
+                created_at_unix_seconds as i64,
+            ),
+        )?;
+        let record = CommandTrustRecord {
+            approval_id: tx.last_insert_rowid(),
+            project_id: project_id.to_string(),
+            device_id: device_id.to_string(),
+            command_scope: command_scope.to_string(),
+            command_hash: command_hash.to_string(),
+            decision,
+            consumed_at_unix_seconds: None,
+            created_at_unix_seconds,
+        };
+        let mut audit = if decision.is_approval() {
+            AuditEventInput::new(
+                AuditEventType::CommandApproved,
+                AuditOutcome::Succeeded,
+                format!("approved command hash for {command_scope}"),
+            )
+        } else {
+            AuditEventInput::new(
+                AuditEventType::SecurityBlocked,
+                AuditOutcome::Blocked,
+                format!("rejected command hash for {command_scope}"),
+            )
+        }
+        .with_detail(serde_json::json!({
+            "command_scope": command_scope,
+            "command_hash": command_hash,
+            "decision": decision.as_str(),
+        }));
+        audit.project_id = Some(project_id.to_string());
+        audit.actor_device_id = Some(device_id.to_string());
+        insert_audit_event_tx(&tx, audit, created_at_unix_seconds)?;
+        tx.commit()?;
+        Ok(record)
+    }
+
+    pub fn evaluate_command_trust(
+        &self,
+        project_id: &str,
+        device_id: &str,
+        command_scope: &str,
+        command_hash: &str,
+    ) -> Result<CommandTrustEvaluation> {
+        validate_command_trust_input(project_id, device_id, command_scope, command_hash)?;
+        if let Some(record) = self.latest_command_trust_record(
+            project_id,
+            device_id,
+            command_scope,
+            Some(command_hash),
+        )? {
+            let status = match record.decision {
+                CommandTrustDecision::AllowOnce if record.consumed_at_unix_seconds.is_none() => {
+                    Some(CommandTrustStatus::ApprovedOnce)
+                }
+                CommandTrustDecision::TrustThisVersion => Some(CommandTrustStatus::Trusted),
+                CommandTrustDecision::Reject => Some(CommandTrustStatus::Rejected),
+                CommandTrustDecision::AllowOnce => None,
+            };
+            if let Some(status) = status {
+                return Ok(CommandTrustEvaluation {
+                    status,
+                    approval: Some(record),
+                    previous_hash: None,
+                });
+            }
+        }
+
+        if let Some(previous) =
+            self.latest_command_trust_record(project_id, device_id, command_scope, None)?
+            && previous.command_hash != command_hash
+        {
+            return Ok(CommandTrustEvaluation {
+                status: CommandTrustStatus::Changed,
+                previous_hash: Some(previous.command_hash.clone()),
+                approval: Some(previous),
+            });
+        }
+
+        Ok(CommandTrustEvaluation {
+            status: CommandTrustStatus::Unapproved,
+            approval: None,
+            previous_hash: None,
+        })
+    }
+
+    pub fn authorize_command_trust_at(
+        &mut self,
+        project_id: &str,
+        device_id: &str,
+        command_scope: &str,
+        command_hash: &str,
+        consumed_at_unix_seconds: u64,
+    ) -> Result<CommandTrustEvaluation> {
+        let mut evaluation =
+            self.evaluate_command_trust(project_id, device_id, command_scope, command_hash)?;
+        if evaluation.status != CommandTrustStatus::ApprovedOnce {
+            return Ok(evaluation);
+        }
+
+        let Some(record) = evaluation.approval.as_mut() else {
+            return Ok(evaluation);
+        };
+        let changed = self.conn.execute(
+            r#"
+UPDATE command_trust_approvals
+SET consumed_at_unix_seconds = ?1
+WHERE approval_id = ?2 AND consumed_at_unix_seconds IS NULL
+"#,
+            (consumed_at_unix_seconds as i64, record.approval_id),
+        )?;
+        if changed == 0 {
+            return self.evaluate_command_trust(project_id, device_id, command_scope, command_hash);
+        }
+        record.consumed_at_unix_seconds = Some(consumed_at_unix_seconds);
+        Ok(evaluation)
+    }
+
+    fn latest_command_trust_record(
+        &self,
+        project_id: &str,
+        device_id: &str,
+        command_scope: &str,
+        command_hash: Option<&str>,
+    ) -> Result<Option<CommandTrustRecord>> {
+        if let Some(command_hash) = command_hash {
+            self.conn
+                .query_row(
+                    r#"
+SELECT approval_id,
+       project_id,
+       device_id,
+       command_scope,
+       command_hash,
+       decision,
+       consumed_at_unix_seconds,
+       created_at_unix_seconds
+FROM command_trust_approvals
+WHERE project_id = ?1
+  AND device_id = ?2
+  AND command_scope = ?3
+  AND command_hash = ?4
+ORDER BY created_at_unix_seconds DESC, approval_id DESC
+LIMIT 1
+"#,
+                    (project_id, device_id, command_scope, command_hash),
+                    command_trust_record_from_row,
+                )
+                .optional()
+                .map_err(Into::into)
+        } else {
+            self.conn
+                .query_row(
+                    r#"
+SELECT approval_id,
+       project_id,
+       device_id,
+       command_scope,
+       command_hash,
+       decision,
+       consumed_at_unix_seconds,
+       created_at_unix_seconds
+FROM command_trust_approvals
+WHERE project_id = ?1
+  AND device_id = ?2
+  AND command_scope = ?3
+ORDER BY created_at_unix_seconds DESC, approval_id DESC
+LIMIT 1
+"#,
+                    (project_id, device_id, command_scope),
+                    command_trust_record_from_row,
+                )
+                .optional()
+                .map_err(Into::into)
+        }
     }
 
     pub fn revoke_device(
@@ -2523,6 +2835,32 @@ fn audit_event_record_from_row(row: &Row<'_>) -> rusqlite::Result<AuditEventReco
     })
 }
 
+fn command_trust_record_from_row(row: &Row<'_>) -> rusqlite::Result<CommandTrustRecord> {
+    let raw_decision: String = row.get(5)?;
+    let decision = CommandTrustDecision::parse(&raw_decision).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            5,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown command trust decision {raw_decision}"),
+            )),
+        )
+    })?;
+    Ok(CommandTrustRecord {
+        approval_id: row.get(0)?,
+        project_id: row.get(1)?,
+        device_id: row.get(2)?,
+        command_scope: row.get(3)?,
+        command_hash: row.get(4)?,
+        decision,
+        consumed_at_unix_seconds: row
+            .get::<_, Option<i64>>(6)?
+            .map(|value| value.max(0) as u64),
+        created_at_unix_seconds: row.get::<_, i64>(7)?.max(0) as u64,
+    })
+}
+
 fn device_revocation_from_row(row: &Row<'_>) -> rusqlite::Result<DeviceRevocationRecord> {
     Ok(DeviceRevocationRecord {
         device_id: row.get(0)?,
@@ -2561,6 +2899,32 @@ WHERE device_id = ?1
             revocation.revoked_at_unix_seconds,
             revocation.reason
         )));
+    }
+    Ok(())
+}
+
+fn validate_command_trust_input(
+    project_id: &str,
+    device_id: &str,
+    command_scope: &str,
+    command_hash: &str,
+) -> Result<()> {
+    validate_non_empty("project_id", project_id)?;
+    validate_non_empty("device_id", device_id)?;
+    validate_non_empty("command_scope", command_scope)?;
+    if command_scope.trim().is_empty() {
+        return Err(crate::DevRelayError::Config(
+            "command_scope must not be blank".to_string(),
+        ));
+    }
+    if command_hash.len() != 64
+        || !command_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(crate::DevRelayError::Config(
+            "command_hash must be a 64-character lowercase hex digest".to_string(),
+        ));
     }
     Ok(())
 }
@@ -2811,6 +3175,7 @@ mod tests {
             "device_revocations",
             "devices",
             "task_runs",
+            "command_trust_approvals",
         ] {
             assert!(table_exists(&db, table), "{table} should exist");
         }
@@ -2837,6 +3202,8 @@ mod tests {
         assert!(index_exists(&db, "idx_audit_events_snapshot"));
         assert!(index_exists(&db, "idx_audit_events_lease"));
         assert!(index_exists(&db, "idx_device_revocations_revoked_at"));
+        assert!(index_exists(&db, "idx_command_trust_project_device_scope"));
+        assert!(index_exists(&db, "idx_command_trust_hash"));
 
         let journal_mode: String = db
             .connection()
@@ -2987,6 +3354,21 @@ mod tests {
         ] {
             assert!(column_exists(&db, "device_revocations", column), "{column}");
         }
+        for column in [
+            "approval_id",
+            "project_id",
+            "device_id",
+            "command_scope",
+            "command_hash",
+            "decision",
+            "consumed_at_unix_seconds",
+            "created_at_unix_seconds",
+        ] {
+            assert!(
+                column_exists(&db, "command_trust_approvals", column),
+                "{column}"
+            );
+        }
     }
 
     #[test]
@@ -3067,6 +3449,12 @@ mod tests {
             "task_runs",
             "session_id",
             "sessions"
+        ));
+        assert!(foreign_key_exists(
+            &db,
+            "command_trust_approvals",
+            "project_id",
+            "projects"
         ));
     }
 
@@ -3189,6 +3577,127 @@ mod tests {
             db.list_audit_events(Some("project-a"), 10).unwrap(),
             vec![first]
         );
+    }
+
+    #[test]
+    fn command_trust_records_are_project_device_scoped_and_detect_changed_hashes() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let mut db = MetadataDb::open(&path).unwrap();
+        db.ensure_default_session("project-a", "Demo", None)
+            .unwrap();
+        let hash_a = "a".repeat(64);
+        let hash_b = "b".repeat(64);
+
+        let missing = db
+            .evaluate_command_trust("project-a", "device-a", "manifest", &hash_a)
+            .unwrap();
+        assert_eq!(missing.status, CommandTrustStatus::Unapproved);
+
+        let trusted = db
+            .record_command_trust_decision_at(
+                "project-a",
+                "device-a",
+                "manifest",
+                &hash_a,
+                CommandTrustDecision::TrustThisVersion,
+                100,
+            )
+            .unwrap();
+        assert_eq!(trusted.decision, CommandTrustDecision::TrustThisVersion);
+
+        let same_device_same_hash = db
+            .evaluate_command_trust("project-a", "device-a", "manifest", &hash_a)
+            .unwrap();
+        assert_eq!(same_device_same_hash.status, CommandTrustStatus::Trusted);
+        assert_eq!(
+            same_device_same_hash
+                .approval
+                .as_ref()
+                .unwrap()
+                .command_hash,
+            hash_a
+        );
+
+        let same_device_new_hash = db
+            .evaluate_command_trust("project-a", "device-a", "manifest", &hash_b)
+            .unwrap();
+        assert_eq!(same_device_new_hash.status, CommandTrustStatus::Changed);
+        assert_eq!(
+            same_device_new_hash.previous_hash.as_deref(),
+            Some(hash_a.as_str())
+        );
+
+        let other_device_same_hash = db
+            .evaluate_command_trust("project-a", "device-b", "manifest", &hash_a)
+            .unwrap();
+        assert_eq!(
+            other_device_same_hash.status,
+            CommandTrustStatus::Unapproved
+        );
+    }
+
+    #[test]
+    fn command_trust_allow_once_is_consumed_and_reject_blocks_hash() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let mut db = MetadataDb::open(&path).unwrap();
+        db.ensure_default_session("project-a", "Demo", None)
+            .unwrap();
+        let once_hash = "c".repeat(64);
+        let rejected_hash = "d".repeat(64);
+
+        db.record_command_trust_decision_at(
+            "project-a",
+            "device-a",
+            "manifest",
+            &once_hash,
+            CommandTrustDecision::AllowOnce,
+            100,
+        )
+        .unwrap();
+
+        let before = db
+            .evaluate_command_trust("project-a", "device-a", "manifest", &once_hash)
+            .unwrap();
+        assert_eq!(before.status, CommandTrustStatus::ApprovedOnce);
+        assert!(before.status.approved());
+
+        let consumed = db
+            .authorize_command_trust_at("project-a", "device-a", "manifest", &once_hash, 101)
+            .unwrap();
+        assert_eq!(consumed.status, CommandTrustStatus::ApprovedOnce);
+        assert_eq!(
+            consumed.approval.as_ref().unwrap().consumed_at_unix_seconds,
+            Some(101)
+        );
+
+        let after = db
+            .evaluate_command_trust("project-a", "device-a", "manifest", &once_hash)
+            .unwrap();
+        assert_eq!(after.status, CommandTrustStatus::Unapproved);
+
+        db.record_command_trust_decision_at(
+            "project-a",
+            "device-a",
+            "manifest",
+            &rejected_hash,
+            CommandTrustDecision::Reject,
+            102,
+        )
+        .unwrap();
+
+        let rejected = db
+            .authorize_command_trust_at("project-a", "device-a", "manifest", &rejected_hash, 103)
+            .unwrap();
+        assert_eq!(rejected.status, CommandTrustStatus::Rejected);
+        assert!(!rejected.status.approved());
+
+        let audits = db.list_audit_events(Some("project-a"), 10).unwrap();
+        assert_eq!(audits[0].event_type, AuditEventType::SecurityBlocked);
+        assert_eq!(audits[0].detail["decision"], "reject");
+        assert_eq!(audits[1].event_type, AuditEventType::CommandApproved);
+        assert_eq!(audits[1].detail["decision"], "allow-once");
     }
 
     #[test]
@@ -4297,7 +4806,7 @@ WHERE snapshot_id = ?1
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 9);
+        assert_eq!(count, 10);
     }
 
     #[test]

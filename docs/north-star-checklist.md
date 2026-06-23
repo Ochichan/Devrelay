@@ -1327,17 +1327,17 @@ Conventions:
 
 ### M9.1 Trust Hashes
 
-- [ ] Define canonical command hash algorithm.
-- [ ] Hash environment command.
-- [ ] Hash healthcheck command.
-- [ ] Hash task command.
+- [x] Define canonical command hash algorithm.
+- [x] Hash environment command.
+- [x] Hash healthcheck command.
+- [x] Hash task command.
 - [ ] Hash bootstrap script content.
-- [ ] Store approved hashes per project/device.
-- [ ] Detect changed command hash.
-- [ ] Add "allow once" approval.
-- [ ] Add "trust this version" approval.
-- [ ] Add "reject" path.
-- [ ] Add trust hash tests.
+- [x] Store approved hashes per project/device.
+- [x] Detect changed command hash.
+- [x] Add "allow once" approval.
+- [x] Add "trust this version" approval.
+- [x] Add "reject" path.
+- [x] Add trust hash tests.
 
 ### M9.2 Profile Selection
 

@@ -255,7 +255,8 @@ pub use sparse::{
     inspect_sparse_checkout,
 };
 pub use storage::{
-    CanonicalPublishRequest, CanonicalPublishResult, HandoffCommitSnapshotPreflight,
+    CanonicalPublishRequest, CanonicalPublishResult, CommandTrustDecision, CommandTrustEvaluation,
+    CommandTrustRecord, CommandTrustStatus, HandoffCommitSnapshotPreflight,
     InactiveForkPublishRequest, InactiveForkPublishResult, MetadataDb, MetadataDbFaultPoint,
     PairingStartRequest,
 };
