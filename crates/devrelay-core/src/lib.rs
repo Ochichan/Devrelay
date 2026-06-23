@@ -176,7 +176,7 @@ pub use storage::{
 };
 pub use submodule::{
     SubmoduleReport, SubmoduleState, SubmoduleStatus, inspect_submodules,
-    restore_clean_submodule_recorded_commit,
+    inspect_submodules_with_depth, restore_clean_submodule_recorded_commit,
 };
 pub use transport_security::{
     CONTROL_ALPN_PROTOCOL, CONTROL_PROTOCOL_VERSION, ControlPlaneReplayCache,

@@ -3,12 +3,16 @@
 use crate::{DevRelayError, GitRepo, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+const DEFAULT_SUBMODULE_RECURSION_DEPTH: usize = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SubmoduleReport {
     pub repo: PathBuf,
     pub submodules: Vec<SubmoduleState>,
+    pub max_depth_exceeded: Vec<String>,
+    pub cycles: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -37,17 +41,23 @@ struct SubmoduleConfig {
 }
 
 pub fn inspect_submodules(repo: &GitRepo) -> Result<SubmoduleReport> {
-    let mut submodules = Vec::new();
-    for (name, config) in submodule_configs(repo)? {
-        if let Some(path) = config.path {
-            submodules.push(inspect_submodule(repo, name, path, config.url)?);
-        }
-    }
-    submodules.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(SubmoduleReport {
+    inspect_submodules_with_depth(repo, DEFAULT_SUBMODULE_RECURSION_DEPTH)
+}
+
+pub fn inspect_submodules_with_depth(repo: &GitRepo, max_depth: usize) -> Result<SubmoduleReport> {
+    let mut report = SubmoduleReport {
         repo: repo.path().to_path_buf(),
-        submodules,
-    })
+        submodules: Vec::new(),
+        max_depth_exceeded: Vec::new(),
+        cycles: Vec::new(),
+    };
+    inspect_submodules_recursive(repo, "", 0, max_depth, &mut Vec::new(), &mut report)?;
+    report
+        .submodules
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    report.max_depth_exceeded.sort();
+    report.cycles.sort();
+    Ok(report)
 }
 
 pub fn restore_clean_submodule_recorded_commit(repo: &GitRepo, path: &str) -> Result<()> {
@@ -125,6 +135,78 @@ fn submodule_configs(repo: &GitRepo) -> Result<BTreeMap<String, SubmoduleConfig>
         }
     }
     Ok(configs)
+}
+
+fn inspect_submodules_recursive(
+    repo: &GitRepo,
+    prefix: &str,
+    depth: usize,
+    max_depth: usize,
+    stack: &mut Vec<(PathBuf, String)>,
+    report: &mut SubmoduleReport,
+) -> Result<()> {
+    let canonical = canonical_path(repo.path());
+    if let Some(index) = stack.iter().position(|(path, _)| path == &canonical) {
+        let mut cycle = stack[index..]
+            .iter()
+            .map(|(_, label)| label.clone())
+            .collect::<Vec<_>>();
+        cycle.push(display_prefix(prefix));
+        report.cycles.push(cycle);
+        return Ok(());
+    }
+    stack.push((canonical, display_prefix(prefix)));
+
+    for (name, config) in submodule_configs(repo)? {
+        let Some(local_path) = config.path else {
+            continue;
+        };
+        let mut state = inspect_submodule(repo, name, local_path.clone(), config.url)?;
+        let display_path = join_repo_path(prefix, &local_path);
+        let submodule_path = repo.path().join(PathBuf::from(&local_path));
+        let nested_config_exists = submodule_path.join(".gitmodules").exists();
+        let initialized = state.worktree_commit.is_some();
+        state.path = display_path.clone();
+        report.submodules.push(state);
+
+        if initialized && nested_config_exists {
+            if depth >= max_depth {
+                report.max_depth_exceeded.push(display_path);
+            } else {
+                inspect_submodules_recursive(
+                    &GitRepo::new(submodule_path),
+                    &display_path,
+                    depth + 1,
+                    max_depth,
+                    stack,
+                    report,
+                )?;
+            }
+        }
+    }
+
+    stack.pop();
+    Ok(())
+}
+
+fn canonical_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn display_prefix(prefix: &str) -> String {
+    if prefix.is_empty() {
+        ".".to_string()
+    } else {
+        prefix.to_string()
+    }
+}
+
+fn join_repo_path(prefix: &str, path: &str) -> String {
+    if prefix.is_empty() {
+        path.to_string()
+    } else {
+        format!("{prefix}/{path}")
+    }
 }
 
 fn inspect_submodule(
@@ -245,6 +327,42 @@ mod tests {
         assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
     }
 
+    #[test]
+    fn reports_submodule_depth_limits_and_cycles() {
+        let temp = tempfile::tempdir().unwrap();
+        let root_path = temp.path().join("root");
+        let child_path = root_path.join("child");
+        let grandchild_path = child_path.join("grandchild");
+        fs::create_dir_all(&grandchild_path).unwrap();
+        let root = init_repo(&root_path);
+        commit_file(&root_path, "root.txt", "root\n", "root");
+        init_repo(&child_path);
+        commit_file(&child_path, "child.txt", "child\n", "child");
+        init_repo(&grandchild_path);
+        commit_file(
+            &grandchild_path,
+            "grandchild.txt",
+            "grandchild\n",
+            "grandchild",
+        );
+        write_gitmodules(&root_path, "child", "child");
+        write_gitmodules(&child_path, "grandchild", "grandchild");
+
+        let report = inspect_submodules_with_depth(&root, 0).unwrap();
+
+        assert_eq!(report.max_depth_exceeded, vec!["child"]);
+
+        write_gitmodules(&root_path, "self", ".");
+        let report = inspect_submodules_with_depth(&root, 4).unwrap();
+
+        assert!(
+            report
+                .cycles
+                .iter()
+                .any(|cycle| cycle == &vec![".".to_string(), ".".to_string()])
+        );
+    }
+
     fn init_repo(root: &Path) -> GitRepo {
         git(root, &["init", "-b", "main"]);
         git(root, &["config", "user.name", "DevRelay Test"]);
@@ -288,5 +406,19 @@ mod tests {
             .env("GIT_COMMITTER_EMAIL", "devrelay-test@example.local")
             .output()
             .unwrap()
+    }
+
+    fn commit_file(root: &Path, path: &str, contents: &str, message: &str) {
+        fs::write(root.join(path), contents).unwrap();
+        git(root, &["add", path]);
+        git(root, &["commit", "-m", message]);
+    }
+
+    fn write_gitmodules(root: &Path, name: &str, path: &str) {
+        fs::write(
+            root.join(".gitmodules"),
+            format!("[submodule \"{name}\"]\n\tpath = {path}\n\turl = {path}\n"),
+        )
+        .unwrap();
     }
 }

@@ -1687,8 +1687,8 @@ Conventions:
 - [x] Detect dirty submodule state.
 - [ ] Create child project/session for dirty submodule.
 - [ ] Store parent-child snapshot topology.
-- [ ] Add recursion depth limit.
-- [ ] Add cycle detection.
+- [x] Add recursion depth limit.
+- [x] Add cycle detection.
 - [x] Add submodule tests.
 
 ### M12.3 Git LFS
