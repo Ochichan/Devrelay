@@ -226,6 +226,47 @@ fn status_direct_bypasses_agent_socket() {
 
 #[cfg(unix)]
 #[test]
+fn agent_unavailable_reports_direct_fallback() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-agent-unavailable-test-{}-{}",
+        std::process::id(),
+        "repo"
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+    init_git_repo(&root);
+    write_manifest(
+        &root,
+        "agent-unavailable-project",
+        "Agent Unavailable Project",
+    );
+
+    let output = devrelay()
+        .args([
+            "--json-errors",
+            "--agent-socket",
+            root.join("missing.sock").to_str().unwrap(),
+            "status",
+            "--repo",
+            root.to_str().unwrap(),
+            "--manifest",
+            root.join("devrelay.toml").to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("DR-IPC-LOCAL"));
+    assert!(stderr.contains("failed to contact local DevRelay agent"));
+    assert!(stderr.contains("--direct"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
 fn project_commands_use_agent_rpc_by_default() {
     use devrelay_core::{
         IpcConnection, IpcLimits, IpcTransport, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,

@@ -537,7 +537,7 @@ Conventions:
 - [x] Route recover through agent.
 - [x] Route apply through agent.
 - [ ] Preserve CLI JSON output compatibility.
-- [ ] Add fallback message when agent is unavailable.
+- [x] Add fallback message when agent is unavailable.
 - [ ] Add integration test with spawned agent.
 
 ### M2.5 Event Stream
