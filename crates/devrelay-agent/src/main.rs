@@ -1,5 +1,13 @@
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
+use devrelay_core::{
+    AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, LogRedactor,
+    METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
+    METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
+    METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
+    MetadataDb, StructuredLogLevel,
+};
 #[cfg(unix)]
 use devrelay_core::{
     ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
@@ -15,13 +23,6 @@ use devrelay_core::{
     StoredSnapshot, StructuredLogFile, StructuredLogRecord, TypedEventPayload, UnixIpcConnection,
     UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, WorkspaceStateChangedEvent,
     apply_snapshot, classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
-};
-use devrelay_core::{
-    DevRelayHome, LocalConfig, LogRedactor, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
-    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE,
-    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
-    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE,
-    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb, StructuredLogLevel,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -94,9 +95,12 @@ impl LogLevel {
 #[derive(Debug, Serialize)]
 struct AgentHealth {
     status: &'static str,
+    role: AgentRole,
+    anchor_mode: AnchorMode,
     foreground: bool,
     config_path: PathBuf,
     socket_path: PathBuf,
+    anchor: Option<AnchorLayout>,
     project_count: usize,
     database_path: PathBuf,
     shutdown_requested: bool,
@@ -106,6 +110,8 @@ struct AgentHealth {
 struct AgentState {
     foreground: bool,
     home: DevRelayHome,
+    role: AgentRole,
+    anchor_layout: Option<AnchorLayout>,
     config_path: PathBuf,
     socket_path: PathBuf,
     config: Arc<Mutex<LocalConfig>>,
@@ -159,9 +165,12 @@ impl AgentState {
     fn health(&self) -> AgentHealth {
         AgentHealth {
             status: "ok",
+            role: self.role,
+            anchor_mode: self.anchor_mode(),
             foreground: self.foreground,
             config_path: self.config_path.clone(),
             socket_path: self.socket_path.clone(),
+            anchor: self.anchor_layout.clone(),
             project_count: self.project_count(),
             database_path: self.database_path.clone(),
             shutdown_requested: self.shutdown.load(Ordering::SeqCst),
@@ -173,6 +182,13 @@ impl AgentState {
             .lock()
             .map(|config| config.project_registry.projects.len())
             .unwrap_or_default()
+    }
+
+    fn anchor_mode(&self) -> AnchorMode {
+        self.config
+            .lock()
+            .map(|config| config.anchor_mode)
+            .unwrap_or(AnchorMode::LocalOnly)
     }
 
     fn supported_methods() -> Vec<String> {
@@ -289,8 +305,13 @@ fn main() -> anyhow::Result<()> {
     home.create_base_dirs()?;
     let config_path = cli.config.clone().unwrap_or_else(|| home.config_file());
     let config = load_or_create_config(&config_path)?;
-    let database_path = home.root().join("agent.sqlite");
+    let role = AgentRole::from_anchor_mode(config.anchor_mode);
+    if role == AgentRole::Anchor {
+        home.create_anchor_dirs()?;
+    }
+    let database_path = metadata_database_path_for_role(&home, role);
     let _db = MetadataDb::open(&database_path)?;
+    let anchor_layout = (role == AgentRole::Anchor).then(|| home.anchor_layout());
     let socket_path = cli
         .socket_path
         .clone()
@@ -307,6 +328,7 @@ fn main() -> anyhow::Result<()> {
         )
         .with_field("foreground", cli.foreground.to_string())
         .with_field("log_level", cli.log_level.as_str())
+        .with_field("role", role.label())
         .with_field(
             "project_count",
             config.project_registry.projects.len().to_string(),
@@ -317,6 +339,8 @@ fn main() -> anyhow::Result<()> {
     let state = AgentState {
         foreground: cli.foreground,
         home,
+        role,
+        anchor_layout,
         config_path,
         socket_path,
         config: Arc::new(Mutex::new(config)),
@@ -354,6 +378,13 @@ fn main() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+fn metadata_database_path_for_role(home: &DevRelayHome, role: AgentRole) -> PathBuf {
+    match role {
+        AgentRole::LocalOnly => home.root().join("agent.sqlite"),
+        AgentRole::Anchor => home.anchor_metadata_db_path(),
+    }
 }
 
 #[cfg(unix)]

@@ -9,21 +9,23 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(unix)]
 use devrelay_core::AgentRpcClient;
 use devrelay_core::{
-    ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
-    DevRelayError, DevRelayHome, DiagnosticsExportParams, DiagnosticsExportResult, ErrorInfo,
-    GitRepo, LocalConfig, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
-    METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
-    METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
-    METHOD_STATUS_GET, Manifest, PathDecision, PatternConfig, PortablePathsPolicy,
-    ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
-    ProjectsRemoveParams, ProjectsShowParams, RecoverListParams, RecoverListResult,
-    RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult, ServiceTemplate,
-    ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetParams,
-    StatusGetResult, StatusSummary, StoredSnapshot, UntrackedPolicy, WorkspaceConfig,
-    WorkspaceRegistryEntry, WorkspaceState, apply_snapshot, classify_untracked_paths,
-    create_snapshot, linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
-    read_snapshot_file, workspace_id_for, write_snapshot_file,
+    AgentRole, AnchorLayout, AnchorMode, ApplySnapshotParams, ApplySnapshotResult,
+    CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome,
+    DiagnosticsExportParams, DiagnosticsExportResult, ErrorInfo, GitRepo, LocalConfig,
+    METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
+    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
+    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
+    MetadataDb, PathDecision, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
+    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
+    RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
+    RecoverShowResult, ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind,
+    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
+    StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
+    apply_snapshot, classify_untracked_paths, create_snapshot, linux_systemd_user_template,
+    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file, workspace_id_for,
+    write_snapshot_file,
 };
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,6 +54,10 @@ enum Command {
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
+    },
+    Anchor {
+        #[command(subcommand)]
+        command: AnchorCommand,
     },
     Config {
         #[command(subcommand)]
@@ -160,6 +166,18 @@ enum AgentCommand {
     Status {
         #[arg(long)]
         service_dir: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AnchorCommand {
+    Init {
+        #[arg(long)]
+        json: bool,
+    },
+    Status {
         #[arg(long)]
         json: bool,
     },
@@ -363,6 +381,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
 
     match command {
         Command::Agent { command } => handle_agent_command(command)?,
+        Command::Anchor { command } => handle_anchor_command(command)?,
         Command::Continue {
             source,
             target,
@@ -744,6 +763,138 @@ fn handle_agent_command(command: AgentCommand) -> anyhow::Result<()> {
                 println!("  service: {}", template.service_path.display());
             }
         }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct AnchorStatusOutput {
+    initialized: bool,
+    role: AgentRole,
+    anchor_mode: AnchorMode,
+    home: PathBuf,
+    config_path: PathBuf,
+    layout: AnchorLayout,
+    metadata_db_exists: bool,
+    snapshot_repo_root_exists: bool,
+    cas_root_exists: bool,
+    startup_path_exists: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct AnchorStartupRecord {
+    version: u32,
+    role: AgentRole,
+    config_path: PathBuf,
+    metadata_db_path: PathBuf,
+    socket_path: PathBuf,
+}
+
+fn handle_anchor_command(command: AnchorCommand) -> anyhow::Result<()> {
+    match command {
+        AnchorCommand::Init { json } => {
+            let status = init_anchor()?;
+            render_anchor_status("anchor initialized", &status, json)
+        }
+        AnchorCommand::Status { json } => {
+            let status = anchor_status()?;
+            render_anchor_status("anchor status", &status, json)
+        }
+    }
+}
+
+fn init_anchor() -> anyhow::Result<AnchorStatusOutput> {
+    let home = DevRelayHome::resolve()?;
+    home.create_anchor_dirs()?;
+    let config_path = home.config_file();
+    let mut config = if config_path.exists() {
+        LocalConfig::load(&config_path)?
+    } else {
+        LocalConfig::default()
+    };
+    config.anchor_mode = AnchorMode::UserSelected;
+    config.save(&config_path)?;
+    let _db = MetadataDb::open(home.anchor_metadata_db_path())?;
+    write_anchor_startup_record(&home, &config_path)?;
+    Ok(anchor_status_from_config(home, config_path, config))
+}
+
+fn anchor_status() -> anyhow::Result<AnchorStatusOutput> {
+    let home = DevRelayHome::resolve()?;
+    let config_path = home.config_file();
+    let config = if config_path.exists() {
+        LocalConfig::load(&config_path)?
+    } else {
+        LocalConfig::default()
+    };
+    Ok(anchor_status_from_config(home, config_path, config))
+}
+
+fn anchor_status_from_config(
+    home: DevRelayHome,
+    config_path: PathBuf,
+    config: LocalConfig,
+) -> AnchorStatusOutput {
+    let layout = home.anchor_layout();
+    let metadata_db_exists = layout.metadata_db_path.exists();
+    let snapshot_repo_root_exists = layout.snapshot_repo_root.is_dir();
+    let cas_root_exists = layout.cas_root.is_dir();
+    let startup_path_exists = layout.startup_path.exists();
+    let role = AgentRole::from_anchor_mode(config.anchor_mode);
+    let initialized = role == AgentRole::Anchor
+        && metadata_db_exists
+        && snapshot_repo_root_exists
+        && cas_root_exists
+        && startup_path_exists;
+
+    AnchorStatusOutput {
+        initialized,
+        role,
+        anchor_mode: config.anchor_mode,
+        home: home.root().to_path_buf(),
+        config_path,
+        layout,
+        metadata_db_exists,
+        snapshot_repo_root_exists,
+        cas_root_exists,
+        startup_path_exists,
+    }
+}
+
+fn write_anchor_startup_record(home: &DevRelayHome, config_path: &Path) -> anyhow::Result<()> {
+    let record = AnchorStartupRecord {
+        version: 1,
+        role: AgentRole::Anchor,
+        config_path: config_path.to_path_buf(),
+        metadata_db_path: home.anchor_metadata_db_path(),
+        socket_path: home.agent_socket_path(),
+    };
+    fs::write(
+        home.anchor_startup_path(),
+        serde_json::to_vec_pretty(&record)?,
+    )?;
+    Ok(())
+}
+
+fn render_anchor_status(
+    title: &str,
+    status: &AnchorStatusOutput,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(status)?);
+    } else {
+        println!("{title}: {}", status.role.label());
+        println!("  initialized: {}", status.initialized);
+        println!("  home: {}", status.home.display());
+        println!("  config: {}", status.config_path.display());
+        println!("  metadata: {}", status.layout.metadata_db_path.display());
+        println!(
+            "  snapshots: {}",
+            status.layout.snapshot_repo_root.display()
+        );
+        println!("  cas: {}", status.layout.cas_root.display());
+        println!("  startup: {}", status.layout.startup_path.display());
     }
     Ok(())
 }

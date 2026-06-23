@@ -1367,6 +1367,57 @@ fn config_save_and_load_round_trip() {
 }
 
 #[test]
+fn anchor_init_and_status_report_layout() {
+    let root = std::env::temp_dir().join(format!("devrelay-anchor-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let init = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["anchor", "init", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let initialized: serde_json::Value = serde_json::from_slice(&init.stdout).unwrap();
+    assert_eq!(initialized["initialized"], true);
+    assert_eq!(initialized["role"], "anchor");
+    assert_eq!(initialized["anchor_mode"], "user-selected");
+    assert_eq!(
+        initialized["layout"]["metadata_db_path"],
+        root.join("anchor")
+            .join("metadata.sqlite")
+            .to_str()
+            .unwrap()
+    );
+    assert!(root.join("config.toml").exists());
+    assert!(root.join("anchor").join("metadata.sqlite").exists());
+    assert!(root.join("anchor").join("snapshots").is_dir());
+    assert!(root.join("anchor").join("cas").is_dir());
+    assert!(root.join("anchor").join("startup.json").exists());
+
+    let status = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["anchor", "status", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["initialized"], true);
+    assert_eq!(status["role"], "anchor");
+    assert_eq!(status["metadata_db_exists"], true);
+    assert_eq!(status["startup_path_exists"], true);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn project_registry_commands_round_trip() {
     let root = std::env::temp_dir().join(format!(
         "devrelay-project-test-{}-{}",

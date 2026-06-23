@@ -30,10 +30,72 @@ fn foreground_health_smoke_test_loads_config_and_migrates_database() {
     assert!(output.status.success());
     let health: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(health["status"].as_str(), Some("ok"));
+    assert_eq!(health["role"].as_str(), Some("local-only"));
+    assert_eq!(health["anchor_mode"].as_str(), Some("local-only"));
+    assert!(health["anchor"].is_null());
     assert_eq!(health["foreground"].as_bool(), Some(true));
     assert_eq!(health["project_count"].as_u64(), Some(0));
     assert!(config.exists());
     assert!(root.join("agent.sqlite").exists());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn foreground_health_reports_anchor_role_from_config() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-agent-anchor-health-test-{}",
+        std::process::id()
+    ));
+    let config = root.join("config.toml");
+    let socket = root.join("agent.sock");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+
+    let local_config = devrelay_core::LocalConfig {
+        anchor_mode: devrelay_core::AnchorMode::UserSelected,
+        ..devrelay_core::LocalConfig::default()
+    };
+    local_config.save(&config).unwrap();
+
+    let output = agent()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "--foreground",
+            "--config",
+            config.to_str().unwrap(),
+            "--socket-path",
+            socket.to_str().unwrap(),
+            "--health",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let health: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(health["status"], "ok");
+    assert_eq!(health["role"], "anchor");
+    assert_eq!(health["anchor_mode"], "user-selected");
+    assert_eq!(
+        health["database_path"].as_str(),
+        Some(
+            root.join("anchor")
+                .join("metadata.sqlite")
+                .to_str()
+                .unwrap()
+        )
+    );
+    assert_eq!(
+        health["anchor"]["startup_path"].as_str(),
+        Some(root.join("anchor").join("startup.json").to_str().unwrap())
+    );
+    assert!(root.join("anchor").join("metadata.sqlite").exists());
+    assert!(root.join("anchor").join("snapshots").is_dir());
+    assert!(root.join("anchor").join("cas").is_dir());
 
     let _ = std::fs::remove_dir_all(root);
 }

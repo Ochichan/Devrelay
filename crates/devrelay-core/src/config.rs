@@ -49,6 +49,29 @@ pub enum AnchorMode {
     UserSelected,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentRole {
+    LocalOnly,
+    Anchor,
+}
+
+impl AgentRole {
+    pub fn from_anchor_mode(anchor_mode: AnchorMode) -> Self {
+        match anchor_mode {
+            AnchorMode::LocalOnly => Self::LocalOnly,
+            AnchorMode::UserSelected => Self::Anchor,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LocalOnly => "local-only",
+            Self::Anchor => "anchor",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectRegistryIndex {
@@ -382,6 +405,19 @@ mod tests {
         assert_eq!(decoded.editor.command, "system");
         assert_eq!(decoded.resource_profile, ResourceProfile::Balanced);
         assert_eq!(decoded.anchor_mode, AnchorMode::LocalOnly);
+    }
+
+    #[test]
+    fn agent_role_is_derived_from_anchor_mode() {
+        assert_eq!(
+            AgentRole::from_anchor_mode(AnchorMode::LocalOnly),
+            AgentRole::LocalOnly
+        );
+        assert_eq!(
+            AgentRole::from_anchor_mode(AnchorMode::UserSelected),
+            AgentRole::Anchor
+        );
+        assert_eq!(AgentRole::Anchor.label(), "anchor");
     }
 
     #[test]

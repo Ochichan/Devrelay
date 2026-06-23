@@ -52,9 +52,9 @@ mod snapshot_store;
 mod storage;
 
 pub use config::{
-    AnchorMode, EditorPreference, LocalConfig, ProjectRegistryEntry, ProjectRegistryIndex,
-    RedactedLocalConfig, ResourceProfile, WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry,
-    WorkspaceState, migrate_local_config, workspace_id_for,
+    AgentRole, AnchorMode, EditorPreference, LocalConfig, ProjectRegistryEntry,
+    ProjectRegistryIndex, RedactedLocalConfig, ResourceProfile, WORKSPACE_ID_PREFIX,
+    WorkspaceRegistryEntry, WorkspaceState, migrate_local_config, workspace_id_for,
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{
@@ -64,7 +64,7 @@ pub use events::{
     SnapshotLocalCreatedEvent, TypedEventPayload, WorkspaceStateChangedEvent,
 };
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
-pub use home::DevRelayHome;
+pub use home::{AnchorLayout, DevRelayHome};
 pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 #[cfg(unix)]
 pub use ipc::{UnixIpcConnection, UnixIpcListener};

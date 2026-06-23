@@ -6,6 +6,7 @@
 //! Windows.
 
 use crate::{DevRelayError, Result};
+use serde::Serialize;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -16,6 +17,15 @@ const DEVRELAY_HOME_ENV: &str = "DEVRELAY_HOME";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DevRelayHome {
     root: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AnchorLayout {
+    pub data_dir: PathBuf,
+    pub metadata_db_path: PathBuf,
+    pub snapshot_repo_root: PathBuf,
+    pub cas_root: PathBuf,
+    pub startup_path: PathBuf,
 }
 
 impl DevRelayHome {
@@ -75,6 +85,36 @@ impl DevRelayHome {
         self.root.join("diagnostics")
     }
 
+    pub fn anchor_dir(&self) -> PathBuf {
+        self.root.join("anchor")
+    }
+
+    pub fn anchor_metadata_db_path(&self) -> PathBuf {
+        self.anchor_dir().join("metadata.sqlite")
+    }
+
+    pub fn anchor_snapshot_repo_root(&self) -> PathBuf {
+        self.anchor_dir().join("snapshots")
+    }
+
+    pub fn anchor_cas_root(&self) -> PathBuf {
+        self.anchor_dir().join("cas")
+    }
+
+    pub fn anchor_startup_path(&self) -> PathBuf {
+        self.anchor_dir().join("startup.json")
+    }
+
+    pub fn anchor_layout(&self) -> AnchorLayout {
+        AnchorLayout {
+            data_dir: self.anchor_dir(),
+            metadata_db_path: self.anchor_metadata_db_path(),
+            snapshot_repo_root: self.anchor_snapshot_repo_root(),
+            cas_root: self.anchor_cas_root(),
+            startup_path: self.anchor_startup_path(),
+        }
+    }
+
     pub fn agent_socket_path(&self) -> PathBuf {
         self.root.join("agent.sock")
     }
@@ -89,6 +129,18 @@ impl DevRelayHome {
             fs::create_dir_all(dir)?;
         }
         self.check_permissions()
+    }
+
+    pub fn create_anchor_dirs(&self) -> Result<()> {
+        self.create_base_dirs()?;
+        for dir in [
+            self.anchor_dir(),
+            self.anchor_snapshot_repo_root(),
+            self.anchor_cas_root(),
+        ] {
+            fs::create_dir_all(dir)?;
+        }
+        Ok(())
     }
 
     pub fn create_project_dirs(&self, project_id: &str) -> Result<()> {
@@ -235,6 +287,25 @@ mod tests {
             home.agent_socket_path(),
             PathBuf::from("/tmp/devrelay-test/agent.sock")
         );
+
+        let anchor = home.anchor_layout();
+        assert_eq!(anchor.data_dir, PathBuf::from("/tmp/devrelay-test/anchor"));
+        assert_eq!(
+            anchor.metadata_db_path,
+            PathBuf::from("/tmp/devrelay-test/anchor/metadata.sqlite")
+        );
+        assert_eq!(
+            anchor.snapshot_repo_root,
+            PathBuf::from("/tmp/devrelay-test/anchor/snapshots")
+        );
+        assert_eq!(
+            anchor.cas_root,
+            PathBuf::from("/tmp/devrelay-test/anchor/cas")
+        );
+        assert_eq!(
+            anchor.startup_path,
+            PathBuf::from("/tmp/devrelay-test/anchor/startup.json")
+        );
     }
 
     #[test]
@@ -244,6 +315,7 @@ mod tests {
 
         home.create_base_dirs().unwrap();
         home.create_project_dirs("project123").unwrap();
+        home.create_anchor_dirs().unwrap();
 
         assert!(home.root().is_dir());
         assert!(home.projects_dir().is_dir());
@@ -251,6 +323,9 @@ mod tests {
         assert!(home.cas_dir("project123").is_dir());
         assert!(home.log_dir().is_dir());
         assert!(home.diagnostics_dir().is_dir());
+        assert!(home.anchor_dir().is_dir());
+        assert!(home.anchor_snapshot_repo_root().is_dir());
+        assert!(home.anchor_cas_root().is_dir());
     }
 
     #[test]

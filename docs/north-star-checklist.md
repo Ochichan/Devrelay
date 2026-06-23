@@ -611,16 +611,16 @@ Conventions:
 
 ### M3.1 Anchor Mode
 
-- [ ] Add anchor mode config field.
-- [ ] Add `devrelay anchor init`.
-- [ ] Add `devrelay anchor status`.
-- [ ] Add anchor data directory layout.
-- [ ] Add anchor metadata DB path.
-- [ ] Add anchor snapshot repo root.
-- [ ] Add anchor CAS root.
-- [ ] Add anchor startup path.
-- [ ] Add agent role detection.
-- [ ] Add role-specific health output.
+- [x] Add anchor mode config field.
+- [x] Add `devrelay anchor init`.
+- [x] Add `devrelay anchor status`.
+- [x] Add anchor data directory layout.
+- [x] Add anchor metadata DB path.
+- [x] Add anchor snapshot repo root.
+- [x] Add anchor CAS root.
+- [x] Add anchor startup path.
+- [x] Add agent role detection.
+- [x] Add role-specific health output.
 
 ### M3.2 Metadata Schema
 
