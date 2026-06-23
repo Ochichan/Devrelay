@@ -1054,7 +1054,7 @@ Conventions:
 - [x] Add free disk warning threshold.
 - [x] Add free disk hard stop threshold.
 - [x] Add pruning planner.
-- [ ] Add pruning executor.
+- [x] Add pruning executor.
 - [x] Add retention tests.
 - [x] Add quota tests.
 

@@ -6,8 +6,8 @@
 //! objects.
 
 use crate::{
-    DevRelayError, DevRelayHome, GitRepo, Manifest, MetadataDb, Result, SnapshotMetadata,
-    create_snapshot, write_snapshot_file,
+    DevRelayError, DevRelayHome, GitRepo, Manifest, MetadataDb, PruningDecisionAction, PruningPlan,
+    Result, SnapshotMetadata, create_snapshot, write_snapshot_file,
 };
 use rusqlite::{OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,12 @@ pub struct StoredSnapshot {
     pub label: Option<String>,
     pub metadata: SnapshotMetadata,
     pub created_at_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotPruneResult {
+    pub deleted_snapshot_ids: Vec<String>,
+    pub reclaimed_estimated_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,6 +219,57 @@ WHERE project_id = ?1 AND snapshot_id = ?2
             .ok_or_else(|| DevRelayError::Config(format!("unknown snapshot {snapshot_id}")))
     }
 
+    pub fn prune_snapshots(&mut self, plan: &PruningPlan) -> Result<SnapshotPruneResult> {
+        let latest_snapshot_id = self.latest_snapshot_id()?;
+        let mut deleted_snapshot_ids = Vec::new();
+        let mut reclaimed_estimated_bytes = 0_u64;
+
+        for decision in &plan.decisions {
+            let PruningDecisionAction::Delete { .. } = decision.action else {
+                continue;
+            };
+            let stored = self.get_snapshot(&decision.snapshot_id)?;
+            if stored.pinned {
+                return Err(DevRelayError::Config(format!(
+                    "refusing to prune pinned snapshot {}",
+                    stored.snapshot_id
+                )));
+            }
+            if latest_snapshot_id.as_deref() == Some(stored.snapshot_id.as_str()) {
+                return Err(DevRelayError::Config(format!(
+                    "refusing to prune latest snapshot {}",
+                    stored.snapshot_id
+                )));
+            }
+            if self.snapshot_has_children(&stored.snapshot_id)? {
+                return Err(DevRelayError::Config(format!(
+                    "refusing to prune snapshot {} while child snapshots still reference it",
+                    stored.snapshot_id
+                )));
+            }
+
+            self.delete_snapshot_refs(&stored.metadata)?;
+            let deleted = self.db.connection().execute(
+                "DELETE FROM snapshots WHERE project_id = ?1 AND snapshot_id = ?2 AND pinned = 0",
+                (self.project_id.as_str(), stored.snapshot_id.as_str()),
+            )?;
+            if deleted == 0 {
+                return Err(DevRelayError::Config(format!(
+                    "snapshot {} metadata was not pruned",
+                    stored.snapshot_id
+                )));
+            }
+            deleted_snapshot_ids.push(stored.snapshot_id);
+            reclaimed_estimated_bytes =
+                reclaimed_estimated_bytes.saturating_add(decision.estimated_size_bytes);
+        }
+
+        Ok(SnapshotPruneResult {
+            deleted_snapshot_ids,
+            reclaimed_estimated_bytes,
+        })
+    }
+
     fn insert_snapshot(
         &mut self,
         metadata: SnapshotMetadata,
@@ -307,6 +364,30 @@ LIMIT 1
         GitRepo::new(&self.snapshot_repo_path)
     }
 
+    fn delete_snapshot_refs(&self, metadata: &SnapshotMetadata) -> Result<()> {
+        let repo = self.snapshot_repo();
+        repo.run(&["update-ref", "-d", &metadata.index_ref()])?;
+        repo.run(&["update-ref", "-d", &metadata.work_ref()])?;
+        Ok(())
+    }
+
+    fn snapshot_has_children(&self, snapshot_id: &str) -> Result<bool> {
+        self.db
+            .connection()
+            .query_row(
+                r#"
+SELECT EXISTS(
+    SELECT 1
+    FROM snapshots
+    WHERE project_id = ?1 AND parent_snapshot_id = ?2
+)
+"#,
+                (self.project_id.as_str(), snapshot_id),
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     fn inject_fault(&self, fault: SnapshotStoreFaultPoint) -> Result<()> {
         inject_fault(self.fault, fault)
     }
@@ -384,6 +465,10 @@ fn injected_fault(fault: SnapshotStoreFaultPoint) -> DevRelayError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        PruningDecision, PruningReason, PruningScope, RetentionPolicy, SnapshotRetentionEntry,
+        plan_snapshot_pruning,
+    };
     use std::fs;
 
     fn manifest() -> Manifest {
@@ -412,6 +497,24 @@ portable_paths = "strict"
         repo.run(&["add", "."]).unwrap();
         repo.run(&["commit", "-m", "base"]).unwrap();
         repo
+    }
+
+    fn delete_plan(snapshot: &StoredSnapshot) -> PruningPlan {
+        PruningPlan {
+            scope: PruningScope::DeviceCache,
+            current_usage_bytes: snapshot.metadata.created_at_unix_seconds,
+            free_disk_bytes: 0,
+            target_reclaim_bytes: 1,
+            planned_reclaim_bytes: 1,
+            decisions: vec![PruningDecision {
+                snapshot_id: snapshot.snapshot_id.clone(),
+                estimated_size_bytes: 1,
+                action: PruningDecisionAction::Delete {
+                    reason: PruningReason::QuotaPressure,
+                },
+            }],
+            warnings: Vec::new(),
+        }
     }
 
     #[test]
@@ -602,5 +705,108 @@ portable_paths = "strict"
                 .run(&["rev-parse", "--verify", &snapshot.metadata.work_ref()])
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn pruning_executor_deletes_planned_snapshot_refs_and_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        let manifest = manifest();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id).unwrap();
+
+        fs::write(source_path.join("tracked.txt"), "first\n").unwrap();
+        let first = store.checkpoint(&source, &manifest, false, None).unwrap();
+        fs::write(source_path.join("tracked.txt"), "second\n").unwrap();
+        let mut leaf_metadata = create_snapshot(&source, &manifest).unwrap();
+        leaf_metadata.parent_snapshot_id = Some(first.snapshot_id.clone());
+        let leaf = store
+            .store_snapshot(&source, leaf_metadata, false, Some("leaf".to_string()))
+            .unwrap();
+        fs::write(source_path.join("tracked.txt"), "third\n").unwrap();
+        let mut latest_metadata = create_snapshot(&source, &manifest).unwrap();
+        latest_metadata.parent_snapshot_id = Some(first.snapshot_id.clone());
+        let latest = store
+            .store_snapshot(&source, latest_metadata, true, Some("latest".to_string()))
+            .unwrap();
+
+        let policy = RetentionPolicy {
+            hot_snapshot_count: 1,
+            hourly_thinning_hours: 0,
+            daily_thinning_days: 0,
+            ..RetentionPolicy::default()
+        };
+        let snapshots = vec![
+            SnapshotRetentionEntry::from_stored(&first, 10),
+            SnapshotRetentionEntry::from_stored(&leaf, 20),
+            SnapshotRetentionEntry::from_stored(&latest, 30),
+        ];
+        let plan = plan_snapshot_pruning(crate::PruningPlanInput {
+            snapshots: &snapshots,
+            policy,
+            scope: PruningScope::DeviceCache,
+            canonical_latest_snapshot_id: Some(&latest.snapshot_id),
+            handoff_protections: &[],
+            current_usage_bytes: 60,
+            free_disk_bytes: 1024 * 1024 * 1024,
+            now_unix_seconds: latest.created_at_unix_seconds.saturating_add(1),
+        });
+
+        let result = store.prune_snapshots(&plan).unwrap();
+
+        assert_eq!(result.deleted_snapshot_ids, vec![leaf.snapshot_id.clone()]);
+        assert_eq!(result.reclaimed_estimated_bytes, 20);
+        assert!(store.get_snapshot(&leaf.snapshot_id).is_err());
+        assert!(
+            store
+                .snapshot_repo()
+                .run(&["rev-parse", "--verify", &leaf.metadata.index_ref()])
+                .is_err()
+        );
+        assert!(
+            store
+                .snapshot_repo()
+                .run(&["rev-parse", "--verify", &leaf.metadata.work_ref()])
+                .is_err()
+        );
+        let remaining = store
+            .list_snapshots()
+            .unwrap()
+            .into_iter()
+            .map(|snapshot| snapshot.snapshot_id)
+            .collect::<Vec<_>>();
+        assert_eq!(remaining, vec![first.snapshot_id, latest.snapshot_id]);
+    }
+
+    #[test]
+    fn pruning_executor_refuses_pinned_and_latest_snapshots() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        let manifest = manifest();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id).unwrap();
+
+        fs::write(source_path.join("tracked.txt"), "pinned\n").unwrap();
+        let pinned = store
+            .checkpoint(&source, &manifest, true, Some("pinned".to_string()))
+            .unwrap();
+        fs::write(source_path.join("tracked.txt"), "latest\n").unwrap();
+        let latest = store.checkpoint(&source, &manifest, false, None).unwrap();
+
+        let pinned_err = store.prune_snapshots(&delete_plan(&pinned)).unwrap_err();
+        assert!(pinned_err.to_string().contains("pinned snapshot"));
+
+        let latest_err = store.prune_snapshots(&delete_plan(&latest)).unwrap_err();
+        assert!(latest_err.to_string().contains("latest snapshot"));
+
+        let remaining = store
+            .list_snapshots()
+            .unwrap()
+            .into_iter()
+            .map(|snapshot| snapshot.snapshot_id)
+            .collect::<Vec<_>>();
+        assert_eq!(remaining, vec![pinned.snapshot_id, latest.snapshot_id]);
     }
 }

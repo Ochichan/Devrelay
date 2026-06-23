@@ -190,7 +190,9 @@ pub use snapshot::{
     verify_snapshot, write_snapshot_file,
 };
 pub use snapshot_schema::SnapshotMetadata;
-pub use snapshot_store::{SnapshotStore, SnapshotStoreFaultPoint, StoredSnapshot};
+pub use snapshot_store::{
+    SnapshotPruneResult, SnapshotStore, SnapshotStoreFaultPoint, StoredSnapshot,
+};
 pub use sparse::{PartialCloneState, SparseCheckoutReport, inspect_sparse_checkout};
 pub use storage::{
     CanonicalPublishRequest, CanonicalPublishResult, InactiveForkPublishRequest,

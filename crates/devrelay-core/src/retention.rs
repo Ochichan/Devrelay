@@ -88,6 +88,8 @@ impl RetentionPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotRetentionEntry {
     pub snapshot_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_snapshot_id: Option<String>,
     pub sequence_number: i64,
     pub pinned: bool,
     pub created_at_unix_seconds: u64,
@@ -98,6 +100,7 @@ impl SnapshotRetentionEntry {
     pub fn from_stored(snapshot: &StoredSnapshot, estimated_size_bytes: u64) -> Self {
         Self {
             snapshot_id: snapshot.snapshot_id.clone(),
+            parent_snapshot_id: snapshot.parent_snapshot_id.clone(),
             sequence_number: snapshot.sequence_number,
             pinned: snapshot.pinned,
             created_at_unix_seconds: snapshot.created_at_unix_seconds,
@@ -118,6 +121,7 @@ pub enum RetentionKeepReason {
     CanonicalLatest,
     Pinned,
     HandoffProtected,
+    RetainedParent,
     HotSnapshot,
     HourlyThinning,
     DailyThinning,
@@ -127,7 +131,7 @@ impl RetentionKeepReason {
     fn is_hard(self) -> bool {
         matches!(
             self,
-            Self::CanonicalLatest | Self::Pinned | Self::HandoffProtected
+            Self::CanonicalLatest | Self::Pinned | Self::HandoffProtected | Self::RetainedParent
         )
     }
 }
@@ -414,7 +418,43 @@ fn retention_reasons(
         );
     }
 
+    protect_retained_parents(snapshots, &mut reasons);
     reasons
+}
+
+fn protect_retained_parents(
+    snapshots: &[SnapshotRetentionEntry],
+    reasons: &mut BTreeMap<String, BTreeSet<RetentionKeepReason>>,
+) {
+    let parents = snapshots
+        .iter()
+        .map(|snapshot| {
+            (
+                snapshot.snapshot_id.as_str(),
+                snapshot.parent_snapshot_id.as_deref(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut frontier = reasons
+        .iter()
+        .filter_map(|(snapshot_id, reasons)| (!reasons.is_empty()).then_some(snapshot_id.clone()))
+        .collect::<Vec<_>>();
+    let mut visited = BTreeSet::new();
+
+    while let Some(snapshot_id) = frontier.pop() {
+        if !visited.insert(snapshot_id.clone()) {
+            continue;
+        }
+        let Some(Some(parent_snapshot_id)) = parents.get(snapshot_id.as_str()) else {
+            continue;
+        };
+        add_reason(
+            reasons,
+            *parent_snapshot_id,
+            RetentionKeepReason::RetainedParent,
+        );
+        frontier.push((*parent_snapshot_id).to_string());
+    }
 }
 
 fn add_reason(
@@ -512,6 +552,7 @@ mod tests {
     ) -> SnapshotRetentionEntry {
         SnapshotRetentionEntry {
             snapshot_id: snapshot_id.to_string(),
+            parent_snapshot_id: None,
             sequence_number,
             pinned,
             created_at_unix_seconds,
