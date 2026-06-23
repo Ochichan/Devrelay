@@ -685,19 +685,19 @@ Conventions:
 
 ### M3.6 Canonical Publish
 
-- [ ] Add publish transaction.
-- [ ] Persist snapshot metadata.
-- [ ] Verify session ID.
-- [ ] Verify lease epoch.
-- [ ] Verify holder device ID.
-- [ ] Verify lease state active.
-- [ ] Compare-and-swap latest snapshot ID.
-- [ ] Preserve stale snapshot without making it latest.
-- [ ] Return stale publish error/safe action.
-- [ ] Add stale epoch test.
-- [ ] Add wrong holder test.
-- [ ] Add inactive holder test.
-- [ ] Add concurrent publish test.
+- [x] Add publish transaction.
+- [x] Persist snapshot metadata.
+- [x] Verify session ID.
+- [x] Verify lease epoch.
+- [x] Verify holder device ID.
+- [x] Verify lease state active.
+- [x] Compare-and-swap latest snapshot ID.
+- [x] Preserve stale snapshot without making it latest.
+- [x] Return stale publish error/safe action.
+- [x] Add stale epoch test.
+- [x] Add wrong holder test.
+- [x] Add inactive holder test.
+- [x] Add concurrent publish test.
 
 ### M3.7 Handoff Protocol
 

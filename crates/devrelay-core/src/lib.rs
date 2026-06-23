@@ -110,4 +110,4 @@ pub use snapshot::{
 };
 pub use snapshot_schema::SnapshotMetadata;
 pub use snapshot_store::{SnapshotStore, StoredSnapshot};
-pub use storage::MetadataDb;
+pub use storage::{CanonicalPublishRequest, CanonicalPublishResult, MetadataDb};

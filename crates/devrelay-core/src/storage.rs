@@ -5,7 +5,8 @@
 //! inside a transaction so a failed migration leaves the previous schema intact.
 
 use crate::{
-    DeviceIdentity, Result, SessionState, StoredSession, generate_session_id, unix_now_seconds,
+    DeviceIdentity, LeaseRecord, LeaseState, Result, SessionState, SnapshotMetadata, StoredSession,
+    StoredSnapshot, generate_session_id, unix_now_seconds,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction};
 use std::collections::BTreeSet;
@@ -180,6 +181,23 @@ CREATE INDEX idx_sessions_parent
 
 pub struct MetadataDb {
     conn: Connection,
+}
+
+pub struct CanonicalPublishRequest<'a> {
+    pub lease_id: &'a str,
+    pub session_id: &'a str,
+    pub expected_epoch: u64,
+    pub holder_device_id: &'a str,
+    pub expected_latest_snapshot_id: Option<&'a str>,
+    pub metadata: &'a SnapshotMetadata,
+    pub pinned: bool,
+    pub label: Option<&'a str>,
+}
+
+#[derive(Debug)]
+pub struct CanonicalPublishResult {
+    pub snapshot: StoredSnapshot,
+    pub latest_snapshot_id: String,
 }
 
 impl MetadataDb {
@@ -498,6 +516,207 @@ WHERE session_id = ?3
         self.get_session(session_id)?
             .ok_or_else(|| crate::DevRelayError::Config("session archive disappeared".to_string()))
     }
+
+    pub fn upsert_lease(&self, lease: &LeaseRecord) -> Result<()> {
+        self.conn.execute(
+            r#"
+INSERT INTO leases (
+    lease_id,
+    project_id,
+    holder_workspace_id,
+    state,
+    expires_at_unix_seconds,
+    session_id,
+    epoch,
+    holder_device_id,
+    latest_snapshot_id,
+    handoff_id
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+ON CONFLICT(lease_id) DO UPDATE SET
+    project_id = excluded.project_id,
+    state = excluded.state,
+    session_id = excluded.session_id,
+    epoch = excluded.epoch,
+    holder_device_id = excluded.holder_device_id,
+    latest_snapshot_id = excluded.latest_snapshot_id,
+    handoff_id = excluded.handoff_id
+"#,
+            (
+                lease.lease_id.as_str(),
+                lease.project_id.as_str(),
+                Option::<&str>::None,
+                lease.state.as_str(),
+                Option::<i64>::None,
+                lease.session_id.as_str(),
+                lease.epoch as i64,
+                lease.holder_device_id.as_deref(),
+                lease.latest_snapshot_id.as_deref(),
+                lease.handoff_id.as_deref(),
+            ),
+        )?;
+        Ok(())
+    }
+
+    pub fn get_lease(&self, lease_id: &str) -> Result<Option<LeaseRecord>> {
+        self.conn
+            .query_row(
+                r#"
+SELECT lease_id,
+       project_id,
+       session_id,
+       state,
+       epoch,
+       holder_device_id,
+       latest_snapshot_id,
+       handoff_id
+FROM leases
+WHERE lease_id = ?1
+"#,
+                [lease_id],
+                lease_record_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn publish_snapshot_canonical(
+        &mut self,
+        request: CanonicalPublishRequest<'_>,
+    ) -> Result<CanonicalPublishResult> {
+        request.metadata.validate()?;
+        if request.metadata.session_id.as_deref() != Some(request.session_id) {
+            return Err(crate::DevRelayError::Config(
+                "snapshot session_id does not match publish session".to_string(),
+            ));
+        }
+
+        let tx = self.conn.transaction()?;
+        let lease = tx
+            .query_row(
+                r#"
+SELECT lease_id,
+       project_id,
+       session_id,
+       state,
+       epoch,
+       holder_device_id,
+       latest_snapshot_id,
+       handoff_id
+FROM leases
+WHERE lease_id = ?1
+"#,
+                [request.lease_id],
+                lease_record_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| {
+                crate::DevRelayError::Config(format!("unknown lease {}", request.lease_id))
+            })?;
+
+        if lease.project_id != request.metadata.project_id {
+            return Err(crate::DevRelayError::Config(
+                "lease project_id does not match snapshot project_id".to_string(),
+            ));
+        }
+        if lease.session_id != request.session_id {
+            return Err(crate::DevRelayError::Config(
+                "lease session_id does not match publish session".to_string(),
+            ));
+        }
+        let session_exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE session_id = ?1 AND project_id = ?2)",
+            (request.session_id, request.metadata.project_id.as_str()),
+            |row| row.get(0),
+        )?;
+        if !session_exists {
+            return Err(crate::DevRelayError::Config(format!(
+                "unknown session {}",
+                request.session_id
+            )));
+        }
+        if lease.holder_device_id.as_deref() != Some(request.holder_device_id) {
+            return Err(crate::DevRelayError::Config(
+                "publish rejected: holder device mismatch".to_string(),
+            ));
+        }
+        if lease.state != LeaseState::Active {
+            return Err(crate::DevRelayError::Config(format!(
+                "publish rejected: lease state is {}",
+                lease.state.as_str()
+            )));
+        }
+
+        let metadata_json = serde_json::to_string(request.metadata)?;
+        let sequence_number: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM snapshots WHERE project_id = ?1",
+            [request.metadata.project_id.as_str()],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            r#"
+INSERT INTO snapshots (
+    snapshot_id,
+    project_id,
+    session_id,
+    parent_snapshot_id,
+    sequence_number,
+    pinned,
+    label,
+    metadata_json,
+    created_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+"#,
+            (
+                request.metadata.snapshot_id.as_str(),
+                request.metadata.project_id.as_str(),
+                request.session_id,
+                request.metadata.parent_snapshot_id.as_deref(),
+                sequence_number,
+                request.pinned,
+                request.label,
+                metadata_json.as_str(),
+                request.metadata.created_at_unix_seconds as i64,
+            ),
+        )?;
+
+        let snapshot = StoredSnapshot {
+            snapshot_id: request.metadata.snapshot_id.clone(),
+            project_id: request.metadata.project_id.clone(),
+            session_id: Some(request.session_id.to_string()),
+            parent_snapshot_id: request.metadata.parent_snapshot_id.clone(),
+            sequence_number,
+            pinned: request.pinned,
+            label: request.label.map(ToString::to_string),
+            metadata: request.metadata.clone(),
+            created_at_unix_seconds: request.metadata.created_at_unix_seconds,
+        };
+
+        let stale_error = if lease.epoch != request.expected_epoch {
+            Some(stale_publish_error(
+                "lease epoch changed; refresh before publishing",
+            ))
+        } else if lease.latest_snapshot_id.as_deref() != request.expected_latest_snapshot_id {
+            Some(stale_publish_error(
+                "canonical latest changed; recover or fork before publishing",
+            ))
+        } else {
+            tx.execute(
+                "UPDATE leases SET latest_snapshot_id = ?1 WHERE lease_id = ?2",
+                (request.metadata.snapshot_id.as_str(), request.lease_id),
+            )?;
+            None
+        };
+        tx.commit()?;
+
+        if let Some(err) = stale_error {
+            return Err(err);
+        }
+
+        Ok(CanonicalPublishResult {
+            snapshot,
+            latest_snapshot_id: request.metadata.snapshot_id.clone(),
+        })
+    }
 }
 
 fn device_identity_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceIdentity> {
@@ -535,10 +754,42 @@ fn stored_session_from_row(row: &Row<'_>) -> rusqlite::Result<StoredSession> {
     })
 }
 
+fn lease_record_from_row(row: &Row<'_>) -> rusqlite::Result<LeaseRecord> {
+    Ok(LeaseRecord {
+        lease_id: row.get(0)?,
+        project_id: row.get(1)?,
+        session_id: row
+            .get::<_, Option<String>>(2)?
+            .unwrap_or_else(|| "unknown-session".to_string()),
+        state: parse_lease_state(&row.get::<_, String>(3)?),
+        epoch: row.get::<_, i64>(4)?.max(0) as u64,
+        holder_device_id: row.get(5)?,
+        latest_snapshot_id: row.get(6)?,
+        handoff_id: row.get(7)?,
+    })
+}
+
+fn parse_lease_state(value: &str) -> LeaseState {
+    match value {
+        "handoff-pending" => LeaseState::HandoffPending,
+        "committing" => LeaseState::Committing,
+        "inactive" => LeaseState::Inactive,
+        "forked" => LeaseState::Forked,
+        "archived" => LeaseState::Archived,
+        _ => LeaseState::Active,
+    }
+}
+
+fn stale_publish_error(detail: &str) -> crate::DevRelayError {
+    crate::DevRelayError::Config(format!(
+        "stale publish: {detail}; safe action: refresh lease"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LocalConfig;
+    use crate::{LocalConfig, SnapshotMetadata};
 
     fn table_exists(db: &MetadataDb, table: &str) -> bool {
         db.connection()
@@ -819,6 +1070,185 @@ mod tests {
         let archived = db.archive_session(&fork.session_id).unwrap();
         assert_eq!(archived.state, SessionState::Archived);
         assert!(archived.archived_at_unix_seconds.is_some());
+    }
+
+    fn publish_metadata(snapshot_id: &str, session_id: &str) -> SnapshotMetadata {
+        let mut metadata: SnapshotMetadata =
+            serde_json::from_str(include_str!("../tests/fixtures/snapshot_metadata_v1.json"))
+                .unwrap();
+        metadata.project_id = "project123".to_string();
+        metadata.project_name = "Demo Project".to_string();
+        metadata.session_id = Some(session_id.to_string());
+        metadata.snapshot_id = snapshot_id.to_string();
+        metadata.parent_snapshot_id = None;
+        metadata
+    }
+
+    fn setup_publish_db(epoch: u64, state: LeaseState) -> (MetadataDb, StoredSession, LeaseRecord) {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.keep().join("metadata.sqlite");
+        let db = MetadataDb::open(&path).unwrap();
+        let session = db
+            .ensure_default_session("project123", "Demo Project", None)
+            .unwrap();
+        let lease = LeaseRecord {
+            lease_id: "lease-1".to_string(),
+            project_id: "project123".to_string(),
+            session_id: session.session_id.clone(),
+            state,
+            epoch,
+            holder_device_id: Some("device-a".to_string()),
+            latest_snapshot_id: None,
+            handoff_id: None,
+        };
+        db.upsert_lease(&lease).unwrap();
+        (db, session, lease)
+    }
+
+    #[test]
+    fn canonical_publish_persists_snapshot_and_advances_latest() {
+        let (mut db, session, lease) = setup_publish_db(1, LeaseState::Active);
+        let metadata = publish_metadata("s1_000000000000000000000101", &session.session_id);
+
+        let result = db
+            .publish_snapshot_canonical(CanonicalPublishRequest {
+                lease_id: &lease.lease_id,
+                session_id: &session.session_id,
+                expected_epoch: 1,
+                holder_device_id: "device-a",
+                expected_latest_snapshot_id: None,
+                metadata: &metadata,
+                pinned: false,
+                label: Some("canonical"),
+            })
+            .unwrap();
+
+        assert_eq!(result.snapshot.snapshot_id, metadata.snapshot_id);
+        assert_eq!(result.snapshot.sequence_number, 1);
+        assert_eq!(result.latest_snapshot_id, metadata.snapshot_id);
+        let updated = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(
+            updated.latest_snapshot_id.as_deref(),
+            Some(metadata.snapshot_id.as_str())
+        );
+    }
+
+    #[test]
+    fn stale_epoch_preserves_snapshot_without_advancing_latest() {
+        let (mut db, session, lease) = setup_publish_db(2, LeaseState::Active);
+        let metadata = publish_metadata("s1_000000000000000000000102", &session.session_id);
+
+        let err = db
+            .publish_snapshot_canonical(CanonicalPublishRequest {
+                lease_id: &lease.lease_id,
+                session_id: &session.session_id,
+                expected_epoch: 1,
+                holder_device_id: "device-a",
+                expected_latest_snapshot_id: None,
+                metadata: &metadata,
+                pinned: true,
+                label: Some("stale"),
+            })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("stale publish"));
+        assert_eq!(db.list_sessions(Some("project123")).unwrap().len(), 1);
+        let snapshots = snapshots_for_project(&db, "project123");
+        assert_eq!(snapshots, vec![metadata.snapshot_id.clone()]);
+        let updated = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(updated.latest_snapshot_id, None);
+    }
+
+    #[test]
+    fn wrong_holder_and_inactive_lease_reject_publish() {
+        let (mut db, session, lease) = setup_publish_db(1, LeaseState::Active);
+        let metadata = publish_metadata("s1_000000000000000000000103", &session.session_id);
+        let err = db
+            .publish_snapshot_canonical(CanonicalPublishRequest {
+                lease_id: &lease.lease_id,
+                session_id: &session.session_id,
+                expected_epoch: 1,
+                holder_device_id: "device-b",
+                expected_latest_snapshot_id: None,
+                metadata: &metadata,
+                pinned: false,
+                label: None,
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("holder device mismatch"));
+        assert!(snapshots_for_project(&db, "project123").is_empty());
+
+        let (mut db, session, lease) = setup_publish_db(1, LeaseState::Inactive);
+        let metadata = publish_metadata("s1_000000000000000000000104", &session.session_id);
+        let err = db
+            .publish_snapshot_canonical(CanonicalPublishRequest {
+                lease_id: &lease.lease_id,
+                session_id: &session.session_id,
+                expected_epoch: 1,
+                holder_device_id: "device-a",
+                expected_latest_snapshot_id: None,
+                metadata: &metadata,
+                pinned: false,
+                label: None,
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("lease state is inactive"));
+        assert!(snapshots_for_project(&db, "project123").is_empty());
+    }
+
+    #[test]
+    fn concurrent_publish_preserves_stale_snapshot_without_latest_change() {
+        let (mut db, session, lease) = setup_publish_db(1, LeaseState::Active);
+        let first = publish_metadata("s1_000000000000000000000105", &session.session_id);
+        let second = publish_metadata("s1_000000000000000000000106", &session.session_id);
+
+        db.publish_snapshot_canonical(CanonicalPublishRequest {
+            lease_id: &lease.lease_id,
+            session_id: &session.session_id,
+            expected_epoch: 1,
+            holder_device_id: "device-a",
+            expected_latest_snapshot_id: None,
+            metadata: &first,
+            pinned: false,
+            label: Some("first"),
+        })
+        .unwrap();
+        let err = db
+            .publish_snapshot_canonical(CanonicalPublishRequest {
+                lease_id: &lease.lease_id,
+                session_id: &session.session_id,
+                expected_epoch: 1,
+                holder_device_id: "device-a",
+                expected_latest_snapshot_id: None,
+                metadata: &second,
+                pinned: false,
+                label: Some("second"),
+            })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("canonical latest changed"));
+        assert_eq!(
+            snapshots_for_project(&db, "project123"),
+            vec![first.snapshot_id.clone(), second.snapshot_id.clone()]
+        );
+        let updated = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(
+            updated.latest_snapshot_id.as_deref(),
+            Some(first.snapshot_id.as_str())
+        );
+    }
+
+    fn snapshots_for_project(db: &MetadataDb, project_id: &str) -> Vec<String> {
+        let mut statement = db
+            .connection()
+            .prepare(
+                "SELECT snapshot_id FROM snapshots WHERE project_id = ?1 ORDER BY sequence_number",
+            )
+            .unwrap();
+        let rows = statement
+            .query_map([project_id], |row| row.get::<_, String>(0))
+            .unwrap();
+        rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
     }
 
     #[test]
