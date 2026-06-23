@@ -57,7 +57,9 @@ pub use config::{
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{
     EVENT_SCHEMA_VERSION, EventEnvelope, EventReplayCursor, EventSequence, EventSequencer,
-    EventTimestampMillis, EventType,
+    EventTimestampMillis, EventType, QuotaWarningEvent, SecurityBlockedEvent,
+    SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent,
+    TypedEventPayload, WorkspaceStateChangedEvent,
 };
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
 pub use home::DevRelayHome;

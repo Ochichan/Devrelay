@@ -546,12 +546,12 @@ Conventions:
 - [x] Add monotonic event sequence.
 - [x] Add event timestamp.
 - [x] Add event replay cursor.
-- [ ] Add `workspace.state.changed`.
-- [ ] Add `snapshot.local.created`.
-- [ ] Add `snapshot.apply.started`.
-- [ ] Add `snapshot.apply.verified`.
-- [ ] Add `security.blocked`.
-- [ ] Add `quota.warning`.
+- [x] Add `workspace.state.changed`.
+- [x] Add `snapshot.local.created`.
+- [x] Add `snapshot.apply.started`.
+- [x] Add `snapshot.apply.verified`.
+- [x] Add `security.blocked`.
+- [x] Add `quota.warning`.
 - [ ] Add subscription RPC.
 - [ ] Add reconnect behavior.
 - [ ] Add gap detection.
