@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const LOCAL_CONFIG_VERSION: u32 = 1;
@@ -38,6 +40,8 @@ pub struct LocalConfig {
     pub last_seen_unix_seconds: u64,
     pub editor: EditorPreference,
     pub resource_profile: ResourceProfile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_policy_limits: Option<ResourcePolicyLimits>,
     pub anchor_mode: AnchorMode,
     #[serde(default = "default_mdns_enabled")]
     pub mdns_enabled: bool,
@@ -62,6 +66,68 @@ pub enum ResourceProfile {
     Custom,
     Balanced,
     Performance,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResourcePowerSource {
+    Ac,
+    Battery,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ForegroundLoad {
+    Idle,
+    Busy,
+    Unknown,
+}
+
+impl ForegroundLoad {
+    pub fn from_load_average(load_average_1m: f32, parallelism: usize) -> Self {
+        if !load_average_1m.is_finite() {
+            return Self::Unknown;
+        }
+        let busy_threshold = parallelism.max(1) as f32 * 0.75;
+        if load_average_1m >= busy_threshold {
+            Self::Busy
+        } else {
+            Self::Idle
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResourcePolicyContext {
+    pub parallelism: usize,
+    pub power_source: ResourcePowerSource,
+    pub low_power_mode: bool,
+    pub foreground_load: ForegroundLoad,
+}
+
+impl ResourcePolicyContext {
+    pub fn for_parallelism(parallelism: usize) -> Self {
+        Self {
+            parallelism: parallelism.max(1),
+            power_source: ResourcePowerSource::Unknown,
+            low_power_mode: false,
+            foreground_load: ForegroundLoad::Unknown,
+        }
+    }
+
+    pub fn detect_current() -> Self {
+        detect_resource_policy_context()
+    }
+}
+
+impl Default for ResourcePolicyContext {
+    fn default() -> Self {
+        let parallelism = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1);
+        Self::for_parallelism(parallelism)
+    }
 }
 
 impl ResourceProfile {
@@ -136,12 +202,43 @@ impl ResourcePolicy {
         }
     }
 
+    pub fn for_profile_with_context(
+        profile: ResourceProfile,
+        context: ResourcePolicyContext,
+    ) -> Self {
+        Self::for_profile_with_parallelism(profile, context.parallelism)
+            .adapted_for_context(context)
+    }
+
     pub fn custom(limits: ResourcePolicyLimits) -> Result<Self> {
         limits.validate()?;
         Ok(Self {
             profile: ResourceProfile::Custom,
             limits,
         })
+    }
+
+    pub fn adapted_for_context(mut self, context: ResourcePolicyContext) -> Self {
+        if context.power_source == ResourcePowerSource::Battery {
+            let battery_cap = (context.parallelism / 4).max(1);
+            self.limits.cap_cpu_and_hash(battery_cap, battery_cap);
+            self.limits.cap_network_bandwidth(2048);
+        }
+
+        if context.foreground_load == ForegroundLoad::Busy {
+            let foreground_cpu_cap = (self.limits.cpu_slot_limit / 2).max(1);
+            let foreground_hash_cap = (self.limits.hashing_concurrency_limit / 2).max(1);
+            self.limits
+                .cap_cpu_and_hash(foreground_cpu_cap, foreground_hash_cap);
+            self.limits.cap_network_bandwidth(4096);
+        }
+
+        if context.low_power_mode {
+            self.limits.cap_cpu_and_hash(1, 1);
+            self.limits.cap_network_bandwidth(1024);
+        }
+
+        self
     }
 }
 
@@ -164,6 +261,22 @@ impl ResourcePolicyLimits {
             ));
         }
         Ok(())
+    }
+
+    fn cap_cpu_and_hash(&mut self, cpu_slot_limit: usize, hashing_concurrency_limit: usize) {
+        self.cpu_slot_limit = self.cpu_slot_limit.min(cpu_slot_limit.max(1)).max(1);
+        self.hashing_concurrency_limit = self
+            .hashing_concurrency_limit
+            .min(hashing_concurrency_limit.max(1))
+            .max(1);
+    }
+
+    fn cap_network_bandwidth(&mut self, cap_kib_per_second: u64) {
+        self.network_bandwidth_kib_per_second = Some(
+            self.network_bandwidth_kib_per_second
+                .map(|current| current.min(cap_kib_per_second))
+                .unwrap_or(cap_kib_per_second),
+        );
     }
 }
 
@@ -298,6 +411,7 @@ impl Default for LocalConfig {
                 command: "system".to_string(),
             },
             resource_profile: ResourceProfile::Balanced,
+            resource_policy_limits: None,
             anchor_mode: AnchorMode::LocalOnly,
             mdns_enabled: true,
             manual_discovery_address: None,
@@ -361,6 +475,9 @@ impl LocalConfig {
         validate_non_empty("architecture", &self.architecture)?;
         validate_capabilities_json(&self.capabilities_json)?;
         validate_non_empty("editor.command", &self.editor.command)?;
+        if let Some(limits) = self.resource_policy_limits {
+            limits.validate()?;
+        }
         if let Some(address) = &self.manual_discovery_address
             && address.trim().is_empty()
         {
@@ -479,7 +596,23 @@ impl LocalConfig {
     }
 
     pub fn resource_policy(&self) -> ResourcePolicy {
-        ResourcePolicy::for_profile(self.resource_profile)
+        self.resource_policy_for_context(ResourcePolicyContext::default())
+    }
+
+    pub fn resource_policy_for_context(&self, context: ResourcePolicyContext) -> ResourcePolicy {
+        let base = if self.resource_profile.canonical() == ResourceProfile::Custom {
+            self.resource_policy_limits
+                .and_then(|limits| ResourcePolicy::custom(limits).ok())
+                .unwrap_or_else(|| {
+                    ResourcePolicy::for_profile_with_parallelism(
+                        ResourceProfile::Custom,
+                        context.parallelism,
+                    )
+                })
+        } else {
+            ResourcePolicy::for_profile_with_parallelism(self.resource_profile, context.parallelism)
+        };
+        base.adapted_for_context(context)
     }
 
     pub fn mark_device_seen_now(&mut self) {
@@ -592,6 +725,65 @@ fn validate_capabilities_json(value: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+pub fn detect_resource_policy_context() -> ResourcePolicyContext {
+    let mut context = ResourcePolicyContext::default();
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = Command::new("pmset").args(["-g", "batt"]).output()
+            && output.status.success()
+        {
+            context.power_source =
+                parse_macos_power_source(&String::from_utf8_lossy(&output.stdout));
+        }
+
+        if let Ok(output) = Command::new("pmset").arg("-g").output()
+            && output.status.success()
+            && let Some(low_power_mode) =
+                parse_macos_low_power_mode(&String::from_utf8_lossy(&output.stdout))
+        {
+            context.low_power_mode = low_power_mode;
+        }
+
+        if let Ok(output) = Command::new("sysctl").args(["-n", "vm.loadavg"]).output()
+            && output.status.success()
+            && let Some(load_average_1m) =
+                parse_macos_load_average(&String::from_utf8_lossy(&output.stdout))
+        {
+            context.foreground_load =
+                ForegroundLoad::from_load_average(load_average_1m, context.parallelism);
+        }
+    }
+    context
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_macos_power_source(raw: &str) -> ResourcePowerSource {
+    if raw.contains("Battery Power") {
+        ResourcePowerSource::Battery
+    } else if raw.contains("AC Power") {
+        ResourcePowerSource::Ac
+    } else {
+        ResourcePowerSource::Unknown
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_macos_low_power_mode(raw: &str) -> Option<bool> {
+    raw.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        (parts.next()? == "lowpowermode").then(|| parts.next().map(|value| value == "1"))?
+    })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_macos_load_average(raw: &str) -> Option<f32> {
+    raw.trim()
+        .trim_start_matches('{')
+        .split_whitespace()
+        .next()
+        .and_then(|value| value.parse().ok())
 }
 
 fn default_device_id() -> String {
@@ -760,6 +952,65 @@ mod tests {
     }
 
     #[test]
+    fn resource_policy_context_reduces_limits_for_power_and_foreground_load() {
+        let ac_context = ResourcePolicyContext {
+            parallelism: 8,
+            power_source: ResourcePowerSource::Ac,
+            low_power_mode: false,
+            foreground_load: ForegroundLoad::Idle,
+        };
+        assert_eq!(
+            ResourcePolicy::for_profile_with_context(ResourceProfile::Instant, ac_context).limits,
+            ResourcePolicyLimits {
+                cpu_slot_limit: 8,
+                hashing_concurrency_limit: 8,
+                network_bandwidth_kib_per_second: None,
+            }
+        );
+
+        let battery_context = ResourcePolicyContext {
+            power_source: ResourcePowerSource::Battery,
+            ..ac_context
+        };
+        assert_eq!(
+            ResourcePolicy::for_profile_with_context(ResourceProfile::Instant, battery_context)
+                .limits,
+            ResourcePolicyLimits {
+                cpu_slot_limit: 2,
+                hashing_concurrency_limit: 2,
+                network_bandwidth_kib_per_second: Some(2048),
+            }
+        );
+
+        let busy_context = ResourcePolicyContext {
+            foreground_load: ForegroundLoad::Busy,
+            ..ac_context
+        };
+        assert_eq!(
+            ResourcePolicy::for_profile_with_context(ResourceProfile::Instant, busy_context).limits,
+            ResourcePolicyLimits {
+                cpu_slot_limit: 4,
+                hashing_concurrency_limit: 4,
+                network_bandwidth_kib_per_second: Some(4096),
+            }
+        );
+
+        let low_power_context = ResourcePolicyContext {
+            low_power_mode: true,
+            ..ac_context
+        };
+        assert_eq!(
+            ResourcePolicy::for_profile_with_context(ResourceProfile::Instant, low_power_context)
+                .limits,
+            ResourcePolicyLimits {
+                cpu_slot_limit: 1,
+                hashing_concurrency_limit: 1,
+                network_bandwidth_kib_per_second: Some(1024),
+            }
+        );
+    }
+
+    #[test]
     fn custom_resource_policy_validates_limits() {
         let custom = ResourcePolicy::custom(ResourcePolicyLimits {
             cpu_slot_limit: 2,
@@ -780,6 +1031,76 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("cpu_slot_limit"));
+    }
+
+    #[test]
+    fn custom_resource_policy_limits_persist_in_local_config() {
+        let config = LocalConfig {
+            resource_profile: ResourceProfile::Custom,
+            resource_policy_limits: Some(ResourcePolicyLimits {
+                cpu_slot_limit: 2,
+                hashing_concurrency_limit: 3,
+                network_bandwidth_kib_per_second: Some(2048),
+            }),
+            ..LocalConfig::default()
+        };
+
+        let encoded = config.to_toml_string().unwrap();
+        assert!(encoded.contains("[resource_policy_limits]"));
+        let decoded = LocalConfig::parse(&encoded).unwrap();
+
+        assert_eq!(decoded, config);
+        assert_eq!(
+            decoded
+                .resource_policy_for_context(ResourcePolicyContext::for_parallelism(8))
+                .limits,
+            ResourcePolicyLimits {
+                cpu_slot_limit: 2,
+                hashing_concurrency_limit: 3,
+                network_bandwidth_kib_per_second: Some(2048),
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_persisted_resource_policy_limits() {
+        let config = LocalConfig {
+            resource_policy_limits: Some(ResourcePolicyLimits {
+                cpu_slot_limit: 0,
+                hashing_concurrency_limit: 1,
+                network_bandwidth_kib_per_second: None,
+            }),
+            ..LocalConfig::default()
+        };
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("cpu_slot_limit"));
+    }
+
+    #[test]
+    fn parses_macos_resource_observation_output() {
+        assert_eq!(
+            parse_macos_power_source("Now drawing from 'Battery Power'\n"),
+            ResourcePowerSource::Battery
+        );
+        assert_eq!(
+            parse_macos_power_source("Now drawing from 'AC Power'\n"),
+            ResourcePowerSource::Ac
+        );
+        assert_eq!(
+            parse_macos_low_power_mode(" sleep 1\n lowpowermode 1\n"),
+            Some(true)
+        );
+        assert_eq!(parse_macos_low_power_mode(" lowpowermode 0\n"), Some(false));
+        assert_eq!(parse_macos_load_average("{ 6.50 4.0 3.0 }"), Some(6.5));
+        assert_eq!(
+            ForegroundLoad::from_load_average(6.5, 8),
+            ForegroundLoad::Busy
+        );
+        assert_eq!(
+            ForegroundLoad::from_load_average(1.0, 8),
+            ForegroundLoad::Idle
+        );
     }
 
     #[test]

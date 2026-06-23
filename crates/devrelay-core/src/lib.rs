@@ -82,10 +82,11 @@ pub use background_checkpoint::{
     WorkspaceCheckpointState,
 };
 pub use config::{
-    AgentRole, AnchorMode, DEVICE_ID_PREFIX, DeviceIdentity, EditorPreference, LocalConfig,
-    ProjectRegistryEntry, ProjectRegistryIndex, RedactedLocalConfig, ResourcePolicy,
-    ResourcePolicyLimits, ResourceProfile, WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry,
-    WorkspaceState, generate_device_id, migrate_local_config, workspace_id_for,
+    AgentRole, AnchorMode, DEVICE_ID_PREFIX, DeviceIdentity, EditorPreference, ForegroundLoad,
+    LocalConfig, ProjectRegistryEntry, ProjectRegistryIndex, RedactedLocalConfig, ResourcePolicy,
+    ResourcePolicyContext, ResourcePolicyLimits, ResourcePowerSource, ResourceProfile,
+    WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry, WorkspaceState, detect_resource_policy_context,
+    generate_device_id, migrate_local_config, workspace_id_for,
 };
 pub use debounce::{
     AdaptiveDebouncer, BackgroundDebouncePolicy, DebounceDrain, DebounceFlushReason,

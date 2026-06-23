@@ -1035,10 +1035,10 @@ Conventions:
 - [x] Add CPU slot limit.
 - [x] Add hashing concurrency limit.
 - [x] Add network bandwidth cap.
-- [ ] Add battery mode behavior.
-- [ ] Add low-power mode behavior.
-- [ ] Add foreground load detection.
-- [ ] Add resource policy persistence.
+- [x] Add battery mode behavior.
+- [x] Add low-power mode behavior.
+- [x] Add foreground load detection.
+- [x] Add resource policy persistence.
 - [x] Add resource policy tests.
 
 ### M6.6 Retention And Quota
