@@ -10,7 +10,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -18,6 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum SnapshotDataUploadFaultPoint {
     AfterPendingMarker,
     AfterGitObjects,
+    DuringCasUploadDiskFull,
     AfterCasObjects,
     AfterDataVerification,
 }
@@ -27,6 +28,7 @@ impl SnapshotDataUploadFaultPoint {
         match self {
             Self::AfterPendingMarker => "after-pending-marker",
             Self::AfterGitObjects => "after-git-objects",
+            Self::DuringCasUploadDiskFull => "disk-full-during-cas-upload",
             Self::AfterCasObjects => "after-cas-objects",
             Self::AfterDataVerification => "after-data-verification",
         }
@@ -79,7 +81,12 @@ pub fn publish_snapshot_canonical_with_data(
         .import_snapshot_from_repo(upload.source_repo, request.metadata)?;
     inject_fault(upload.fault, SnapshotDataUploadFaultPoint::AfterGitObjects)?;
 
-    copy_snapshot_sidecars_to_anchor_cas(request.metadata, upload.source_cas, upload.anchor_cas)?;
+    copy_snapshot_sidecars_to_anchor_cas(
+        request.metadata,
+        upload.source_cas,
+        upload.anchor_cas,
+        upload.fault,
+    )?;
     inject_fault(upload.fault, SnapshotDataUploadFaultPoint::AfterCasObjects)?;
 
     upload
@@ -214,6 +221,7 @@ fn copy_snapshot_sidecars_to_anchor_cas(
     metadata: &SnapshotMetadata,
     source_cas: Option<&CasStore>,
     anchor_cas: Option<&CasStore>,
+    fault: Option<SnapshotDataUploadFaultPoint>,
 ) -> Result<()> {
     if metadata.sidecars.is_empty() {
         return Ok(());
@@ -254,6 +262,7 @@ fn copy_snapshot_sidecars_to_anchor_cas(
             }
             anchor_cas.upload_chunk(&bytes, &chunk.hash)?;
             hashes.push(chunk.hash.clone());
+            inject_disk_full_fault(fault, SnapshotDataUploadFaultPoint::DuringCasUploadDiskFull)?;
         }
         let copied = anchor_cas.create_manifest(&hashes)?;
         if copied.manifest_id != manifest.manifest_id {
@@ -409,6 +418,20 @@ fn inject_fault(
             "injected upload fault at {}",
             fault.as_str()
         )));
+    }
+    Ok(())
+}
+
+fn inject_disk_full_fault(
+    configured: Option<SnapshotDataUploadFaultPoint>,
+    fault: SnapshotDataUploadFaultPoint,
+) -> Result<()> {
+    if configured == Some(fault) {
+        return Err(io::Error::new(
+            io::ErrorKind::StorageFull,
+            format!("injected upload fault at {}", fault.as_str()),
+        )
+        .into());
     }
     Ok(())
 }
@@ -613,10 +636,91 @@ large_file_threshold_mib = 1
     }
 
     #[test]
+    fn disk_full_during_cas_upload_does_not_publish_and_can_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        let source_cas = CasStore::open(temp.path().join("source-cas")).unwrap();
+        let anchor_cas = CasStore::open(home.anchor_cas_root()).unwrap();
+        let anchor = AnchorSnapshotRepo::open(&home, "upload-project").unwrap();
+        let (mut db, session_id, lease_id) = setup_db(&home);
+        let metadata = create_upload_snapshot(&source, &source_path, &source_cas, &session_id);
+
+        let err = publish_snapshot_canonical_with_data(
+            &mut db,
+            request(&lease_id, &session_id, &metadata),
+            upload_context(
+                &source,
+                &anchor,
+                &source_cas,
+                &anchor_cas,
+                Some(SnapshotDataUploadFaultPoint::DuringCasUploadDiskFull),
+            ),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            &err,
+            DevRelayError::Io(io_err) if io_err.kind() == io::ErrorKind::StorageFull
+        ));
+        assert!(
+            err.to_string()
+                .contains(SnapshotDataUploadFaultPoint::DuringCasUploadDiskFull.as_str())
+        );
+        assert!(snapshots_for_project(&db).is_empty());
+        assert_eq!(
+            db.get_lease(&lease_id).unwrap().unwrap().latest_snapshot_id,
+            None
+        );
+        assert_eq!(list_pending_snapshot_uploads(&anchor).unwrap().len(), 1);
+
+        let sidecar = &metadata.sidecars[0];
+        let source_manifest = source_cas.fetch_manifest(&sidecar.cas_manifest_id).unwrap();
+        assert!(source_manifest.chunks.len() > 1);
+        let first_chunk = &source_manifest.chunks[0];
+        assert_eq!(
+            anchor_cas.download_chunk(&first_chunk.hash).unwrap().len(),
+            first_chunk.size_bytes as usize
+        );
+        assert!(
+            anchor_cas
+                .fetch_manifest(&source_manifest.manifest_id)
+                .is_err()
+        );
+        assert!(
+            anchor_cas
+                .fetch_reachability_root(&sidecar_reachability_root_id(&metadata.snapshot_id, 0))
+                .is_err()
+        );
+        assert!(ensure_snapshot_sidecars_in_anchor_cas(&metadata, Some(&anchor_cas)).is_err());
+
+        let result = publish_snapshot_canonical_with_data(
+            &mut db,
+            request(&lease_id, &session_id, &metadata),
+            upload_context(&source, &anchor, &source_cas, &anchor_cas, None),
+        )
+        .unwrap();
+
+        assert_eq!(result.latest_snapshot_id, metadata.snapshot_id);
+        assert_eq!(
+            db.get_lease(&lease_id)
+                .unwrap()
+                .unwrap()
+                .latest_snapshot_id
+                .as_deref(),
+            Some(metadata.snapshot_id.as_str())
+        );
+        assert!(list_pending_snapshot_uploads(&anchor).unwrap().is_empty());
+        ensure_snapshot_sidecars_in_anchor_cas(&metadata, Some(&anchor_cas)).unwrap();
+    }
+
+    #[test]
     fn upload_fault_points_do_not_advance_canonical_latest() {
         for fault in [
             SnapshotDataUploadFaultPoint::AfterPendingMarker,
             SnapshotDataUploadFaultPoint::AfterGitObjects,
+            SnapshotDataUploadFaultPoint::DuringCasUploadDiskFull,
             SnapshotDataUploadFaultPoint::AfterCasObjects,
             SnapshotDataUploadFaultPoint::AfterDataVerification,
         ] {
