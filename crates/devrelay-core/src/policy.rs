@@ -7,7 +7,7 @@
 
 use crate::error::Result;
 use crate::fs_safety::{is_traversal_boundary, is_windows_reparse_point};
-use crate::manifest::{Manifest, UntrackedPolicy};
+use crate::manifest::{Manifest, SecretScannerConfig, UntrackedPolicy};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
@@ -22,6 +22,7 @@ pub mod classification_reason {
     pub const TOKEN_PATTERN_CONTENT: &str = "token-pattern-content";
     pub const HIGH_ENTROPY_CONTENT: &str = "high-entropy-content";
     pub const HIGH_ENTROPY_PLACEHOLDER: &str = HIGH_ENTROPY_CONTENT;
+    pub const USER_SECRET_SCANNER: &str = "user-secret-scanner";
     pub const WINDOWS_REPARSE_POINT: &str = "windows-reparse-point";
     pub const SYMLINK_TARGET_OUTSIDE_WORKSPACE: &str = "symlink-target-outside-workspace";
     pub const MANIFEST_OR_GENERATED_EXCLUDE: &str = "manifest-or-generated-exclude";
@@ -62,62 +63,78 @@ pub fn classify_untracked_paths(
             .iter()
             .map(String::as_str),
     )?;
+    let user_secret_paths = build_globset(
+        manifest
+            .workspace
+            .secret_scanner
+            .filename_patterns
+            .iter()
+            .map(String::as_str),
+    )?;
     let threshold_bytes = manifest.workspace.large_file_threshold_mib * 1024 * 1024;
+    let context = ClassificationContext {
+        repo_root,
+        policy: manifest.workspace.untracked,
+        exclude: &exclude,
+        include: &include,
+        scanner: &manifest.workspace.secret_scanner,
+        user_secret_paths: &user_secret_paths,
+        threshold_bytes,
+    };
     let mut classified = Vec::new();
 
     for path_ref in paths {
         let path = normalize_repo_path(path_ref.as_ref());
-        let decision = classify_one(
-            repo_root,
-            &path,
-            manifest.workspace.untracked,
-            &exclude,
-            &include,
-            threshold_bytes,
-        );
+        let decision = classify_one(&context, &path);
         classified.push(decision);
     }
 
     Ok(classified)
 }
 
-fn classify_one(
-    repo_root: &Path,
-    path: &str,
+struct ClassificationContext<'a> {
+    repo_root: &'a Path,
     policy: UntrackedPolicy,
-    exclude: &GlobSet,
-    include: &GlobSet,
+    exclude: &'a GlobSet,
+    include: &'a GlobSet,
+    scanner: &'a SecretScannerConfig,
+    user_secret_paths: &'a GlobSet,
     threshold_bytes: u64,
-) -> ClassifiedPath {
+}
+
+fn classify_one(context: &ClassificationContext<'_>, path: &str) -> ClassifiedPath {
     if let Some(reason) = secret_path_reason(path) {
         return excluded(path, reason);
     }
-    if path_is_unsupported_windows_reparse_point(repo_root, path) {
+    if context.user_secret_paths.is_match(path) {
+        return excluded(path, classification_reason::USER_SECRET_SCANNER);
+    }
+    if path_is_unsupported_windows_reparse_point(context.repo_root, path) {
         return excluded(path, classification_reason::WINDOWS_REPARSE_POINT);
     }
-    if symlink_target_escapes_workspace(repo_root, path) {
+    if symlink_target_escapes_workspace(context.repo_root, path) {
         return excluded(
             path,
             classification_reason::SYMLINK_TARGET_OUTSIDE_WORKSPACE,
         );
     }
-    if let Some(reason) = secret_content_reason(repo_root, path) {
+    if let Some(reason) = secret_content_reason(context.repo_root, path, context.scanner) {
         return excluded(path, reason);
     }
-    if exclude.is_match(path) {
+    if context.exclude.is_match(path) {
         return excluded(path, classification_reason::MANIFEST_OR_GENERATED_EXCLUDE);
     }
-    if exceeds_threshold(repo_root, path, threshold_bytes) {
+    if exceeds_threshold(context.repo_root, path, context.threshold_bytes) {
         return excluded(path, classification_reason::LARGE_FILE_THRESHOLD);
     }
 
-    match policy {
+    match context.policy {
         UntrackedPolicy::None => excluded(path, classification_reason::MANIFEST_UNTRACKED_NONE),
         UntrackedPolicy::Safe | UntrackedPolicy::AllNonignored => {
             included(path, classification_reason::SAFE_UNTRACKED)
         }
         UntrackedPolicy::Explicit => {
-            if include.is_match(path) {
+            if context.include.is_match(path) {
                 included(path, classification_reason::MANIFEST_INCLUDE)
             } else {
                 excluded(path, classification_reason::MANIFEST_UNTRACKED_EXPLICIT)
@@ -222,7 +239,11 @@ fn secret_path_reason(path: &str) -> Option<&'static str> {
     None
 }
 
-fn secret_content_reason(repo_root: &Path, path: &str) -> Option<&'static str> {
+fn secret_content_reason(
+    repo_root: &Path,
+    path: &str,
+    scanner: &SecretScannerConfig,
+) -> Option<&'static str> {
     let full = repo_root.join(PathBuf::from(path));
     let Ok(metadata) = fs::symlink_metadata(&full) else {
         return None;
@@ -241,6 +262,9 @@ fn secret_content_reason(repo_root: &Path, path: &str) -> Option<&'static str> {
     if has_private_key_header(&haystack) {
         return Some(classification_reason::PRIVATE_KEY_CONTENT);
     }
+    if has_user_secret_marker(&haystack, scanner) || has_user_token_prefix(&haystack, scanner) {
+        return Some(classification_reason::USER_SECRET_SCANNER);
+    }
     if has_token_pattern(&haystack) {
         return Some(classification_reason::TOKEN_PATTERN_CONTENT);
     }
@@ -248,6 +272,24 @@ fn secret_content_reason(repo_root: &Path, path: &str) -> Option<&'static str> {
         return Some(classification_reason::HIGH_ENTROPY_CONTENT);
     }
     None
+}
+
+fn has_user_secret_marker(haystack: &str, scanner: &SecretScannerConfig) -> bool {
+    scanner
+        .content_markers
+        .iter()
+        .any(|marker| !marker.is_empty() && haystack.contains(marker))
+}
+
+fn has_user_token_prefix(haystack: &str, scanner: &SecretScannerConfig) -> bool {
+    haystack.lines().any(|line| {
+        token_candidates(line).any(|token| {
+            let token = trim_token_value(token);
+            scanner.token_prefixes.iter().any(|prefix| {
+                !prefix.is_empty() && token.starts_with(prefix) && token.len() >= prefix.len() + 8
+            })
+        })
+    })
 }
 
 fn has_private_key_header(haystack: &str) -> bool {
@@ -621,6 +663,62 @@ large_file_threshold_mib = {threshold_mib}
             classify_untracked_paths(temp.path(), &safe_manifest(), ["config.txt"]).unwrap();
 
         assert_eq!(decisions[0].decision, PathDecision::Include);
+    }
+
+    #[test]
+    fn applies_user_configured_secret_scanner_hook() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("artifact.local-secret"),
+            "safe name block\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("custom-marker.txt"),
+            "BEGIN CUSTOM SECRET\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("custom-token.txt"),
+            "customtok_1234567890abcdef\n",
+        )
+        .unwrap();
+        fs::write(temp.path().join("notes.md"), "ordinary notes\n").unwrap();
+        let manifest = Manifest::parse(
+            r#"
+schema = 1
+project_id = "12345678"
+name = "demo"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+
+[workspace.secret_scanner]
+filename_patterns = ["*.local-secret"]
+content_markers = ["BEGIN CUSTOM SECRET"]
+token_prefixes = ["customtok_"]
+"#,
+        )
+        .unwrap();
+
+        let decisions = classify_untracked_paths(
+            temp.path(),
+            &manifest,
+            [
+                "artifact.local-secret",
+                "custom-marker.txt",
+                "custom-token.txt",
+                "notes.md",
+            ],
+        )
+        .unwrap();
+
+        for decision in &decisions[..3] {
+            assert_eq!(decision.decision, PathDecision::Exclude);
+            assert_eq!(decision.reason, classification_reason::USER_SECRET_SCANNER);
+        }
+        assert_eq!(decisions[3].decision, PathDecision::Include);
     }
 
     #[test]

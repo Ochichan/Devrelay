@@ -125,7 +125,8 @@ pub use logging::{
 pub use manifest::{
     DirtyTargetPolicy, EnvironmentConfig, EnvironmentKind, EnvironmentProfile, HandoffConfig,
     Manifest, PatternConfig, PortablePathsPolicy, RestoreTerminals, SecretConfig, SecretMode,
-    SyncConfig, SyncMode, TaskCacheMode, TaskConfig, TaskSandbox, UntrackedPolicy, WorkspaceConfig,
+    SecretScannerConfig, SyncConfig, SyncMode, TaskCacheMode, TaskConfig, TaskSandbox,
+    UntrackedPolicy, WorkspaceConfig,
 };
 pub use operation_capsule::{
     ConflictWorktreeFile, GitOperationKind, GitOperationMetadata, GitOperationProgress,

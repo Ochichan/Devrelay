@@ -46,6 +46,8 @@ pub struct WorkspaceConfig {
     pub exclude: PatternConfig,
     #[serde(default)]
     pub include: PatternConfig,
+    #[serde(default)]
+    pub secret_scanner: SecretScannerConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -53,6 +55,17 @@ pub struct WorkspaceConfig {
 pub struct PatternConfig {
     #[serde(default)]
     pub patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretScannerConfig {
+    #[serde(default)]
+    pub filename_patterns: Vec<String>,
+    #[serde(default)]
+    pub content_markers: Vec<String>,
+    #[serde(default)]
+    pub token_prefixes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,6 +290,18 @@ impl Manifest {
             "workspace.include.patterns",
             &self.workspace.include.patterns,
         )?;
+        validate_optional_string_array(
+            "workspace.secret_scanner.filename_patterns",
+            &self.workspace.secret_scanner.filename_patterns,
+        )?;
+        validate_optional_string_array(
+            "workspace.secret_scanner.content_markers",
+            &self.workspace.secret_scanner.content_markers,
+        )?;
+        validate_optional_string_array(
+            "workspace.secret_scanner.token_prefixes",
+            &self.workspace.secret_scanner.token_prefixes,
+        )?;
 
         if let Some(environment) = &self.environment {
             for (name, profile) in &environment.profiles {
@@ -383,6 +408,15 @@ fn validate_unique(field: &str, values: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_optional_string_array(field: &str, values: &[String]) -> Result<()> {
+    if values.iter().any(|value| value.is_empty()) {
+        return Err(DevRelayError::Manifest(format!(
+            "{field} must not contain empty values"
+        )));
+    }
+    validate_unique(field, values)
 }
 
 fn update_hash_command(hasher: &mut blake3::Hasher, field: &str, values: &[String]) {
@@ -570,6 +604,38 @@ patterns = ["notes/**", "notes/**"]
                 .to_string(),
             ),
             (
+                "duplicate secret scanner filename pattern",
+                r#"
+schema = 1
+project_id = "12345678"
+name = "bad"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+
+[workspace.secret_scanner]
+filename_patterns = ["*.secret", "*.secret"]
+"#
+                .to_string(),
+            ),
+            (
+                "empty secret scanner token prefix",
+                r#"
+schema = 1
+project_id = "12345678"
+name = "bad"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+
+[workspace.secret_scanner]
+token_prefixes = [""]
+"#
+                .to_string(),
+            ),
+            (
                 "empty environment command",
                 manifest_with(
                     r#"
@@ -657,8 +723,38 @@ target = ""
             reparsed.workspace.exclude.patterns
         );
         assert_eq!(
+            manifest.workspace.secret_scanner.filename_patterns,
+            reparsed.workspace.secret_scanner.filename_patterns
+        );
+        assert_eq!(
             manifest.tasks.keys().collect::<Vec<_>>(),
             reparsed.tasks.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn parses_workspace_secret_scanner_config() {
+        let manifest = Manifest::parse(&manifest_with(
+            r#"
+[workspace.secret_scanner]
+filename_patterns = ["*.local-secret"]
+content_markers = ["BEGIN CUSTOM SECRET"]
+token_prefixes = ["customtok_"]
+"#,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            manifest.workspace.secret_scanner.filename_patterns,
+            vec!["*.local-secret"]
+        );
+        assert_eq!(
+            manifest.workspace.secret_scanner.content_markers,
+            vec!["BEGIN CUSTOM SECRET"]
+        );
+        assert_eq!(
+            manifest.workspace.secret_scanner.token_prefixes,
+            vec!["customtok_"]
         );
     }
 

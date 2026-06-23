@@ -1766,7 +1766,7 @@ Conventions:
 - [x] Add private key header scanner.
 - [x] Add token pattern scanner.
 - [x] Add high-entropy heuristic.
-- [ ] Add user-configured scanner hook.
+- [x] Add user-configured scanner hook.
 - [x] Add raw secret redaction tests.
 - [ ] Add false-positive override design.
 - [ ] Add encrypted one-time sidecar design.
