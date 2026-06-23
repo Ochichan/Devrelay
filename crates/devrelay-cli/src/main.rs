@@ -13,20 +13,20 @@ use devrelay_core::{
     AuditEventRecord, AuditEventType, AuditOutcome, CheckpointCreateParams, CheckpointCreateResult,
     DevRelayError, DevRelayHome, DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord,
     DiagnosticsExportParams, DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole,
-    DiscoveryService, ErrorInfo, FabricIdentityBundle, FabricIdentityStore, GitRepo, LocalConfig,
-    LogRedactor, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
-    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
-    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
-    MetadataDb, PairingSession, PairingStartRequest, PathDecision, PatternConfig,
-    PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
-    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RecoverListParams,
-    RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
-    ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore,
-    StatusGetParams, StatusGetResult, StatusSummary, StoredSession, StoredSnapshot,
-    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
-    build_discovery_advertisement, classify_untracked_paths, create_snapshot,
-    linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
-    read_snapshot_file, workspace_id_for, write_snapshot_file,
+    DiscoveryService, ErrorInfo, FabricIdentityBundle, FabricIdentityStore,
+    GitPerformanceDoctorReport, GitRepo, LocalConfig, LogRedactor, METHOD_APPLY_SNAPSHOT,
+    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
+    METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, MetadataDb, PairingSession,
+    PairingStartRequest, PathDecision, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
+    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
+    RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
+    RecoverShowResult, ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind,
+    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
+    StoredSession, StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
+    WorkspaceState, apply_snapshot, build_discovery_advertisement, classify_untracked_paths,
+    create_snapshot, linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
+    read_snapshot_file, run_git_performance_doctor, workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -73,6 +73,10 @@ enum Command {
     Diagnostics {
         #[command(subcommand)]
         command: DiagnosticsCommand,
+    },
+    Doctor {
+        #[command(subcommand)]
+        command: DoctorCommand,
     },
     Device {
         #[command(subcommand)]
@@ -251,6 +255,18 @@ enum DiagnosticsCommand {
         out: Option<PathBuf>,
         #[arg(long)]
         include_sensitive_paths: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DoctorCommand {
+    GitPerformance {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long)]
+        fix_safe: bool,
         #[arg(long)]
         json: bool,
     },
@@ -736,6 +752,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
         },
         Command::Diagnostics { command } => handle_diagnostics_command(command, &agent_options)?,
+        Command::Doctor { command } => handle_doctor_command(command)?,
         Command::Device { command } => handle_device_command(command)?,
         Command::Devices { command } => handle_devices_command(command)?,
         Command::Discovery { command } => handle_discovery_command(command)?,
@@ -1329,6 +1346,55 @@ fn handle_diagnostics_command(
                     result.snapshot_objects_included
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
+    match command {
+        DoctorCommand::GitPerformance {
+            repo,
+            fix_safe,
+            json,
+        } => {
+            let repo = GitRepo::new(resolve_git_root(&repo)?);
+            let report = run_git_performance_doctor(&repo, fix_safe)?;
+            render_git_performance_doctor(&report, json)
+        }
+    }
+}
+
+fn render_git_performance_doctor(
+    report: &GitPerformanceDoctorReport,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!("git performance doctor: {}", report.repo.display());
+        println!("  git: {}", report.git_version);
+        println!(
+            "  fsmonitor: supported={} config={}",
+            report.fsmonitor_supported,
+            report.fsmonitor_config.as_deref().unwrap_or("<unset>")
+        );
+        println!(
+            "  untracked cache: supported={} config={}",
+            report.untracked_cache_supported,
+            report
+                .untracked_cache_config
+                .as_deref()
+                .unwrap_or("<unset>")
+        );
+        for fix in &report.applied_fixes {
+            println!("  applied: {}={}", fix.key, fix.value);
+        }
+        for fix in &report.skipped_fixes {
+            println!("  skipped: {} already configured", fix.key);
+        }
+        for recommendation in &report.recommendations {
+            println!("  recommendation: {}", recommendation.message);
         }
     }
     Ok(())

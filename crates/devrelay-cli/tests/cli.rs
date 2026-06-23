@@ -226,6 +226,62 @@ fn diagnostics_export_uses_agent_and_redacts_bundle_by_default() {
 }
 
 #[test]
+fn doctor_git_performance_reports_and_preserves_user_config() {
+    let repo = std::env::temp_dir().join(format!(
+        "devrelay-doctor-git-performance-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    git(&repo, &["config", "core.untrackedCache", "false"]);
+
+    let output = devrelay()
+        .args([
+            "doctor",
+            "git-performance",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--fix-safe",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        value["git_version"]
+            .as_str()
+            .unwrap()
+            .starts_with("git version ")
+    );
+    assert_eq!(value["untracked_cache_config"], "false");
+    assert!(
+        value["skipped_fixes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|fix| fix["key"] == "core.untrackedCache")
+    );
+
+    let config = Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["config", "--local", "--get", "core.untrackedCache"])
+        .output()
+        .unwrap();
+    assert!(config.status.success());
+    assert_eq!(String::from_utf8_lossy(&config.stdout).trim(), "false");
+
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[test]
 fn audit_list_and_export_redact_by_default() {
     use devrelay_core::{AuditEventInput, AuditEventType, AuditOutcome, DevRelayHome, MetadataDb};
 

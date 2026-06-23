@@ -41,6 +41,7 @@ mod discovery;
 mod error;
 mod events;
 mod git;
+mod git_doctor;
 mod handoff;
 mod home;
 mod identity;
@@ -83,6 +84,10 @@ pub use events::{
     WorkspaceStateChangedEvent,
 };
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
+pub use git_doctor::{
+    GitPerformanceDoctorReport, GitPerformanceFix, GitPerformanceRecommendation, GitVersion,
+    run_git_performance_doctor,
+};
 pub use handoff::{
     HANDOFF_ID_PREFIX, HandoffJournalPhase, HandoffJournalRecord, HandoffRecord,
     HandoffRecoveryOutcome, HandoffState, generate_handoff_id,

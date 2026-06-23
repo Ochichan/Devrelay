@@ -1016,15 +1016,15 @@ Conventions:
 
 ### M6.4 Git Performance Doctor
 
-- [ ] Detect Git version.
-- [ ] Detect FSMonitor support.
-- [ ] Detect existing FSMonitor config.
-- [ ] Detect untracked cache support.
-- [ ] Detect existing untracked cache config.
-- [ ] Add safe recommendation output.
-- [ ] Add `doctor --fix-safe` for approved config only.
-- [ ] Avoid overwriting user-managed config.
-- [ ] Add doctor tests.
+- [x] Detect Git version.
+- [x] Detect FSMonitor support.
+- [x] Detect existing FSMonitor config.
+- [x] Detect untracked cache support.
+- [x] Detect existing untracked cache config.
+- [x] Add safe recommendation output.
+- [x] Add `doctor --fix-safe` for approved config only.
+- [x] Avoid overwriting user-managed config.
+- [x] Add doctor tests.
 
 ### M6.5 Resource Policy
 
