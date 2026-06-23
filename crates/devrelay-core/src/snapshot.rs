@@ -16,7 +16,7 @@ use crate::policy::classify_untracked_paths;
 use crate::snapshot_schema::{SNAPSHOT_ID_PREFIX, SNAPSHOT_SCHEMA_VERSION, calculate_state_hash};
 use crate::{
     CasStore, DEFAULT_SIDECAR_CHUNK_BYTES, GitRepo, GitStatus, Manifest, PathDecision,
-    SnapshotMetadata, capture_large_sidecars,
+    SnapshotMetadata, capture_large_sidecars, ensure_sidecars_available, materialize_sidecars,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
@@ -193,6 +193,18 @@ pub fn apply_snapshot(
     snapshot: &SnapshotMetadata,
 ) -> Result<VerificationDetails> {
     apply_snapshot_inner(target, source, snapshot, None)
+}
+
+pub fn apply_snapshot_with_sidecars(
+    target: &GitRepo,
+    source: &GitRepo,
+    snapshot: &SnapshotMetadata,
+    cas_store: &CasStore,
+) -> Result<VerificationDetails> {
+    ensure_sidecars_available(target.path(), &snapshot.sidecars, cas_store)?;
+    let verification = apply_snapshot_inner(target, source, snapshot, None)?;
+    materialize_sidecars(target.path(), &snapshot.sidecars, cas_store)?;
+    Ok(verification)
 }
 
 pub fn apply_snapshot_with_fault_injection(
@@ -505,6 +517,13 @@ fn verify_included_untracked_paths(repo: &GitRepo, snapshot: &SnapshotMetadata) 
 
 fn verify_excluded_paths_absent(repo: &GitRepo, snapshot: &SnapshotMetadata) -> Result<()> {
     for item in &snapshot.excluded {
+        if snapshot
+            .sidecars
+            .iter()
+            .any(|sidecar| sidecar.logical_path == item.path)
+        {
+            continue;
+        }
         if repo.path().join(PathBuf::from(&item.path)).exists() {
             return Err(DevRelayError::Verification(format!(
                 "excluded path materialized after apply: {}",
@@ -708,6 +727,35 @@ portable_paths = "strict"
             .unwrap();
     }
 
+    fn large_sidecar_manifest() -> Manifest {
+        Manifest::parse(
+            r#"
+schema = 1
+project_id = "12345678"
+name = "demo"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+large_file_threshold_mib = 1
+"#,
+        )
+        .unwrap()
+    }
+
+    fn first_sidecar_chunk_path(cas: &CasStore, snapshot: &SnapshotMetadata) -> PathBuf {
+        let manifest = cas
+            .fetch_manifest(&snapshot.sidecars[0].cas_manifest_id)
+            .unwrap();
+        let hash = manifest.chunks[0].hash.as_str();
+        let hex = hash.strip_prefix(crate::CAS_HASH_PREFIX).unwrap();
+        cas.root()
+            .join("chunks")
+            .join("b3")
+            .join(&hex[0..2])
+            .join(format!("{}.chunk", &hex[2..]))
+    }
+
     #[test]
     fn creates_and_applies_snapshot_round_trip() {
         let temp = tempfile::tempdir().unwrap();
@@ -803,6 +851,126 @@ large_file_threshold_mib = 1
         assert_eq!(reconstructed, large);
         assert_eq!(snapshot.state_hash, calculate_state_hash(&snapshot));
         snapshot.validate().unwrap();
+    }
+
+    #[test]
+    fn apply_snapshot_with_sidecars_materializes_large_file_from_cas() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        let cas = CasStore::open(temp.path().join("cas")).unwrap();
+        let manifest = large_sidecar_manifest();
+        let large = vec![9_u8; 1024 * 1024 + 33];
+        fs::write(source_path.join("large.bin"), &large).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                source_path.join("large.bin"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+        let snapshot = create_snapshot_with_sidecars(&source, &manifest, &cas).unwrap();
+
+        clone_repo(&source_path, &target_path);
+        let target = GitRepo::new(&target_path);
+        let verification = apply_snapshot_with_sidecars(&target, &source, &snapshot, &cas).unwrap();
+
+        assert_eq!(verification.state_hash, snapshot.state_hash);
+        assert_eq!(fs::read(target_path.join("large.bin")).unwrap(), large);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(target_path.join("large.bin"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o111,
+                0o111
+            );
+        }
+    }
+
+    #[test]
+    fn apply_snapshot_with_sidecars_blocks_missing_chunks_before_mutation() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("tracked.txt"), "changed before sidecar\n").unwrap();
+        fs::write(source_path.join("large.bin"), vec![3_u8; 1024 * 1024 + 1]).unwrap();
+        let cas = CasStore::open(temp.path().join("cas")).unwrap();
+        let snapshot =
+            create_snapshot_with_sidecars(&source, &large_sidecar_manifest(), &cas).unwrap();
+        clone_repo(&source_path, &target_path);
+        fs::remove_dir_all(cas.root().join("chunks")).unwrap();
+        let target = GitRepo::new(&target_path);
+
+        let err = apply_snapshot_with_sidecars(&target, &source, &snapshot, &cas).unwrap_err();
+
+        assert!(err.to_string().contains("missing"));
+        assert_eq!(
+            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        assert!(!target_path.join("large.bin").exists());
+    }
+
+    #[test]
+    fn apply_snapshot_with_sidecars_blocks_corrupt_chunks_before_mutation() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("tracked.txt"), "changed before sidecar\n").unwrap();
+        fs::write(source_path.join("large.bin"), vec![4_u8; 1024 * 1024 + 1]).unwrap();
+        let cas = CasStore::open(temp.path().join("cas")).unwrap();
+        let snapshot =
+            create_snapshot_with_sidecars(&source, &large_sidecar_manifest(), &cas).unwrap();
+        clone_repo(&source_path, &target_path);
+        fs::write(first_sidecar_chunk_path(&cas, &snapshot), b"corrupt").unwrap();
+        let target = GitRepo::new(&target_path);
+
+        let err = apply_snapshot_with_sidecars(&target, &source, &snapshot, &cas).unwrap_err();
+
+        assert!(err.to_string().contains("missing"));
+        assert_eq!(
+            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        assert!(!target_path.join("large.bin").exists());
+    }
+
+    #[test]
+    fn apply_snapshot_with_sidecars_rejects_path_traversal_before_mutation() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("tracked.txt"), "changed before sidecar\n").unwrap();
+        fs::write(source_path.join("large.bin"), vec![5_u8; 1024 * 1024 + 1]).unwrap();
+        let cas = CasStore::open(temp.path().join("cas")).unwrap();
+        let mut snapshot =
+            create_snapshot_with_sidecars(&source, &large_sidecar_manifest(), &cas).unwrap();
+        snapshot.sidecars[0].logical_path = "../escape.bin".to_string();
+        clone_repo(&source_path, &target_path);
+        let target = GitRepo::new(&target_path);
+
+        let err = apply_snapshot_with_sidecars(&target, &source, &snapshot, &cas).unwrap_err();
+
+        assert!(err.to_string().contains("escape"));
+        assert_eq!(
+            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        assert!(!temp.path().join("escape.bin").exists());
     }
 
     #[test]

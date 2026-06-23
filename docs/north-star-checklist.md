@@ -930,28 +930,28 @@ Conventions:
 - [x] Store large accepted file in CAS.
 - [x] Add content-defined chunking placeholder or fixed chunk first pass.
 - [x] Bound upload buffer memory.
-- [ ] Bound download buffer memory.
+- [x] Bound download buffer memory.
 - [x] Add sidecar root hash.
 - [x] Add sidecar file mode.
 - [x] Add sidecar logical path.
 - [x] Add sidecar classification.
 - [x] Add sidecar manifest to snapshot metadata.
 - [x] Add large file round-trip test.
-- [ ] Add corrupt chunk test.
-- [ ] Add missing chunk test.
+- [x] Add corrupt chunk test.
+- [x] Add missing chunk test.
 
 ### M5.6 Sidecar Materialization
 
-- [ ] Fetch required CAS manifest before apply.
-- [ ] Query missing chunks.
-- [ ] Download missing chunks.
-- [ ] Verify chunks.
-- [ ] Materialize sidecar file atomically.
-- [ ] Restore file mode where supported.
-- [ ] Prevent path traversal.
-- [ ] Prevent symlink escape.
-- [ ] Verify materialized root hash.
-- [ ] Add materialization tests.
+- [x] Fetch required CAS manifest before apply.
+- [x] Query missing chunks.
+- [x] Download missing chunks.
+- [x] Verify chunks.
+- [x] Materialize sidecar file atomically.
+- [x] Restore file mode where supported.
+- [x] Prevent path traversal.
+- [x] Prevent symlink escape.
+- [x] Verify materialized root hash.
+- [x] Add materialization tests.
 
 ### M5.7 Partial Upload Safety
 
