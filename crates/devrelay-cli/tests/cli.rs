@@ -1557,6 +1557,44 @@ fn device_commands_show_generated_local_identity() {
     assert_eq!(shown["device_id"], device_id);
     assert_eq!(shown["display_name"], local["display_name"]);
 
+    let revoke = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "device",
+            "revoke",
+            "d_peer_lost",
+            "--reason",
+            "lost laptop",
+            "--key-rotation-required",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        revoke.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&revoke.stderr)
+    );
+    let revoked: serde_json::Value = serde_json::from_slice(&revoke.stdout).unwrap();
+    assert_eq!(revoked["device_id"], "d_peer_lost");
+    assert_eq!(revoked["revoked_by_device_id"], device_id);
+    assert_eq!(revoked["reason"], "lost laptop");
+    assert_eq!(revoked["key_rotation_required"], true);
+
+    let audit = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["audit", "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        audit.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&audit.stderr)
+    );
+    let audit: serde_json::Value = serde_json::from_slice(&audit.stdout).unwrap();
+    assert_eq!(audit[0]["type"], "device.revoked");
+    assert_eq!(audit[0]["target_device_id"], "d_peer_lost");
+
     let _ = std::fs::remove_dir_all(root);
 }
 

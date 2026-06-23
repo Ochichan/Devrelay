@@ -54,6 +54,15 @@ pub struct DeviceCertificate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceRevocationRecord {
+    pub device_id: String,
+    pub revoked_by_device_id: String,
+    pub reason: String,
+    pub key_rotation_required: bool,
+    pub revoked_at_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecoveryExportStatus {
     pub available: bool,
     pub message: String,

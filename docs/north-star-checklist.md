@@ -838,19 +838,19 @@ Conventions:
 
 ### M4.6 Revocation
 
-- [ ] Add device revoke command.
-- [ ] Add revocation record.
+- [x] Add device revoke command.
+- [x] Add revocation record.
 - [ ] Reject revoked device connection.
-- [ ] Reject revoked publish.
-- [ ] Reject revoked lease operation.
-- [ ] Emit audit event.
-- [ ] Add key rotation option placeholder.
-- [ ] Add revoke tests.
+- [x] Reject revoked publish.
+- [x] Reject revoked lease operation.
+- [x] Emit audit event.
+- [x] Add key rotation option placeholder.
+- [x] Add revoke tests.
 
 ### M4.7 Audit Log
 
 - [x] Record pair event.
-- [ ] Record revoke event.
+- [x] Record revoke event.
 - [x] Record snapshot publish event.
 - [x] Record snapshot apply event.
 - [x] Record lease transfer event.

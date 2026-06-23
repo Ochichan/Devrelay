@@ -11,10 +11,10 @@ use devrelay_core::AgentRpcClient;
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, ApplySnapshotParams, ApplySnapshotResult, AuditEventInput,
     AuditEventRecord, AuditEventType, AuditOutcome, CheckpointCreateParams, CheckpointCreateResult,
-    DevRelayError, DevRelayHome, DeviceIdentity, DevicePublicIdentity, DiagnosticsExportParams,
-    DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole, DiscoveryService, ErrorInfo,
-    FabricIdentityBundle, FabricIdentityStore, GitRepo, LocalConfig, LogRedactor,
-    METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
+    DevRelayError, DevRelayHome, DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord,
+    DiagnosticsExportParams, DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole,
+    DiscoveryService, ErrorInfo, FabricIdentityBundle, FabricIdentityStore, GitRepo, LocalConfig,
+    LogRedactor, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
     METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
     METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
     MetadataDb, PairingSession, PairingStartRequest, PathDecision, PatternConfig,
@@ -260,6 +260,15 @@ enum DiagnosticsCommand {
 enum DeviceCommand {
     Show {
         id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Revoke {
+        device_id: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        key_rotation_required: bool,
         #[arg(long)]
         json: bool,
     },
@@ -1642,6 +1651,21 @@ fn handle_device_command(command: DeviceCommand) -> anyhow::Result<()> {
                 .ok_or_else(|| DevRelayError::Config(format!("unknown device {device_id}")))?;
             render_device(&device, json)
         }
+        DeviceCommand::Revoke {
+            device_id,
+            reason,
+            key_rotation_required,
+            json,
+        } => {
+            let mut registry = open_device_registry()?;
+            let revocation = registry.db.revoke_device(
+                &device_id,
+                &registry.config.device_id,
+                &reason,
+                key_rotation_required,
+            )?;
+            render_device_revocation(&revocation, json)
+        }
     }
 }
 
@@ -1696,6 +1720,22 @@ fn render_device(device: &DeviceIdentity, json: bool) -> anyhow::Result<()> {
         println!("  architecture: {}", device.architecture);
         println!("  paired: {}", device.paired_at_unix_seconds.is_some());
         println!("  last seen: {}", device.last_seen_unix_seconds);
+    }
+    Ok(())
+}
+
+fn render_device_revocation(revocation: &DeviceRevocationRecord, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(revocation)?);
+    } else {
+        println!("revoked device: {}", revocation.device_id);
+        println!("  by: {}", revocation.revoked_by_device_id);
+        println!("  reason: {}", revocation.reason);
+        println!(
+            "  key rotation required: {}",
+            revocation.key_rotation_required
+        );
+        println!("  revoked at: {}", revocation.revoked_at_unix_seconds);
     }
     Ok(())
 }

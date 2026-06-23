@@ -88,8 +88,8 @@ pub use handoff::{
 };
 pub use home::{AnchorLayout, DevRelayHome};
 pub use identity::{
-    DeviceCertificate, DevicePublicIdentity, FABRIC_ID_PREFIX, FabricIdentityBundle,
-    FabricIdentityStore, FabricRootIdentity, RecoveryExportStatus,
+    DeviceCertificate, DevicePublicIdentity, DeviceRevocationRecord, FABRIC_ID_PREFIX,
+    FabricIdentityBundle, FabricIdentityStore, FabricRootIdentity, RecoveryExportStatus,
 };
 pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 #[cfg(unix)]

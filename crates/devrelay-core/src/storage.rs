@@ -6,9 +6,9 @@
 
 use crate::{
     AUDIT_SCHEMA_VERSION, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
-    DeviceIdentity, DevicePublicIdentity, FabricRootIdentity, HandoffJournalPhase,
-    HandoffJournalRecord, HandoffRecord, HandoffRecoveryOutcome, HandoffState, LeaseRecord,
-    LeaseState, PairingSession, PairingState, Result, SessionState, SnapshotMetadata,
+    DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord, FabricRootIdentity,
+    HandoffJournalPhase, HandoffJournalRecord, HandoffRecord, HandoffRecoveryOutcome, HandoffState,
+    LeaseRecord, LeaseState, PairingSession, PairingState, Result, SessionState, SnapshotMetadata,
     StoredSession, StoredSnapshot, compute_handshake_transcript_hash,
     derive_short_authentication_string, generate_ephemeral_pairing_key, generate_handoff_id,
     generate_pairing_id, generate_session_id, unix_now_seconds, validate_key_hex,
@@ -310,6 +310,22 @@ CREATE INDEX idx_audit_events_lease
     ON audit_events(project_id, lease_id);
 "#,
     },
+    Migration {
+        version: 9,
+        name: "device_revocations",
+        sql: r#"
+CREATE TABLE device_revocations (
+    device_id TEXT PRIMARY KEY,
+    revoked_by_device_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    key_rotation_required INTEGER NOT NULL DEFAULT 0,
+    revoked_at_unix_seconds INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX idx_device_revocations_revoked_at
+    ON device_revocations(revoked_at_unix_seconds DESC, device_id);
+"#,
+    },
 ];
 
 pub struct MetadataDb {
@@ -522,6 +538,119 @@ FROM audit_events
                 .then(right.audit_id.cmp(&left.audit_id))
         });
         Ok(events)
+    }
+
+    pub fn revoke_device(
+        &mut self,
+        device_id: &str,
+        revoked_by_device_id: &str,
+        reason: &str,
+        key_rotation_required: bool,
+    ) -> Result<DeviceRevocationRecord> {
+        self.revoke_device_at(
+            device_id,
+            revoked_by_device_id,
+            reason,
+            key_rotation_required,
+            unix_now_seconds(),
+        )
+    }
+
+    pub fn revoke_device_at(
+        &mut self,
+        device_id: &str,
+        revoked_by_device_id: &str,
+        reason: &str,
+        key_rotation_required: bool,
+        revoked_at_unix_seconds: u64,
+    ) -> Result<DeviceRevocationRecord> {
+        validate_non_empty("device_id", device_id)?;
+        validate_non_empty("revoked_by_device_id", revoked_by_device_id)?;
+        validate_non_empty("reason", reason)?;
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            r#"
+INSERT INTO device_revocations (
+    device_id,
+    revoked_by_device_id,
+    reason,
+    key_rotation_required,
+    revoked_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5)
+ON CONFLICT(device_id) DO UPDATE SET
+    revoked_by_device_id = excluded.revoked_by_device_id,
+    reason = excluded.reason,
+    key_rotation_required = excluded.key_rotation_required,
+    revoked_at_unix_seconds = excluded.revoked_at_unix_seconds
+"#,
+            (
+                device_id,
+                revoked_by_device_id,
+                reason,
+                key_rotation_required,
+                revoked_at_unix_seconds as i64,
+            ),
+        )?;
+        let mut audit = AuditEventInput::new(
+            AuditEventType::DeviceRevoked,
+            AuditOutcome::Succeeded,
+            format!("revoked device {device_id}"),
+        )
+        .with_detail(serde_json::json!({
+            "reason": reason,
+            "key_rotation_required": key_rotation_required,
+        }));
+        audit.actor_device_id = Some(revoked_by_device_id.to_string());
+        audit.target_device_id = Some(device_id.to_string());
+        insert_audit_event_tx(&tx, audit, revoked_at_unix_seconds)?;
+        tx.commit()?;
+        Ok(DeviceRevocationRecord {
+            device_id: device_id.to_string(),
+            revoked_by_device_id: revoked_by_device_id.to_string(),
+            reason: reason.to_string(),
+            key_rotation_required,
+            revoked_at_unix_seconds,
+        })
+    }
+
+    pub fn get_device_revocation(&self, device_id: &str) -> Result<Option<DeviceRevocationRecord>> {
+        self.conn
+            .query_row(
+                r#"
+SELECT device_id,
+       revoked_by_device_id,
+       reason,
+       key_rotation_required,
+       revoked_at_unix_seconds
+FROM device_revocations
+WHERE device_id = ?1
+"#,
+                [device_id],
+                device_revocation_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn list_device_revocations(&self) -> Result<Vec<DeviceRevocationRecord>> {
+        let mut statement = self.conn.prepare(
+            r#"
+SELECT device_id,
+       revoked_by_device_id,
+       reason,
+       key_rotation_required,
+       revoked_at_unix_seconds
+FROM device_revocations
+ORDER BY revoked_at_unix_seconds DESC, device_id ASC
+"#,
+        )?;
+        let rows = statement.query_map([], device_revocation_from_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn ensure_device_not_revoked(&self, device_id: &str, operation: &str) -> Result<()> {
+        ensure_device_not_revoked_conn(&self.conn, device_id, operation)
     }
 
     pub fn upsert_device_identity(&self, device: &DeviceIdentity) -> Result<()> {
@@ -1316,6 +1445,7 @@ WHERE lease_id = ?1
                 "publish rejected: holder device mismatch".to_string(),
             ));
         }
+        ensure_device_not_revoked_conn(&tx, request.holder_device_id, "snapshot publish")?;
         if lease.state != LeaseState::Active {
             return Err(crate::DevRelayError::Config(format!(
                 "publish rejected: lease state is {}",
@@ -1470,6 +1600,7 @@ WHERE lease_id = ?1
                 "inactive publish rejected: holder device mismatch".to_string(),
             ));
         }
+        ensure_device_not_revoked_conn(&tx, request.holder_device_id, "inactive publish")?;
         if lease.state != LeaseState::Inactive {
             return Err(crate::DevRelayError::Config(format!(
                 "inactive edit fork requires inactive lease; found {}",
@@ -1695,6 +1826,8 @@ LIMIT 1
                 "handoff source does not hold lease".to_string(),
             ));
         }
+        ensure_device_not_revoked_conn(&tx, source_device_id, "begin handoff")?;
+        ensure_device_not_revoked_conn(&tx, target_device_id, "begin handoff")?;
 
         let now = unix_now_seconds();
         let expires_at = now.saturating_add(ttl_seconds.max(1));
@@ -1851,6 +1984,7 @@ INSERT INTO handoffs (
                 "handoff commit rejected: {reason}"
             )));
         }
+        ensure_device_not_revoked_conn(&tx, &handoff.target_device_id, "handoff commit")?;
 
         let changed = tx.execute(
             r#"
@@ -2259,6 +2393,48 @@ fn audit_event_record_from_row(row: &Row<'_>) -> rusqlite::Result<AuditEventReco
     })
 }
 
+fn device_revocation_from_row(row: &Row<'_>) -> rusqlite::Result<DeviceRevocationRecord> {
+    Ok(DeviceRevocationRecord {
+        device_id: row.get(0)?,
+        revoked_by_device_id: row.get(1)?,
+        reason: row.get(2)?,
+        key_rotation_required: row.get(3)?,
+        revoked_at_unix_seconds: row.get::<_, i64>(4)?.max(0) as u64,
+    })
+}
+
+fn ensure_device_not_revoked_conn(
+    conn: &Connection,
+    device_id: &str,
+    operation: &str,
+) -> Result<()> {
+    if let Some(revocation) = conn
+        .query_row(
+            r#"
+SELECT device_id,
+       revoked_by_device_id,
+       reason,
+       key_rotation_required,
+       revoked_at_unix_seconds
+FROM device_revocations
+WHERE device_id = ?1
+"#,
+            [device_id],
+            device_revocation_from_row,
+        )
+        .optional()?
+    {
+        return Err(crate::DevRelayError::Config(format!(
+            "{operation} rejected: device {} was revoked by {} at {}: {}",
+            revocation.device_id,
+            revocation.revoked_by_device_id,
+            revocation.revoked_at_unix_seconds,
+            revocation.reason
+        )));
+    }
+    Ok(())
+}
+
 fn validate_non_empty(field: &str, value: &str) -> Result<()> {
     if value.is_empty() {
         return Err(crate::DevRelayError::Config(format!(
@@ -2486,6 +2662,7 @@ mod tests {
             "device_public_identities",
             "pairing_sessions",
             "audit_events",
+            "device_revocations",
             "devices",
             "task_runs",
         ] {
@@ -2513,6 +2690,7 @@ mod tests {
         assert!(index_exists(&db, "idx_audit_events_type_timeline"));
         assert!(index_exists(&db, "idx_audit_events_snapshot"));
         assert!(index_exists(&db, "idx_audit_events_lease"));
+        assert!(index_exists(&db, "idx_device_revocations_revoked_at"));
 
         let journal_mode: String = db
             .connection()
@@ -2653,6 +2831,15 @@ mod tests {
             "created_at_unix_seconds",
         ] {
             assert!(column_exists(&db, "audit_events", column), "{column}");
+        }
+        for column in [
+            "device_id",
+            "revoked_by_device_id",
+            "reason",
+            "key_rotation_required",
+            "revoked_at_unix_seconds",
+        ] {
+            assert!(column_exists(&db, "device_revocations", column), "{column}");
         }
     }
 
@@ -2856,6 +3043,39 @@ mod tests {
             db.list_audit_events(Some("project-a"), 10).unwrap(),
             vec![first]
         );
+    }
+
+    #[test]
+    fn revokes_device_and_records_audit_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let mut db = MetadataDb::open(&path).unwrap();
+
+        let revocation = db
+            .revoke_device_at("device-b", "device-a", "lost laptop", true, 123)
+            .unwrap();
+
+        assert_eq!(revocation.device_id, "device-b");
+        assert_eq!(revocation.revoked_by_device_id, "device-a");
+        assert_eq!(revocation.reason, "lost laptop");
+        assert!(revocation.key_rotation_required);
+        assert_eq!(
+            db.get_device_revocation("device-b").unwrap(),
+            Some(revocation.clone())
+        );
+        assert!(
+            db.ensure_device_not_revoked("device-b", "test operation")
+                .unwrap_err()
+                .to_string()
+                .contains("test operation rejected")
+        );
+
+        let audits = db.list_audit_events(None, 10).unwrap();
+        assert_eq!(audits.len(), 1);
+        assert_eq!(audits[0].event_type, AuditEventType::DeviceRevoked);
+        assert_eq!(audits[0].actor_device_id.as_deref(), Some("device-a"));
+        assert_eq!(audits[0].target_device_id.as_deref(), Some("device-b"));
+        assert_eq!(audits[0].detail["key_rotation_required"], true);
     }
 
     fn setup_pairing_db() -> (MetadataDb, FabricRootIdentity) {
@@ -3179,6 +3399,40 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("lease state is inactive"));
         assert!(snapshots_for_project(&db, "project123").is_empty());
+    }
+
+    #[test]
+    fn revoked_devices_cannot_publish_or_receive_handoff() {
+        let (mut db, session, lease) = setup_publish_db(1, LeaseState::Active);
+        db.revoke_device_at("device-a", "device-security", "compromised", false, 200)
+            .unwrap();
+        let metadata = publish_metadata("s1_000000000000000000000110", &session.session_id);
+
+        let err = db
+            .publish_snapshot_canonical(CanonicalPublishRequest {
+                lease_id: &lease.lease_id,
+                session_id: &session.session_id,
+                expected_epoch: 1,
+                holder_device_id: "device-a",
+                expected_latest_snapshot_id: None,
+                metadata: &metadata,
+                pinned: false,
+                label: None,
+            })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("snapshot publish rejected"));
+        assert!(err.to_string().contains("device-a"));
+        assert!(snapshots_for_project(&db, "project123").is_empty());
+
+        let (mut db, _session, lease) = setup_publish_db(1, LeaseState::Active);
+        db.revoke_device_at("device-b", "device-security", "lost laptop", true, 201)
+            .unwrap();
+        let err = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 60)
+            .unwrap_err();
+        assert!(err.to_string().contains("begin handoff rejected"));
+        assert!(err.to_string().contains("device-b"));
     }
 
     #[test]
@@ -3707,7 +3961,7 @@ WHERE snapshot_id = ?1
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 8);
+        assert_eq!(count, 9);
     }
 
     #[test]
