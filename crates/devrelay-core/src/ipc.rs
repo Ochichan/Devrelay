@@ -357,6 +357,7 @@ mod tests {
     use std::net::Shutdown;
     use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream};
     use std::thread;
+    use std::time::Duration;
 
     fn socket_path(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         let temp = tempfile::tempdir().unwrap();
@@ -391,6 +392,12 @@ mod tests {
         let (_temp, path) = socket_path("stale.sock");
         let raw = StdUnixListener::bind(&path).unwrap();
         drop(raw);
+        for _ in 0..100 {
+            if UnixStream::connect(&path).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
         assert!(path.exists());
 
         let listener = UnixIpcListener::bind(&path).unwrap();
