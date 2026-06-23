@@ -1767,7 +1767,7 @@ Conventions:
 - [x] Add token pattern scanner.
 - [x] Add high-entropy heuristic.
 - [ ] Add user-configured scanner hook.
-- [ ] Add raw secret redaction tests.
+- [x] Add raw secret redaction tests.
 - [ ] Add false-positive override design.
 - [ ] Add encrypted one-time sidecar design.
 

@@ -184,6 +184,7 @@ impl LogRedactor {
 
     pub fn redact_text(&self, value: &str) -> String {
         let value = redact_credentialed_urls(value);
+        let value = redact_raw_secret_tokens(&value);
         let value = redact_secret_assignments(&value);
         if self.redact_local_paths {
             self.redact_paths(&value)
@@ -360,6 +361,93 @@ fn redact_credentialed_urls(value: &str) -> String {
     output
 }
 
+fn redact_raw_secret_tokens(value: &str) -> String {
+    let mut redacted = value.to_string();
+    for token in raw_secret_tokens(value) {
+        redacted = redacted.replace(token, REDACTED);
+    }
+    redacted
+}
+
+fn raw_secret_tokens(value: &str) -> Vec<&str> {
+    token_candidates(value)
+        .filter(|token| looks_like_raw_secret_token(token))
+        .collect()
+}
+
+fn token_candidates(value: &str) -> impl Iterator<Item = &str> {
+    value
+        .split(|ch: char| {
+            !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | '+' | '='))
+        })
+        .filter(|candidate| !candidate.is_empty())
+}
+
+fn looks_like_raw_secret_token(token: &str) -> bool {
+    let token = trim_token_value(token);
+    if token.len() == 20
+        && (token.starts_with("AKIA") || token.starts_with("ASIA"))
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    {
+        return true;
+    }
+    if token.starts_with("github_pat_") && token.len() >= 40 {
+        return true;
+    }
+    if ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
+        .iter()
+        .any(|prefix| token.starts_with(prefix))
+        && token.len() >= 30
+    {
+        return true;
+    }
+    if ["xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"]
+        .iter()
+        .any(|prefix| token.starts_with(prefix))
+        && token.len() >= 20
+    {
+        return true;
+    }
+    if token.starts_with("sk-") && token.len() >= 32 {
+        return token_entropy(token) >= 4.0;
+    }
+    false
+}
+
+fn trim_token_value(value: &str) -> &str {
+    value.trim_matches(|ch: char| {
+        ch == '"'
+            || ch == '\''
+            || ch == '`'
+            || ch == ','
+            || ch == ';'
+            || ch == ')'
+            || ch == ']'
+            || ch == '}'
+    })
+}
+
+fn token_entropy(value: &str) -> f64 {
+    if value.is_empty() {
+        return 0.0;
+    }
+    let mut counts = [0_usize; 256];
+    for byte in value.bytes() {
+        counts[byte as usize] += 1;
+    }
+    let len = value.len() as f64;
+    counts
+        .into_iter()
+        .filter(|count| *count > 0)
+        .map(|count| {
+            let probability = count as f64 / len;
+            -probability * probability.log2()
+        })
+        .sum()
+}
+
 fn find_next_scheme(value: &str) -> Option<(usize, &'static str)> {
     URL_SCHEMES
         .iter()
@@ -520,6 +608,18 @@ mod tests {
             "token: <redacted> and api_key=<redacted>"
         );
         assert_eq!(
+            redactor.redact_text("raw ghp_abcdefghijklmnopqrstuvwxyz1234567890 token"),
+            "raw <redacted> token"
+        );
+        assert_eq!(
+            redactor.redact_text("aws key AKIA1234567890ABCDEF seen"),
+            "aws key <redacted> seen"
+        );
+        assert_eq!(
+            redactor.redact_text("provider key sk-abcdefghijklmnopqrstuvwxyz1234567890ABCDE"),
+            "provider key <redacted>"
+        );
+        assert_eq!(
             redactor.redact_text("fetch https://token:secret@example.com/repo.git"),
             "fetch https://<redacted>@example.com/repo.git"
         );
@@ -549,6 +649,7 @@ mod tests {
             "path": "/Users/me/project/src/main.rs",
             "nested": {
                 "token": "secret-token",
+                "raw": "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
                 "remote": "https://user:secret@example.com/repo.git"
             }
         });
@@ -557,6 +658,7 @@ mod tests {
 
         assert_eq!(redacted["path"], "<path>/src/main.rs");
         assert_eq!(redacted["nested"]["token"], "<redacted>");
+        assert_eq!(redacted["nested"]["raw"], "<redacted>");
         assert_eq!(
             redacted["nested"]["remote"],
             "https://<redacted>@example.com/repo.git"
