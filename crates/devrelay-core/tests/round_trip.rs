@@ -40,6 +40,7 @@ fn write_base_files(path: &Path) {
     fs::write(path.join("rename_me.txt"), "rename me\n").unwrap();
     fs::write(path.join("binary.bin"), [0_u8, 1, 2, 3]).unwrap();
     fs::write(path.join("script.sh"), "#!/bin/sh\necho hi\n").unwrap();
+    fs::write(path.join("유니코드-tracked.txt"), "unicode tracked base\n").unwrap();
 }
 
 fn commit_base(repo: &GitRepo, path: &Path) {
@@ -142,6 +143,34 @@ where
 }
 
 #[test]
+fn round_trips_staged_delete_fixture() {
+    round_trip(
+        |_source_path, source| {
+            source.run(&["rm", "delete.txt"]).unwrap();
+        },
+        |target_path, target, snapshot, _verification| {
+            assert!(!target_path.join("delete.txt").exists());
+            assert_eq!(target.status().unwrap().counts.staged, 1);
+            assert_eq!(snapshot.source_status.staged, 1);
+        },
+    );
+}
+
+#[test]
+fn round_trips_unstaged_delete_fixture() {
+    round_trip(
+        |source_path, _source| {
+            fs::remove_file(source_path.join("unstaged_delete.txt")).unwrap();
+        },
+        |target_path, target, snapshot, _verification| {
+            assert!(!target_path.join("unstaged_delete.txt").exists());
+            assert_eq!(target.status().unwrap().counts.unstaged, 1);
+            assert_eq!(snapshot.source_status.unstaged, 1);
+        },
+    );
+}
+
+#[test]
 fn round_trips_staged_and_unstaged_tracked_changes() {
     round_trip(
         |source_path, source| {
@@ -207,6 +236,30 @@ fn round_trips_untracked_paths_and_excludes_secret_and_generated_paths() {
                     .any(|item| item.path == "target/generated.bin")
             );
             assert!(verification.excluded_paths.contains(&".env".to_string()));
+        },
+    );
+}
+
+#[test]
+fn round_trips_unicode_tracked_paths() {
+    round_trip(
+        |source_path, source| {
+            fs::write(
+                source_path.join("유니코드-tracked.txt"),
+                "unicode tracked changed\n",
+            )
+            .unwrap();
+            source.run(&["add", "유니코드-tracked.txt"]).unwrap();
+        },
+        |target_path, target, snapshot, _verification| {
+            assert_eq!(
+                fs::read_to_string(target_path.join("유니코드-tracked.txt")).unwrap(),
+                "unicode tracked changed\n"
+            );
+            assert_eq!(
+                tree_blob_content(target, &snapshot.index_tree_oid, "유니코드-tracked.txt"),
+                "unicode tracked changed"
+            );
         },
     );
 }

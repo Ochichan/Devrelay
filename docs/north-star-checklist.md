@@ -2069,11 +2069,11 @@ Conventions:
 
 - [ ] Add stable error codes and JSON error output to the existing CLI.
 - [ ] Add `SnapshotMetadata` schema tests and golden JSON fixtures.
-- [ ] Expand Git round-trip fixtures for staged delete.
-- [ ] Expand Git round-trip fixtures for unstaged delete.
-- [ ] Expand Git round-trip fixtures for binary files.
-- [ ] Expand Git round-trip fixtures for executable bit.
-- [ ] Expand Git round-trip fixtures for Unicode paths.
+- [x] Expand Git round-trip fixtures for staged delete.
+- [x] Expand Git round-trip fixtures for unstaged delete.
+- [x] Expand Git round-trip fixtures for binary files.
+- [x] Expand Git round-trip fixtures for executable bit.
+- [x] Expand Git round-trip fixtures for Unicode paths.
 - [ ] Add apply journal records to local apply.
 - [ ] Create SQLite schema and migrations for local project/session/snapshot data.
 - [ ] Add `devrelay project add/list` and local registry config.
