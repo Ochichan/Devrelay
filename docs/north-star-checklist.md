@@ -807,7 +807,7 @@ Conventions:
 
 - [x] Add rustls server config.
 - [x] Add rustls client config.
-- [ ] Require TLS for control channel.
+- [x] Require TLS for control channel.
 - [x] Validate device certificate.
 - [x] Pin fabric root.
 - [x] Check revocation denylist.
@@ -866,7 +866,7 @@ Conventions:
 - [x] Revoked device cannot connect.
 - [x] mDNS TXT records do not leak sensitive data.
 - [x] Transport tests cover expired, wrong-fabric, and revoked certificates.
-- [ ] Control API rejects unauthenticated requests.
+- [x] Control API rejects unauthenticated requests.
 
 ## M5. Data Plane: Git Object Transfer And Sidecar CAS
 

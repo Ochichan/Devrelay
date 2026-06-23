@@ -251,10 +251,11 @@ pub use submodule::{
     inspect_submodules_with_depth, restore_clean_submodule_recorded_commit,
 };
 pub use transport_security::{
-    CONTROL_ALPN_PROTOCOL, CONTROL_PROTOCOL_VERSION, ControlPlaneReplayCache,
-    ControlPlaneRequestEnvelope, ControlPlaneTransportPolicy, RustlsIdentity,
-    ValidatedDeviceCertificate, build_rustls_client_config, build_rustls_server_config,
-    negotiate_control_protocol_version, validate_control_request_envelope,
+    AuthenticatedControlPlanePeer, CONTROL_ALPN_PROTOCOL, CONTROL_PROTOCOL_VERSION,
+    ControlPlaneReplayCache, ControlPlaneRequestEnvelope, ControlPlaneTransportPolicy,
+    ControlPlaneTransportSecurity, RustlsIdentity, ValidatedDeviceCertificate,
+    build_rustls_client_config, build_rustls_server_config, negotiate_control_protocol_version,
+    require_authenticated_control_channel, validate_control_request_envelope,
     validate_device_certificate,
 };
 #[cfg(target_os = "macos")]

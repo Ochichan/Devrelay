@@ -36,6 +36,18 @@ pub struct ValidatedDeviceCertificate {
     pub expires_at_unix_seconds: u64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ControlPlaneTransportSecurity {
+    Mtls,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuthenticatedControlPlanePeer {
+    pub transport: ControlPlaneTransportSecurity,
+    pub device: ValidatedDeviceCertificate,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ControlPlaneTransportPolicy {
     pub protocol_version: u32,
@@ -177,6 +189,20 @@ pub fn validate_control_request_envelope(
         now_unix_seconds,
         policy.replay_window_seconds,
     )
+}
+
+pub fn require_authenticated_control_channel(
+    peer: Option<ValidatedDeviceCertificate>,
+) -> Result<AuthenticatedControlPlanePeer> {
+    let device = peer.ok_or_else(|| {
+        DevRelayError::Config(
+            "control API request rejected: authenticated mTLS peer is required".to_string(),
+        )
+    })?;
+    Ok(AuthenticatedControlPlanePeer {
+        transport: ControlPlaneTransportSecurity::Mtls,
+        device,
+    })
 }
 
 pub fn build_rustls_server_config(
@@ -553,6 +579,20 @@ mod tests {
         assert_eq!(policy.request_timeout_millis, 30_000);
         assert_eq!(policy.max_clock_skew_seconds, 300);
         assert_eq!(policy.replay_window_seconds, 300);
+    }
+
+    #[test]
+    fn control_channel_requires_authenticated_mtls_peer() {
+        let (bundle, certificate) = test_device_certificate();
+        let validated = validate_device_certificate(&certificate, &bundle.root, &[], 120).unwrap();
+
+        let peer = require_authenticated_control_channel(Some(validated.clone())).unwrap();
+
+        assert_eq!(peer.transport, ControlPlaneTransportSecurity::Mtls);
+        assert_eq!(peer.device, validated);
+
+        let rejected = require_authenticated_control_channel(None).unwrap_err();
+        assert!(rejected.to_string().contains("authenticated mTLS peer"));
     }
 
     #[test]
