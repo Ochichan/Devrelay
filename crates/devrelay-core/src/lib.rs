@@ -63,6 +63,7 @@ mod snapshot;
 mod snapshot_schema;
 mod snapshot_store;
 mod storage;
+mod submodule;
 mod transport_security;
 mod wsl_doctor;
 
@@ -172,6 +173,10 @@ pub use snapshot_store::{SnapshotStore, StoredSnapshot};
 pub use storage::{
     CanonicalPublishRequest, CanonicalPublishResult, InactiveForkPublishRequest,
     InactiveForkPublishResult, MetadataDb, PairingStartRequest,
+};
+pub use submodule::{
+    SubmoduleReport, SubmoduleState, SubmoduleStatus, inspect_submodules,
+    restore_clean_submodule_recorded_commit,
 };
 pub use transport_security::{
     CONTROL_ALPN_PROTOCOL, CONTROL_PROTOCOL_VERSION, ControlPlaneReplayCache,

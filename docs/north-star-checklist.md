@@ -1681,15 +1681,15 @@ Conventions:
 
 ### M12.2 Submodules
 
-- [ ] Detect submodule config.
-- [ ] Detect clean submodule state.
-- [ ] Restore clean submodule recorded commit.
-- [ ] Detect dirty submodule state.
+- [x] Detect submodule config.
+- [x] Detect clean submodule state.
+- [x] Restore clean submodule recorded commit.
+- [x] Detect dirty submodule state.
 - [ ] Create child project/session for dirty submodule.
 - [ ] Store parent-child snapshot topology.
 - [ ] Add recursion depth limit.
 - [ ] Add cycle detection.
-- [ ] Add submodule tests.
+- [x] Add submodule tests.
 
 ### M12.3 Git LFS
 
