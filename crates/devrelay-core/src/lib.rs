@@ -63,6 +63,7 @@ mod path_doctor;
 mod platform;
 mod policy;
 mod retention;
+mod route_selection;
 mod rpc;
 mod service;
 mod session;
@@ -181,6 +182,10 @@ pub use retention::{
     HandoffSnapshotProtection, PruningDecision, PruningDecisionAction, PruningPlan,
     PruningPlanInput, PruningPlanWarning, PruningPlanWarningCode, PruningReason, PruningScope,
     RetentionKeepReason, RetentionPolicy, SnapshotRetentionEntry, plan_snapshot_pruning,
+};
+pub use route_selection::{
+    SnapshotRouteDecision, SnapshotRouteMeasurements, SnapshotRouteMetrics, SnapshotRoutePolicy,
+    SnapshotTransferRoute, select_snapshot_route, select_snapshot_route_after_failure,
 };
 #[cfg(unix)]
 pub use rpc::AgentRpcClient;

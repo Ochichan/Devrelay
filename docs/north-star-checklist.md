@@ -899,14 +899,14 @@ Conventions:
 
 - [ ] Measure source online status.
 - [ ] Measure anchor availability.
-- [ ] Add direct peer route.
-- [ ] Add anchor cache route.
-- [ ] Add source-required route.
-- [ ] Add route decision explanation.
-- [ ] Add route fallback on failure.
-- [ ] Add route metrics.
-- [ ] Add direct route tests.
-- [ ] Add anchor fallback tests.
+- [x] Add direct peer route.
+- [x] Add anchor cache route.
+- [x] Add source-required route.
+- [x] Add route decision explanation.
+- [x] Add route fallback on failure.
+- [x] Add route metrics.
+- [x] Add direct route tests.
+- [x] Add anchor fallback tests.
 
 ### M5.4 CAS Core
 
