@@ -1659,7 +1659,7 @@ Conventions:
 
 - [x] Unsafe paths block before target apply.
 - [x] Windows native and WSL are separate devices.
-- [ ] Symlink/reparse traversal tests pass.
+- [x] Symlink/reparse traversal tests pass.
 - [x] Line-ending verification uses Git semantics.
 
 ## M12. Advanced Git States
