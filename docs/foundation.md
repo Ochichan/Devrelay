@@ -67,6 +67,17 @@ updates local workspace state placeholders when the workspaces are registered.
 `apply --dry-run` validates that the target is clean and the source snapshot refs
 are available without mutating the target.
 
+## Windows And WSL Workspace Boundaries
+
+DevRelay treats Windows native and WSL as separate device boundaries, even when
+they run on the same physical machine. Each WSL distro is also a separate
+boundary. WSL-owned checkouts should live on the distro filesystem, such as
+`/home/<user>`, rather than under `/mnt/c`. Windows-native tools should use a
+separate clone instead of mutating a WSL tree through `\\wsl$`.
+
+Use `devrelay doctor wsl-filesystem --repo <path>` to flag shared-tree mutation
+risk and print the current workspace mapping guidance.
+
 ## Core API Boundary
 
 `devrelay-core` exposes the M0 API from the crate root. The manifest schema is a

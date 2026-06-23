@@ -1648,12 +1648,12 @@ Conventions:
 
 ### M11.7 WSL/Native Separation
 
-- [ ] Represent Windows native as separate device.
-- [ ] Represent WSL distro as separate device.
-- [ ] Prevent shared tree mutation warning.
-- [ ] Add workspace mapping guidance.
-- [ ] Add WSL filesystem doctor.
-- [ ] Add WSL tests where possible.
+- [x] Represent Windows native as separate device.
+- [x] Represent WSL distro as separate device.
+- [x] Prevent shared tree mutation warning.
+- [x] Add workspace mapping guidance.
+- [x] Add WSL filesystem doctor.
+- [x] Add WSL tests where possible.
 
 ### M11 Exit Gate
 

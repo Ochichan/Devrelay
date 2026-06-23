@@ -447,6 +447,45 @@ fn doctor_line_endings_reports_missing_policy_and_target_risk() {
 }
 
 #[test]
+fn doctor_wsl_filesystem_reports_device_mapping_guidance() {
+    let repo = std::env::temp_dir().join(format!(
+        "devrelay-doctor-wsl-filesystem-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+
+    let output = devrelay()
+        .args([
+            "doctor",
+            "wsl-filesystem",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--platform-key",
+            "wsl2-linux-gnu-x86_64",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["platform_key"], "wsl2-linux-gnu-x86_64");
+    assert!(value["guidance"].as_array().unwrap().iter().any(|item| {
+        item.as_str()
+            .unwrap()
+            .contains("different DevRelay devices")
+    }));
+
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[test]
 fn audit_list_and_export_redact_by_default() {
     use devrelay_core::{AuditEventInput, AuditEventType, AuditOutcome, DevRelayHome, MetadataDb};
 

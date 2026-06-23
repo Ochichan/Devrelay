@@ -24,11 +24,12 @@ use devrelay_core::{
     RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
     ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore,
     StatusGetParams, StatusGetResult, StatusSummary, StoredSession, StoredSnapshot,
-    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
-    build_discovery_advertisement, classify_untracked_paths, create_snapshot, current_platform_key,
-    linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
-    read_snapshot_file, run_git_performance_doctor, run_line_ending_doctor,
-    run_path_portability_doctor, workspace_id_for, write_snapshot_file,
+    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
+    WslFilesystemDoctorReport, apply_snapshot, build_discovery_advertisement,
+    classify_untracked_paths, create_snapshot, current_platform_key, linux_systemd_user_template,
+    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file,
+    run_git_performance_doctor, run_line_ending_doctor, run_path_portability_doctor,
+    run_wsl_filesystem_doctor, workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -287,6 +288,14 @@ enum DoctorCommand {
         repo: PathBuf,
         #[arg(long)]
         target_platform: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    WslFilesystem {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long)]
+        platform_key: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -1411,6 +1420,16 @@ fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
             let report = run_line_ending_doctor(&repo, &target_platform)?;
             render_line_ending_doctor(&report, json)
         }
+        DoctorCommand::WslFilesystem {
+            repo,
+            platform_key,
+            json,
+        } => {
+            let repo = GitRepo::new(resolve_git_root(&repo)?);
+            let platform_key = platform_key.unwrap_or_else(current_platform_key);
+            let report = run_wsl_filesystem_doctor(&repo, &platform_key)?;
+            render_wsl_filesystem_doctor(&report, json)
+        }
     }
 }
 
@@ -1516,6 +1535,34 @@ fn render_line_ending_doctor(report: &LineEndingDoctorReport, json: bool) -> any
                     println!("    action: {action}");
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+fn render_wsl_filesystem_doctor(
+    report: &WslFilesystemDoctorReport,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!("wsl filesystem doctor: {}", report.repo.display());
+        println!("  platform: {}", report.platform_key);
+        println!("  path kind: {:?}", report.path_kind);
+        if report.warnings.is_empty() {
+            println!("  warnings: none");
+        } else {
+            println!("  warnings: {}", report.warnings.len());
+            for warning in &report.warnings {
+                println!("  - {:?}: {}", warning.code, warning.message);
+                for action in &warning.safe_actions {
+                    println!("    action: {action}");
+                }
+            }
+        }
+        for item in &report.guidance {
+            println!("  guidance: {item}");
         }
     }
     Ok(())

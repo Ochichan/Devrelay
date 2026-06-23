@@ -6,7 +6,7 @@
 
 use crate::{
     DevRelayError, Result, current_platform_architecture, current_platform_capabilities_json,
-    current_platform_key,
+    current_platform_device_scope_key, current_platform_key,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -516,7 +516,7 @@ pub fn generate_device_id() -> String {
     let seed = format!(
         "{}\0{}\0{}\0{}\0{}",
         default_device_display_name(),
-        default_platform_key(),
+        current_platform_device_scope_key(),
         default_architecture(),
         std::process::id(),
         unix_now_nanos()

@@ -63,6 +63,7 @@ mod snapshot_schema;
 mod snapshot_store;
 mod storage;
 mod transport_security;
+mod wsl_doctor;
 
 pub use audit::{
     AUDIT_SCHEMA_VERSION, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
@@ -129,8 +130,9 @@ pub use path_doctor::{
 };
 pub use platform::{
     PLATFORM_KEY_FORMAT, PlatformCapabilities, PlatformIdentity, WslIdentity,
-    current_platform_architecture, current_platform_capabilities_json, current_platform_key,
-    detect_platform_identity, platform_capabilities_for_key,
+    current_platform_architecture, current_platform_capabilities_json,
+    current_platform_device_scope_key, current_platform_key, detect_platform_identity,
+    platform_capabilities_for_key, platform_device_scope_key,
 };
 pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
 #[cfg(unix)]
@@ -171,4 +173,8 @@ pub use transport_security::{
     ValidatedDeviceCertificate, build_rustls_client_config, build_rustls_server_config,
     negotiate_control_protocol_version, validate_control_request_envelope,
     validate_device_certificate,
+};
+pub use wsl_doctor::{
+    WslFilesystemDoctorReport, WslFilesystemPathKind, WslFilesystemWarning,
+    WslFilesystemWarningCode, run_wsl_filesystem_doctor,
 };

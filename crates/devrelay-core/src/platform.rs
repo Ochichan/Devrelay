@@ -51,6 +51,22 @@ pub fn current_platform_capabilities_json() -> String {
         .unwrap_or_else(|_| r#"{"anchor":true,"local_snapshots":true}"#.to_string())
 }
 
+pub fn current_platform_device_scope_key() -> String {
+    platform_device_scope_key(&detect_platform_identity())
+}
+
+pub fn platform_device_scope_key(identity: &PlatformIdentity) -> String {
+    if let Some(wsl) = &identity.wsl {
+        format!(
+            "{}:{}",
+            identity.platform_key,
+            wsl.distro.as_deref().unwrap_or("unknown-distro")
+        )
+    } else {
+        identity.platform_key.clone()
+    }
+}
+
 pub fn platform_capabilities_for_key(platform_key: &str) -> PlatformCapabilities {
     if platform_key.starts_with("darwin-") {
         capabilities_for("darwin")
@@ -268,6 +284,43 @@ mod tests {
         assert_eq!(
             identity.wsl.as_ref().and_then(|wsl| wsl.version.as_deref()),
             Some("5.15.153.1-microsoft-standard-WSL2")
+        );
+    }
+
+    #[test]
+    fn device_scope_separates_windows_native_and_wsl_distros() {
+        let windows = platform_identity_from_probe(&PlatformProbe {
+            os: "windows".to_string(),
+            arch: "x86_64".to_string(),
+            env: BTreeMap::new(),
+            linux_proc_version: None,
+        });
+        let mut ubuntu_env = BTreeMap::new();
+        ubuntu_env.insert("WSL_DISTRO_NAME".to_string(), "Ubuntu-24.04".to_string());
+        ubuntu_env.insert("WSL_INTEROP".to_string(), "/run/WSL/1_interop".to_string());
+        let ubuntu = platform_identity_from_probe(&PlatformProbe {
+            os: "linux".to_string(),
+            arch: "x86_64".to_string(),
+            env: ubuntu_env,
+            linux_proc_version: Some("Linux version microsoft-standard-WSL2".to_string()),
+        });
+        let mut debian_env = BTreeMap::new();
+        debian_env.insert("WSL_DISTRO_NAME".to_string(), "Debian".to_string());
+        debian_env.insert("WSL_INTEROP".to_string(), "/run/WSL/2_interop".to_string());
+        let debian = platform_identity_from_probe(&PlatformProbe {
+            os: "linux".to_string(),
+            arch: "x86_64".to_string(),
+            env: debian_env,
+            linux_proc_version: Some("Linux version microsoft-standard-WSL2".to_string()),
+        });
+
+        assert_ne!(
+            platform_device_scope_key(&windows),
+            platform_device_scope_key(&ubuntu)
+        );
+        assert_ne!(
+            platform_device_scope_key(&ubuntu),
+            platform_device_scope_key(&debian)
         );
     }
 
