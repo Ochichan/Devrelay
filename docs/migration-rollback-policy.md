@@ -1,5 +1,7 @@
 # Migration Rollback Policy
 
+Last updated: 2026-06-23
+
 DevRelay metadata migrations are forward-only and run inside a SQLite
 transaction. A failed migration must leave the database at the previous applied
 version.
@@ -13,4 +15,8 @@ version.
   not running destructive down migrations.
 - Before a future destructive migration, create a backup copy and document the
   recovery path in release notes.
-
+- Snapshot schema changes require backward compatibility fixtures.
+- Agent RPC/event schema changes require compatibility notes in
+  `docs/api-surface.md` and `docs/rpc-compatibility.md`.
+- Release candidates must freeze metadata, snapshot, CLI JSON, RPC, and Control
+  API schemas before signing artifacts.

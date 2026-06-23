@@ -1,0 +1,16 @@
+[package]
+name = "devrelay-desktop"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+devrelay-core = { path = "../../../crates/devrelay-core" }
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true

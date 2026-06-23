@@ -1,0 +1,6 @@
+dist/
+node_modules/
+src-tauri/frameworks/
+src-tauri/gen/
+src-tauri/icons/icon.icns
+src-tauri/icons/icon.png

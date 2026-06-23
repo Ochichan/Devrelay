@@ -6,6 +6,18 @@ DevRelay local agent RPC uses JSON-RPC 2.0 over the local IPC transport. The
 transport is local-machine only; compatibility rules here cover the JSON
 request, response, method, and error contract.
 
+This is not the M4.5 remote Control API. Remote control over mTLS still needs a
+documented API boundary, auth middleware, schemas, and integration tests.
+
+## Transport Scope
+
+- macOS/Linux use Unix domain sockets.
+- Unix transports must validate local peer credentials where available.
+- Windows named pipe transport is not implemented yet.
+- Windows per-user pipe ACL is not implemented yet.
+- UI may use local RPC only after the active platform's transport enforces the
+  local-user boundary.
+
 ## Version Negotiation
 
 - Clients must call `rpc.negotiate` before depending on method availability.
@@ -48,3 +60,12 @@ A protocol version increase is required before:
 - DevRelay-specific server errors use the reserved server-error range.
 - Error `message` values are stable summaries, while `data.detail` is diagnostic
   text and may change.
+
+## Event Stream Compatibility
+
+- Event streams use monotonic event sequence numbers.
+- Clients must reconnect with the last observed cursor.
+- A detected gap requires a fresh state load before the UI presents state as
+  current.
+- New event types may be added without a protocol version bump.
+- Clients must ignore unknown event payload fields.

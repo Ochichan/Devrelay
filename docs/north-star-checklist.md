@@ -58,14 +58,17 @@ Conventions:
 
 - [x] Keep `README.md` updated with current runnable commands.
 - [x] Keep `docs/foundation.md` aligned with current implementation.
-- [ ] Keep `docs/north-star-roadmap.md` aligned with strategic scope.
-- [ ] Keep this checklist aligned with roadmap milestones.
-- [ ] Add a glossary for Fabric, Device, Project, Workspace, Session, Snapshot, Lease, and Capsule.
-- [ ] Add a "supported states" document.
-- [ ] Add an "unsupported states" document.
-- [ ] Add a data-loss safety policy document.
-- [ ] Add a user-facing recovery policy document.
-- [ ] Add a developer-facing testing strategy document.
+- [x] Keep `docs/north-star-roadmap.md` aligned with strategic scope.
+- [x] Keep this checklist aligned with roadmap milestones.
+- [x] Add a current implementation status document.
+- [x] Add a glossary for Fabric, Device, Project, Workspace, Session, Snapshot, Lease, and Capsule.
+- [x] Add a "supported states" document.
+- [x] Add an "unsupported states" document.
+- [x] Add a data-loss safety policy document.
+- [x] Add a user-facing recovery policy document.
+- [x] Add a developer-facing testing strategy document.
+- [x] Add a resource benchmark plan.
+- [x] Add a first UI vertical-slice document.
 
 ## M0. Foundation: Local Git Round Trip
 
@@ -602,7 +605,8 @@ Conventions:
 
 - [x] CLI can operate entirely through the agent.
 - [x] Agent restart preserves project and snapshot state.
-- [x] IPC access is scoped to the local user.
+- [x] IPC access is scoped to the local user on Unix socket transports.
+- [ ] IPC access is scoped to the local user on Windows named pipe transport.
 - [x] Event stream reconnect works.
 - [x] Diagnostic bundle excludes source code by default.
 - [x] Agent tests pass in CI.
@@ -823,6 +827,7 @@ Conventions:
 
 ### M4.5 Control API
 
+- [ ] Decide whether M4.5 is HTTP `/v1` or versioned remote RPC over mTLS.
 - [ ] Add HTTP server or RPC server over TLS.
 - [ ] Add `/v1/devices`.
 - [ ] Add `/v1/projects`.
@@ -866,7 +871,7 @@ Conventions:
 - [x] Revoked device cannot connect.
 - [x] mDNS TXT records do not leak sensitive data.
 - [x] Transport tests cover expired, wrong-fabric, and revoked certificates.
-- [x] Control API rejects unauthenticated requests.
+- [ ] Control API rejects unauthenticated requests through an implemented API boundary.
 
 ## M5. Data Plane: Git Object Transfer And Sidecar CAS
 
@@ -1040,6 +1045,9 @@ Conventions:
 - [x] Add foreground load detection.
 - [x] Add resource policy persistence.
 - [x] Add resource policy tests.
+- [x] Add resource benchmark plan.
+- [ ] Implement repeatable resource benchmark harness.
+- [ ] Record representative resource benchmark results.
 
 ### M6.6 Retention And Quota
 
@@ -1085,6 +1093,17 @@ Conventions:
 - [x] Background watcher is not used as source of truth.
 
 ## M7. Desktop UX: Tray And Dashboard
+
+### M7.0 First Vertical Slice Scope
+
+- [x] Document first UI vertical slice.
+- [ ] Choose macOS/Linux-first or 3-OS-first UI policy.
+- [ ] Define agent commands/events required by the first slice.
+- [ ] Map dirty target UI actions to stable agent dirty policies.
+- [ ] Define Activity details payload for failed handoff.
+- [ ] Define real-device dogfood script for clean target handoff.
+- [ ] Define real-device dogfood script for dirty target preservation.
+- [ ] Keep Runs, scheduler, CAS details, lease epoch, Git OIDs, pairing certs, and advanced retention out of the first slice.
 
 ### M7.1 Tauri Shell
 
@@ -2048,12 +2067,13 @@ Conventions:
 
 ## Sequencing Checklist
 
-- [ ] Complete M0 before relying on snapshots elsewhere.
-- [ ] Complete M1 before building background protection.
-- [ ] Complete M2 before wiring GUI to product state.
-- [ ] Complete M3 before real cross-device handoff.
+- [x] Complete M0 before relying on snapshots elsewhere.
+- [x] Complete M1 before building background protection.
+- [x] Complete M2 on macOS/Linux before wiring the first UI slice to product state.
+- [ ] Complete M2 on Windows before wiring Windows UI to product state.
+- [x] Complete M3 before real cross-device handoff.
 - [ ] Complete M4 before trusting LAN devices.
-- [ ] Complete M5 before source-offline continuation.
+- [x] Complete M5 before source-offline continuation.
 - [ ] Complete M6 before promising invisible protection.
 - [ ] Complete M7 after agent event stream is stable.
 - [ ] Complete M8 after code handoff is verified without editor context.
@@ -2067,35 +2087,30 @@ Conventions:
 
 ## Immediate Next 10 Checklist
 
-- [x] Add stable error codes and JSON error output to the existing CLI.
-- [x] Add `SnapshotMetadata` schema tests and golden JSON fixtures.
-- [x] Expand Git round-trip fixtures for staged delete.
-- [x] Expand Git round-trip fixtures for unstaged delete.
-- [x] Expand Git round-trip fixtures for binary files.
-- [x] Expand Git round-trip fixtures for executable bit.
-- [x] Expand Git round-trip fixtures for Unicode paths.
-- [x] Add apply journal records to local apply.
-- [x] Create SQLite schema and migrations for local project/session/snapshot data.
-- [x] Add `devrelay project add/list` and local registry config.
-- [x] Move snapshot metadata persistence into the registry.
-- [x] Add recovery timeline CLI.
-- [x] Add dirty target backup snapshot rather than only refusal.
-- [x] Add a minimal agent process.
-- [x] Make CLI call the agent in dev mode.
+- [x] Fix README, roadmap, API surface, and M4 gate documentation drift.
+- [ ] Decide macOS/Linux-first dogfood versus Windows IPC first.
+- [ ] Finish Windows named pipe transport and pipe ACL if 3-OS UI is required.
+- [ ] Implement resource benchmark harness and record idle CPU/RSS plus checkpoint burst results.
+- [ ] Add first safety suites: `no_silent_overwrite`, `no_unverified_handoff`, `stale_publish_is_fork`, and `no_plaintext_secret_snapshot`.
+- [ ] Start Tauri shell with agent event subscription.
+- [ ] Implement tray and Continue screen for macOS/Linux handoff.
+- [ ] Dogfood clean-target handoff on real macOS/Linux devices.
+- [ ] Dogfood dirty-target and inactive-edit preservation.
+- [ ] Add Windows/WSL 3-device dogfood after Windows IPC/startup are credible.
 
 ## Non-Negotiable Safety Checklist
 
-- [ ] No implementation path can silently overwrite target work.
-- [ ] No background path performs an automatic merge.
-- [ ] No plaintext secret is included in a snapshot by default.
-- [ ] No remote command runs without trust hash approval.
-- [ ] No UI computes canonical state independently from the agent.
-- [ ] No watcher event is treated as the source of truth.
-- [ ] No cross-device handoff succeeds before verification passes.
-- [ ] No compute task writes directly into the active session.
-- [ ] Every destructive cleanup has explicit confirmation or prior snapshot.
-- [ ] Every recovery operation defaults to a new session or workspace.
-- [ ] Every published snapshot is immutable.
-- [ ] Every lease epoch transition is monotonic.
-- [ ] Every stale publish preserves data as non-canonical work.
-- [ ] Every diagnostic export is redacted by default.
+- [ ] No implementation path can silently overwrite target work. Evidence suite: `safety/no_silent_overwrite`.
+- [ ] No background path performs an automatic merge. Evidence suite: `safety/no_background_auto_merge`.
+- [ ] No plaintext secret is included in a snapshot by default. Evidence suite: `safety/no_plaintext_secret_snapshot`.
+- [ ] No remote command runs without trust hash approval. Evidence suite: `safety/no_untrusted_remote_execution`.
+- [ ] No UI computes canonical state independently from the agent. Evidence suite: `safety/ui_has_no_state_authority`.
+- [ ] No watcher event is treated as the source of truth. Evidence suite: `safety/watcher_events_are_hints`.
+- [ ] No cross-device handoff succeeds before verification passes. Evidence suite: `safety/no_unverified_handoff`.
+- [ ] No compute task writes directly into the active session. Evidence suite: `safety/no_active_workspace_remote_task`.
+- [ ] Every destructive cleanup has explicit confirmation or prior snapshot. Evidence suite: `safety/destructive_cleanup_has_snapshot`.
+- [ ] Every recovery operation defaults to a new session or workspace. Evidence suite: `safety/recovery_defaults_new_workspace`.
+- [ ] Every published snapshot is immutable. Evidence suite: `safety/published_snapshots_immutable`.
+- [ ] Every lease epoch transition is monotonic. Evidence suite: `safety/lease_epoch_monotonic`.
+- [ ] Every stale publish preserves data as non-canonical work. Evidence suite: `safety/stale_publish_is_fork`.
+- [ ] Every diagnostic export is redacted by default. Evidence suite: `safety/diagnostics_redacted_by_default`.

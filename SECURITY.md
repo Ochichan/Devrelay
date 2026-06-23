@@ -17,8 +17,19 @@ maintainers with:
 
 ## Current Scope
 
-The current implementation is a local Rust CLI/core foundation. It does not yet
-include pairing, network transport, encrypted secret sync, or a desktop agent.
+The current implementation includes a Rust core, CLI, local agent, SQLite
+metadata, recovery, lease state, pairing and mTLS primitives, revocation, audit
+logs, Git object data-plane work, CAS sidecars, and background protection
+pieces.
+
+The following are not production security boundaries yet:
+
+- M4.5 remote Control API
+- Windows named pipe IPC and pipe ACL
+- production desktop UI
+- encrypted secret sync or secret provider materialization
+- signed release/update channel
+- independent security review
 
 ## Baseline Expectations
 
@@ -27,4 +38,7 @@ include pairing, network transport, encrypted secret sync, or a desktop agent.
   channel owns them.
 - Diagnostics and future logs must avoid raw secrets and private paths where
   possible.
-
+- Revoked devices must not publish, connect, or transfer leases.
+- Stale and inactive work must be preserved without advancing canonical latest.
+- Handoff must not transfer writer authority before target verification.
+- UI must not compute canonical state outside the local agent.

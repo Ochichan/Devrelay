@@ -1,8 +1,14 @@
 # Identity Rotation Design Note
 
+Last updated: 2026-06-23
+
 DevRelay M4.1 creates a dev-mode fabric root key, device signing key, and
 network certificate key. Rotation is intentionally a later operation; this note
 records the constraints so the first persisted schema does not block it.
+
+M4 pairing, mTLS primitives, revocation records, and audit events exist, but
+production trust still depends on recovery export, rotation UX, secure key
+storage, and the unresolved M4.5 Control API boundary.
 
 ## Rotation Rules
 

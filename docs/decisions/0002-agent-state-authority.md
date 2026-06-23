@@ -25,4 +25,7 @@ their own truth from the filesystem or Git.
   surfaces.
 - CLI-only M0 work should avoid embedding assumptions that would later compete
   with the agent.
-
+- Production UI must not read Git directly, scan registered workspaces directly,
+  infer lease holder locally, or treat watcher events as canonical state.
+- Windows UI support depends on Windows named pipe IPC and per-user pipe ACL
+  because the UI cannot bypass the agent on Windows.

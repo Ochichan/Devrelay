@@ -26,3 +26,5 @@ repo, constrained to `refs/devrelay/*` snapshot refs.
 - Network listeners still need to enforce the same authorization, ref namespace,
   object availability, object size, and quota checks before becoming remote
   endpoints.
+- This decision does not close M4.5 Control API; serving authorized Git objects
+  and exposing a remote control boundary are separate product contracts.

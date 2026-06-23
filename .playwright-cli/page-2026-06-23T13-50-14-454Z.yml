@@ -1,0 +1,59 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e10]:
+          - heading "DevRelay" [level=1] [ref=e11]
+          - paragraph [ref=e12]: Local fabric
+      - generic [ref=e15]: Runtime unavailable
+    - generic [ref=e16]:
+      - navigation "Main" [ref=e17]:
+        - generic [ref=e18]: Views
+        - button "Continue" [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+          - generic [ref=e22]: Continue
+        - button "Projects 0" [ref=e23] [cursor=pointer]:
+          - img [ref=e24]
+          - generic [ref=e26]: Projects
+          - generic [ref=e27]: "0"
+        - button "Devices 0" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+          - generic [ref=e31]: Devices
+          - generic [ref=e32]: "0"
+        - button "Runs 0" [ref=e33] [cursor=pointer]:
+          - img [ref=e34]
+          - generic [ref=e36]: Runs
+          - generic [ref=e37]: "0"
+        - button "Activity 0" [ref=e38] [cursor=pointer]:
+          - img [ref=e39]
+          - generic [ref=e41]: Activity
+          - generic [ref=e42]: "0"
+        - button "Settings" [ref=e43] [cursor=pointer]:
+          - img [ref=e44]
+          - generic [ref=e47]: Settings
+      - generic [ref=e48]:
+        - generic [ref=e49]: Projects
+        - generic [ref=e50]:
+          - strong [ref=e51]: No projects
+          - paragraph [ref=e52]: Register a project from the CLI to see it here.
+    - generic [ref=e53]:
+      - generic [ref=e54]: local device
+      - code [ref=e55]: runtime not loaded
+  - generic [ref=e56]:
+    - generic [ref=e57]:
+      - generic [ref=e58]:
+        - paragraph [ref=e59]: Desktop runtime
+        - heading "Continue" [level=2] [ref=e60]
+      - generic [ref=e61]:
+        - button "Refresh" [ref=e62] [cursor=pointer]:
+          - img [ref=e63]
+        - button "Diagnostics" [ref=e65] [cursor=pointer]:
+          - img [ref=e66]
+          - generic [ref=e68]: Diagnostics
+    - main [ref=e69]:
+      - generic [ref=e71]:
+        - generic [ref=e73]:
+          - heading "Desktop runtime unavailable" [level=3] [ref=e74]
+          - paragraph [ref=e75]: The app did not receive a Tauri command bridge.
+        - generic [ref=e77]: Desktop runtime is not available

@@ -136,6 +136,7 @@ pub fn profile_targets_platform(targets: &[String], platform_key: &str) -> bool 
 pub struct EnvironmentCommand {
     pub program: String,
     pub args: Vec<String>,
+    pub timeout_seconds: Option<u64>,
 }
 
 impl EnvironmentCommand {
@@ -146,7 +147,13 @@ impl EnvironmentCommand {
         Self {
             program: program.into(),
             args: args.into_iter().map(Into::into).collect(),
+            timeout_seconds: None,
         }
+    }
+
+    pub fn with_timeout_seconds(mut self, timeout_seconds: Option<u64>) -> Self {
+        self.timeout_seconds = timeout_seconds;
+        self
     }
 }
 
@@ -155,6 +162,7 @@ pub struct EnvironmentCommandOutput {
     pub status_code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
+    pub timed_out: bool,
 }
 
 impl EnvironmentCommandOutput {
@@ -163,6 +171,7 @@ impl EnvironmentCommandOutput {
             status_code: Some(0),
             stdout: stdout.into(),
             stderr: String::new(),
+            timed_out: false,
         }
     }
 
@@ -171,6 +180,16 @@ impl EnvironmentCommandOutput {
             status_code: Some(status_code),
             stdout: String::new(),
             stderr: stderr.into(),
+            timed_out: false,
+        }
+    }
+
+    pub fn timed_out(stderr: impl Into<String>) -> Self {
+        Self {
+            status_code: None,
+            stdout: String::new(),
+            stderr: stderr.into(),
+            timed_out: true,
         }
     }
 
@@ -188,14 +207,37 @@ pub struct SystemEnvironmentCommandRunner;
 
 impl EnvironmentCommandRunner for SystemEnvironmentCommandRunner {
     fn run(&self, cwd: &Path, command: &EnvironmentCommand) -> Result<EnvironmentCommandOutput> {
-        let output = Command::new(&command.program)
+        let mut child = Command::new(&command.program)
             .args(&command.args)
             .current_dir(cwd)
-            .output()?;
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        let timed_out = if let Some(timeout_seconds) = command.timeout_seconds {
+            let started = std::time::Instant::now();
+            loop {
+                if child.try_wait()?.is_some() {
+                    break false;
+                }
+                if started.elapsed() >= std::time::Duration::from_secs(timeout_seconds.max(1)) {
+                    child.kill()?;
+                    break true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        } else {
+            false
+        };
+        let output = child.wait_with_output()?;
         Ok(EnvironmentCommandOutput {
-            status_code: output.status.code(),
+            status_code: if timed_out {
+                None
+            } else {
+                output.status.code()
+            },
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            timed_out,
         })
     }
 }

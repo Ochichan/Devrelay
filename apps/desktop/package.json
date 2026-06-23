@@ -1,0 +1,16 @@
+{
+  "name": "devrelay-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:ui": "node scripts/prepare-ui.mjs && npm run check:ui",
+    "check:ui": "node scripts/check-ui-source.mjs",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:dmg": "tauri build --bundles app,dmg"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.3"
+  }
+}

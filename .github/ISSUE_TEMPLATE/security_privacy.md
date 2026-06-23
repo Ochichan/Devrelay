@@ -14,6 +14,8 @@ Describe the security or privacy issue without including secrets.
 
 Manifest, Git state, snapshot, recovery, diagnostics, transport, agent, or UI:
 
+Relevant docs: `SECURITY.md`, `docs/data-loss-safety.md`, `docs/api-surface.md`
+
 ## Risk
 
 What could an attacker, local process, or accidental workflow do?
@@ -26,3 +28,6 @@ Proposed fix or safety guard:
 
 Tests, review evidence, or commands:
 
+## Boundary
+
+Is this local CLI/agent, local IPC, remote Control API, data plane, or UI?

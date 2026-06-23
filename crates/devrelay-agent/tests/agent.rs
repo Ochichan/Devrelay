@@ -981,6 +981,182 @@ fn foreground_serves_diagnostics_export_rpc() {
 }
 
 #[cfg(unix)]
+#[test]
+fn foreground_serves_desktop_bootstrap_rpc_methods() {
+    use devrelay_core::{
+        AuditEventInput, AuditEventType, AuditOutcome, DeviceIdentity, IpcLimits, MetadataDb,
+        UnixIpcConnection,
+    };
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-desktop-rpc-test");
+    let repo = running.root.join("desktop-project");
+    create_manifest_repo(&repo, "13572468", "Desktop Project");
+
+    let added = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "desktop-project-add",
+            "method": "projects.add",
+            "params": {
+                "path": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+    assert_eq!(added["result"]["project"]["project_id"], "13572468");
+
+    let global_db = MetadataDb::open(running.root.join("agent.sqlite")).unwrap();
+    global_db
+        .upsert_device_identity(&DeviceIdentity {
+            device_id: "device-desktop".to_string(),
+            display_name: "Desktop Device".to_string(),
+            platform_key: "test-os".to_string(),
+            architecture: "arm64".to_string(),
+            capabilities_json: "{}".to_string(),
+            paired_at_unix_seconds: Some(10),
+            last_seen_unix_seconds: 20,
+        })
+        .unwrap();
+    let mut event = AuditEventInput::new(
+        AuditEventType::DevicePaired,
+        AuditOutcome::Succeeded,
+        "desktop bootstrap event",
+    );
+    event.project_id = Some("13572468".to_string());
+    global_db.record_audit_event(event).unwrap();
+
+    let project_db =
+        MetadataDb::open(running.root.join("projects/13572468/metadata.sqlite")).unwrap();
+    project_db
+        .connection()
+        .execute(
+            r#"
+INSERT INTO task_runs (
+    task_run_id,
+    project_id,
+    session_id,
+    state,
+    command,
+    metadata_json,
+    created_at_unix_seconds,
+    updated_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+"#,
+            (
+                "run-desktop",
+                "13572468",
+                Option::<String>::None,
+                "succeeded",
+                "cargo test",
+                r#"{"source":"test"}"#,
+                30_i64,
+                40_i64,
+            ),
+        )
+        .unwrap();
+
+    let negotiate = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "desktop-negotiate",
+            "method": "rpc.negotiate",
+            "params": { "client_protocol_version": 1 }
+        }),
+    );
+    for method in [
+        "devices.list",
+        "activity.list",
+        "runs.list",
+        "settings.get",
+        "settings.update",
+    ] {
+        assert!(
+            negotiate["result"]["methods"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == method),
+            "missing method {method}"
+        );
+    }
+
+    let devices = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "desktop-devices",
+            "method": "devices.list"
+        }),
+    );
+    assert_eq!(
+        devices["result"]["devices"][0]["device_id"],
+        "device-desktop"
+    );
+
+    let activity = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "desktop-activity",
+            "method": "activity.list",
+            "params": { "project": "13572468", "limit": 10 }
+        }),
+    );
+    assert!(
+        activity["result"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["summary"] == "desktop bootstrap event")
+    );
+
+    let runs = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "desktop-runs",
+            "method": "runs.list",
+            "params": { "project": "13572468", "limit": 10 }
+        }),
+    );
+    assert_eq!(runs["result"]["runs"][0]["task_run_id"], "run-desktop");
+    assert_eq!(runs["result"]["runs"][0]["metadata"]["source"], "test");
+
+    let settings = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "desktop-settings",
+            "method": "settings.get"
+        }),
+    );
+    assert_eq!(settings["result"]["project_count"], 1);
+    assert_eq!(settings["result"]["resource_profile"], "balanced");
+
+    let updated = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "desktop-settings-update",
+            "method": "settings.update",
+            "params": {
+                "resource_profile": "eco",
+                "mdns_enabled": false,
+                "editor_command": "system"
+            }
+        }),
+    );
+    assert_eq!(updated["result"]["settings"]["resource_profile"], "eco");
+    assert_eq!(updated["result"]["settings"]["mdns_enabled"], false);
+    assert_eq!(updated["result"]["settings"]["editor_command"], "system");
+
+    running.stop();
+}
+
+#[cfg(unix)]
 fn rpc_call(
     connection: &mut devrelay_core::UnixIpcConnection,
     request: serde_json::Value,

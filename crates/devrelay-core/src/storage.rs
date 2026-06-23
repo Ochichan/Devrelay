@@ -493,6 +493,18 @@ pub struct CommandTrustRecord {
     pub created_at_unix_seconds: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TaskRunRecord {
+    pub task_run_id: String,
+    pub project_id: String,
+    pub session_id: Option<String>,
+    pub state: String,
+    pub command: Option<String>,
+    pub metadata: serde_json::Value,
+    pub created_at_unix_seconds: u64,
+    pub updated_at_unix_seconds: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandTrustEvaluation {
     pub status: CommandTrustStatus,
@@ -671,6 +683,50 @@ FROM audit_events
                 .then(right.audit_id.cmp(&left.audit_id))
         });
         Ok(events)
+    }
+
+    pub fn list_task_runs(
+        &self,
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<TaskRunRecord>> {
+        let limit = limit.clamp(1, 1_000) as i64;
+        let sql = r#"
+SELECT task_run_id,
+       project_id,
+       session_id,
+       state,
+       command,
+       metadata_json,
+       created_at_unix_seconds,
+       updated_at_unix_seconds
+FROM task_runs
+"#;
+        let mut runs = if let Some(project_id) = project_id {
+            let mut statement = self.conn.prepare(&format!(
+                "{sql} WHERE project_id = ?1 ORDER BY updated_at_unix_seconds DESC, created_at_unix_seconds DESC LIMIT ?2"
+            ))?;
+            let rows = statement.query_map((project_id, limit), task_run_record_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            let mut statement = self.conn.prepare(&format!(
+                "{sql} ORDER BY updated_at_unix_seconds DESC, created_at_unix_seconds DESC LIMIT ?1"
+            ))?;
+            let rows = statement.query_map([limit], task_run_record_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        runs.sort_by(|left, right| {
+            right
+                .updated_at_unix_seconds
+                .cmp(&left.updated_at_unix_seconds)
+                .then(
+                    right
+                        .created_at_unix_seconds
+                        .cmp(&left.created_at_unix_seconds),
+                )
+                .then(right.task_run_id.cmp(&left.task_run_id))
+        });
+        Ok(runs)
     }
 
     pub fn record_command_trust_decision(
@@ -2832,6 +2888,23 @@ fn audit_event_record_from_row(row: &Row<'_>) -> rusqlite::Result<AuditEventReco
         summary: row.get(10)?,
         detail,
         created_at_unix_seconds: row.get::<_, i64>(12)?.max(0) as u64,
+    })
+}
+
+fn task_run_record_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRunRecord> {
+    let metadata_json: String = row.get(5)?;
+    let metadata = serde_json::from_str(&metadata_json).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(err))
+    })?;
+    Ok(TaskRunRecord {
+        task_run_id: row.get(0)?,
+        project_id: row.get(1)?,
+        session_id: row.get(2)?,
+        state: row.get(3)?,
+        command: row.get(4)?,
+        metadata,
+        created_at_unix_seconds: row.get::<_, i64>(6)?.max(0) as u64,
+        updated_at_unix_seconds: row.get::<_, i64>(7)?.max(0) as u64,
     })
 }
 

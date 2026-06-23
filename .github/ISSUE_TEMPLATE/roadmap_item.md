@@ -20,7 +20,8 @@ What must change:
 
 Commands, tests, or evidence required before checking this off:
 
+If this closes an exit gate, name the exact evidence:
+
 ## Notes
 
 Dependencies or follow-up work:
-

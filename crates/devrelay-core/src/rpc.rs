@@ -13,7 +13,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
-    ApplyPlan, ClassifiedPath, ProjectRegistryEntry, StatusEntry, StatusSummary, StoredSnapshot,
+    AnchorMode, ApplyPlan, AuditEventRecord, ClassifiedPath, DeviceIdentity, ProjectRegistryEntry,
+    ResourceProfile, StatusEntry, StatusSummary, StoredSnapshot, TaskRunRecord,
     VerificationDetails, WorkspaceRegistryEntry,
 };
 #[cfg(unix)]
@@ -37,6 +38,11 @@ pub const METHOD_RECOVER_SHOW: &str = "recover.show";
 pub const METHOD_RECOVER_OPEN: &str = "recover.open";
 pub const METHOD_DIAGNOSTICS_EXPORT: &str = "diagnostics.export";
 pub const METHOD_EVENTS_SUBSCRIBE: &str = "events.subscribe";
+pub const METHOD_DEVICES_LIST: &str = "devices.list";
+pub const METHOD_ACTIVITY_LIST: &str = "activity.list";
+pub const METHOD_RUNS_LIST: &str = "runs.list";
+pub const METHOD_SETTINGS_GET: &str = "settings.get";
+pub const METHOD_SETTINGS_UPDATE: &str = "settings.update";
 
 pub const RPC_PARSE_ERROR: i64 = -32700;
 pub const RPC_INVALID_REQUEST: i64 = -32600;
@@ -335,6 +341,59 @@ pub struct EventsSubscribeResult {
     pub cursor: EventReplayCursor,
     pub replayed: usize,
     pub current_sequence: Option<EventSequence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevicesListResult {
+    pub devices: Vec<DeviceIdentity>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityListParams {
+    pub project: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActivityListResult {
+    pub events: Vec<AuditEventRecord>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunsListParams {
+    pub project: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunsListResult {
+    pub runs: Vec<TaskRunRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsGetResult {
+    pub fabric_name: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub platform_key: String,
+    pub architecture: String,
+    pub resource_profile: ResourceProfile,
+    pub anchor_mode: AnchorMode,
+    pub mdns_enabled: bool,
+    pub editor_command: String,
+    pub project_count: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsUpdateParams {
+    pub resource_profile: Option<ResourceProfile>,
+    pub mdns_enabled: Option<bool>,
+    pub editor_command: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsUpdateResult {
+    pub settings: SettingsGetResult,
 }
 
 #[cfg(unix)]

@@ -224,16 +224,19 @@ pub use route_selection::{
 #[cfg(unix)]
 pub use rpc::AgentRpcClient;
 pub use rpc::{
-    ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
-    DiagnosticsExportParams, DiagnosticsExportResult, EventsSubscribeParams, EventsSubscribeResult,
-    METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
+    ActivityListParams, ActivityListResult, ApplySnapshotParams, ApplySnapshotResult,
+    CheckpointCreateParams, CheckpointCreateResult, DevicesListResult, DiagnosticsExportParams,
+    DiagnosticsExportResult, EventsSubscribeParams, EventsSubscribeResult, METHOD_ACTIVITY_LIST,
+    METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST,
     METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
     METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
-    METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
-    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
+    METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
+    METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, ProjectResult,
+    ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
     RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RecoverListParams, RecoverListResult,
     RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult, RpcError, RpcId,
     RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
+    RunsListParams, RunsListResult, SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult,
     SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult,
 };
 pub use service::{
@@ -272,7 +275,7 @@ pub use storage::{
     CanonicalPublishRequest, CanonicalPublishResult, CommandTrustDecision, CommandTrustEvaluation,
     CommandTrustRecord, CommandTrustStatus, HandoffCommitSnapshotPreflight,
     InactiveForkPublishRequest, InactiveForkPublishResult, MetadataDb, MetadataDbFaultPoint,
-    PairingStartRequest,
+    PairingStartRequest, TaskRunRecord,
 };
 pub use submodule::{
     SUBMODULE_CHILD_SNAPSHOT_RELATIONSHIP, SubmoduleReport, SubmoduleState, SubmoduleStatus,

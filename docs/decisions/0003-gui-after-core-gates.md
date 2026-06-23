@@ -24,4 +24,7 @@ gates are verified.
 - The static UI prototype remains a product reference, not the implementation
   source of truth.
 - Desktop work can start with a smaller API surface once the agent owns state.
-
+- As of 2026-06-23, the core and agent are deep enough to start the first
+  macOS/Linux desktop vertical slice, while keeping Windows UI gated on Windows
+  IPC and pipe ACL.
+- M7 should begin with verified continuation, not broad dashboard scope.

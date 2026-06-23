@@ -21,8 +21,9 @@ feat/m0-status-parser
 test/m0-round-trip-fixtures
 docs/global-security-policy
 chore/global-ci
+docs/m7-ui-slice
+test/safety-no-silent-overwrite
 ```
 
 Keep each branch scoped to one checklist item or one tightly related group of
 items.
-

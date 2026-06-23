@@ -5,19 +5,35 @@ It preserves and transfers verified development sessions: Git HEAD, index,
 working tree changes, selected untracked files, environment intent, and writer
 ownership.
 
-This repository currently starts at the Phase 0 foundation from the bundled
-North Star spec:
+The repository has moved past the original local round-trip proof. The current
+core includes the Rust CLI/core, local agent RPC, SQLite metadata, recovery,
+single-writer lease state, pairing and mTLS primitives, revocation, audit logs,
+per-project bare Git object storage, sidecar CAS, route selection, retention,
+cross-platform doctors, and advanced Git-state capture. The desktop Tauri shell
+has started and currently exercises agent-backed runtime, project status,
+checkpoint, diagnostics, settings, and overflow-safe screens. Real cross-device
+handoff UI is still the next product cut.
 
-- typed `devrelay.toml` manifest loading and validation
-- Git status collection through the installed Git CLI
-- safe untracked-file classification with secret hard-blocks
-- synthetic index/work snapshot metadata
-- local source-to-target snapshot apply and verification
-- a small `devrelay` CLI for `manifest check`, `status`, `checkpoint`, and
-  `apply`
+## Current Product Cut
 
-The UI prototype remains a product reference. The first implementation target
-is correctness of state capture and round-trip behavior.
+The next product cut is intentionally narrow:
+
+```text
+Mac project -> Linux workstation -> two-click verified continuation
+```
+
+That first vertical slice must prove:
+
+- the local agent is the only authority for UI state
+- current work is protected before handoff
+- the writer device is obvious
+- the target device readiness is visible
+- dirty target work is preserved instead of overwritten
+- handoff completes only after verification
+
+Windows remains a cross-platform hardening target, but the first UI dogfood can
+ship as macOS/Linux-only unless Windows named pipe IPC and pipe ACLs are
+finished first.
 
 ## Quick Start
 
@@ -26,6 +42,7 @@ just preflight
 cargo run -p devrelay-cli -- --version
 cargo run -p devrelay-cli -- manifest check devrelay_spec_bundle/devrelay.toml
 cargo run -p devrelay-cli -- manifest check devrelay_spec_bundle/devrelay.toml --json
+cargo run -p devrelay-cli -- project add . --manifest devrelay_spec_bundle/devrelay.toml
 cargo run -p devrelay-cli -- status --repo . --manifest devrelay_spec_bundle/devrelay.toml
 ```
 
@@ -33,24 +50,23 @@ Individual local checks are available through `just fmt-check`, `just clippy`,
 and `just test`. Supply-chain checks are available through `just audit`,
 `just dependency-inventory`, and `just tooling`.
 
-`status` and `checkpoint` must be run inside an actual Git repository. This
-project directory is only the DevRelay implementation workspace unless you run
-`git init`.
+`status`, `checkpoint`, and `continue` must be run against actual Git
+repositories. This project directory is only the DevRelay implementation
+workspace unless you intentionally use it as a registered test project.
 
-See [docs/cli.md](docs/cli.md) for CLI examples, JSON output, snapshot file
-defaults, and exit code conventions.
+## Important Docs
 
-See [docs/fuzzing.md](docs/fuzzing.md) for parser and payload fuzz target
-commands.
+- [Current state](docs/current-state.md)
+- [North Star roadmap](docs/north-star-roadmap.md)
+- [Execution checklist](docs/north-star-checklist.md)
+- [First UI vertical slice](docs/ui-vertical-slice.md)
+- [Manual runtime checklist](docs/manual-runtime-checklist.md)
+- [API surface](docs/api-surface.md)
+- [CLI reference](docs/cli.md)
+- [Data-loss safety policy](docs/data-loss-safety.md)
+- [Resource benchmark plan](docs/resource-benchmark.md)
+- [Testing strategy](docs/testing-strategy.md)
 
-## Current Scope
-
-The first milestone intentionally excludes background watchers, LAN discovery,
-SQLite anchor state, mTLS, desktop UI, and editor integration. Those belong
-after the Git state round-trip gate is stable.
-
-See [docs/foundation.md](docs/foundation.md) for the implementation contract,
-[docs/north-star-roadmap.md](docs/north-star-roadmap.md) for the detailed path
-to the North Star product, and
-[docs/north-star-checklist.md](docs/north-star-checklist.md) for the full
-execution checklist.
+The bundled Korean North Star spec remains the product definition. The docs in
+`docs/` are the live implementation plan and must be kept aligned with the
+codebase.

@@ -20,6 +20,8 @@ What local work, snapshot, workspace, or recovery path is affected?
 
 What should DevRelay have done to preserve user work?
 
+Relevant policy: `docs/data-loss-safety.md`
+
 ## Actual Behavior
 
 What happened instead?
@@ -28,3 +30,6 @@ What happened instead?
 
 Command output, logs, or repository state:
 
+## Regression Suite
+
+Which named safety suite should cover this before closing?

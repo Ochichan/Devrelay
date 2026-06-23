@@ -1,29 +1,32 @@
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
-use devrelay_core::{
-    AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, LogRedactor,
-    METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
-    METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
-    METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
-    MetadataDb, StructuredLogLevel, current_platform_key,
-};
 #[cfg(unix)]
 use devrelay_core::{
-    AnchorSnapshotRepo, ApplySnapshotParams, ApplySnapshotResult, AuditEventInput, AuditEventType,
-    AuditOutcome, CheckpointCreateParams, CheckpointCreateResult, DiagnosticsExportParams,
-    DiagnosticsExportResult, EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage,
-    EventsSubscribeParams, EventsSubscribeResult, GitRepo, IpcConnection, IpcLimits, IpcTransport,
-    Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
+    ActivityListParams, ActivityListResult, AnchorSnapshotRepo, ApplySnapshotParams,
+    ApplySnapshotResult, AuditEventInput, AuditEventType, AuditOutcome, CheckpointCreateParams,
+    CheckpointCreateResult, DevicesListResult, DiagnosticsExportParams, DiagnosticsExportResult,
+    EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage, EventsSubscribeParams,
+    EventsSubscribeResult, GitRepo, IpcConnection, IpcLimits, IpcTransport, Manifest,
+    ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
     ProjectsRemoveParams, ProjectsShowParams, RPC_PROTOCOL_VERSION, RecoverListParams,
     RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
     RpcError, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
-    RpcVersionNegotiationResult, SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent,
-    SnapshotLocalCreatedEvent, SnapshotStore, SnapshotsListParams, SnapshotsListResult,
-    StatusGetParams, StatusGetResult, StoredSnapshot, StructuredLogFile, StructuredLogRecord,
-    TypedEventPayload, UnixIpcConnection, UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState,
-    WorkspaceStateChangedEvent, apply_snapshot, classify_untracked_paths, plan_apply_snapshot,
-    workspace_id_for,
+    RpcVersionNegotiationResult, RunsListParams, RunsListResult, SettingsGetResult,
+    SettingsUpdateParams, SettingsUpdateResult, SnapshotApplyStartedEvent,
+    SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent, SnapshotStore, SnapshotsListParams,
+    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, StructuredLogFile,
+    StructuredLogRecord, TypedEventPayload, UnixIpcConnection, UnixIpcListener,
+    WorkspaceRegistryEntry, WorkspaceState, WorkspaceStateChangedEvent, apply_snapshot,
+    classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
+};
+use devrelay_core::{
+    AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, LogRedactor,
+    METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
+    METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_PROJECTS_ADD,
+    METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST,
+    METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST,
+    METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
+    MetadataDb, StructuredLogLevel, current_platform_key,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -209,6 +212,11 @@ impl AgentState {
             METHOD_RECOVER_OPEN.to_string(),
             METHOD_DIAGNOSTICS_EXPORT.to_string(),
             METHOD_EVENTS_SUBSCRIBE.to_string(),
+            METHOD_DEVICES_LIST.to_string(),
+            METHOD_ACTIVITY_LIST.to_string(),
+            METHOD_RUNS_LIST.to_string(),
+            METHOD_SETTINGS_GET.to_string(),
+            METHOD_SETTINGS_UPDATE.to_string(),
         ]
     }
 }
@@ -659,6 +667,11 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_RECOVER_SHOW => handle_recover_show(id, request.params, state),
         METHOD_RECOVER_OPEN => handle_recover_open(id, request.params, state),
         METHOD_DIAGNOSTICS_EXPORT => handle_diagnostics_export(id, request.params, state),
+        METHOD_DEVICES_LIST => handle_devices_list(id, state),
+        METHOD_ACTIVITY_LIST => handle_activity_list(id, request.params, state),
+        METHOD_RUNS_LIST => handle_runs_list(id, request.params, state),
+        METHOD_SETTINGS_GET => handle_settings_get(id, state),
+        METHOD_SETTINGS_UPDATE => handle_settings_update(id, request.params, state),
         method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
     }
 }
@@ -1120,6 +1133,194 @@ fn handle_diagnostics_export(
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }
+}
+
+#[cfg(unix)]
+fn handle_devices_list(id: devrelay_core::RpcId, state: &AgentState) -> RpcResponse {
+    let db = match MetadataDb::open(&state.database_path) {
+        Ok(db) => db,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let devices = match db.list_devices() {
+        Ok(devices) => devices,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    match serde_json::to_value(DevicesListResult { devices }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_activity_list(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: ActivityListParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let limit = params.limit.unwrap_or(100).clamp(1, 1_000);
+    let mut events = Vec::new();
+
+    match MetadataDb::open(&state.database_path)
+        .and_then(|db| db.list_audit_events(params.project.as_deref(), limit))
+    {
+        Ok(mut records) => events.append(&mut records),
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+
+    for project_id in project_ids_for_query(state, params.project.as_deref()) {
+        let db_path = state.home.metadata_db_path(&project_id);
+        if !db_path.exists() {
+            continue;
+        }
+        match MetadataDb::open(&db_path)
+            .and_then(|db| db.list_audit_events(Some(&project_id), limit))
+        {
+            Ok(mut records) => events.append(&mut records),
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        }
+    }
+
+    events.sort_by(|left, right| {
+        right
+            .created_at_unix_seconds
+            .cmp(&left.created_at_unix_seconds)
+            .then(right.audit_id.cmp(&left.audit_id))
+    });
+    events.truncate(limit);
+
+    match serde_json::to_value(ActivityListResult { events }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_runs_list(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: RunsListParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let limit = params.limit.unwrap_or(100).clamp(1, 1_000);
+    let mut runs = Vec::new();
+
+    for project_id in project_ids_for_query(state, params.project.as_deref()) {
+        let db_path = state.home.metadata_db_path(&project_id);
+        if !db_path.exists() {
+            continue;
+        }
+        match MetadataDb::open(&db_path).and_then(|db| db.list_task_runs(Some(&project_id), limit))
+        {
+            Ok(mut records) => runs.append(&mut records),
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        }
+    }
+
+    runs.sort_by(|left, right| {
+        right
+            .updated_at_unix_seconds
+            .cmp(&left.updated_at_unix_seconds)
+            .then(
+                right
+                    .created_at_unix_seconds
+                    .cmp(&left.created_at_unix_seconds),
+            )
+            .then(right.task_run_id.cmp(&left.task_run_id))
+    });
+    runs.truncate(limit);
+
+    match serde_json::to_value(RunsListResult { runs }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_settings_get(id: devrelay_core::RpcId, state: &AgentState) -> RpcResponse {
+    let settings = match state.config.lock() {
+        Ok(config) => settings_from_config(&config),
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    match serde_json::to_value(settings) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_settings_update(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: SettingsUpdateParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let settings = match state.config.lock() {
+        Ok(mut config) => {
+            if let Some(profile) = params.resource_profile {
+                config.resource_profile = profile;
+            }
+            if let Some(enabled) = params.mdns_enabled {
+                config.mdns_enabled = enabled;
+            }
+            if let Some(command) = params.editor_command {
+                if command.trim().is_empty() {
+                    return RpcResponse::error(
+                        Some(id),
+                        RpcError::invalid_params("editor_command must not be empty"),
+                    );
+                }
+                config.editor.command = command;
+            }
+            if let Err(err) = config.save(&state.config_path) {
+                return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+            }
+            settings_from_config(&config)
+        }
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+
+    match serde_json::to_value(SettingsUpdateResult { settings }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn settings_from_config(config: &LocalConfig) -> SettingsGetResult {
+    SettingsGetResult {
+        fabric_name: config.fabric_name.clone(),
+        device_id: config.device_id.clone(),
+        device_name: config.device_name.clone(),
+        platform_key: config.platform_key.clone(),
+        architecture: config.architecture.clone(),
+        resource_profile: config.resource_profile,
+        anchor_mode: config.anchor_mode,
+        mdns_enabled: config.mdns_enabled,
+        editor_command: config.editor.command.clone(),
+        project_count: config.project_registry.projects.len(),
+    }
+}
+
+#[cfg(unix)]
+fn project_ids_for_query(state: &AgentState, project: Option<&str>) -> Vec<String> {
+    if let Some(project) = project {
+        return vec![project.to_string()];
+    }
+    state
+        .config
+        .lock()
+        .map(|config| config.project_registry.projects.keys().cloned().collect())
+        .unwrap_or_default()
 }
 
 #[cfg(unix)]
