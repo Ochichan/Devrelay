@@ -143,6 +143,11 @@ fn update_operation_capsule_hash(hasher: &mut blake3::Hasher, capsule: &Operatio
             update_hash_field(hasher, &stage.oid);
         }
     }
+    for file in &capsule.worktree_files {
+        update_hash_field(hasher, "conflict-worktree-file");
+        update_hash_field(hasher, &file.path);
+        update_hash_bytes(hasher, &file.contents);
+    }
 }
 
 fn operation_kind_label(kind: GitOperationKind) -> &'static str {
@@ -165,6 +170,12 @@ fn decision_order(decision: PathDecision) -> u8 {
 
 fn update_hash_field(hasher: &mut blake3::Hasher, value: &str) {
     hasher.update(value.as_bytes());
+    hasher.update(&[0]);
+}
+
+fn update_hash_bytes(hasher: &mut blake3::Hasher, value: &[u8]) {
+    hasher.update(&value.len().to_le_bytes());
+    hasher.update(value);
     hasher.update(&[0]);
 }
 
@@ -293,8 +304,8 @@ mod tests {
         let mut first = metadata();
         first.operation_capsule = Some(sample_operation_capsule("stage-one"));
         let mut second = first.clone();
-        second.operation_capsule.as_mut().unwrap().unmerged_entries[0].stages[0].oid =
-            "stage-two".to_string();
+        second.operation_capsule.as_mut().unwrap().worktree_files[0].contents =
+            b"changed conflict markers\n".to_vec();
 
         assert_ne!(calculate_state_hash(&first), calculate_state_hash(&second));
 
@@ -334,6 +345,11 @@ mod tests {
                         oid: "theirs".to_string(),
                     },
                 ],
+            }],
+            worktree_files: vec![crate::ConflictWorktreeFile {
+                path: "conflict.txt".to_string(),
+                contents: format!("<<<<<<< HEAD\n{stage_oid}\n=======\ntheirs\n>>>>>>> branch\n")
+                    .into_bytes(),
             }],
         }
     }

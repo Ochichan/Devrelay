@@ -8,11 +8,14 @@ use crate::{DevRelayError, GitRepo, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OperationCapsule {
     pub operation: GitOperationMetadata,
     pub unmerged_entries: Vec<UnmergedIndexEntry>,
+    #[serde(default)]
+    pub worktree_files: Vec<ConflictWorktreeFile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -47,13 +50,22 @@ pub struct IndexStageEntry {
     pub oid: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConflictWorktreeFile {
+    pub path: String,
+    pub contents: Vec<u8>,
+}
+
 pub fn capture_operation_capsule(repo: &GitRepo) -> Result<Option<OperationCapsule>> {
     let Some(operation) = capture_operation_metadata(repo)? else {
         return Ok(None);
     };
+    let unmerged_entries = capture_unmerged_index_entries(repo)?;
+    let worktree_files = capture_conflict_worktree_files(repo, &unmerged_entries)?;
     Ok(Some(OperationCapsule {
         operation,
-        unmerged_entries: capture_unmerged_index_entries(repo)?,
+        unmerged_entries,
+        worktree_files,
     }))
 }
 
@@ -76,6 +88,17 @@ pub fn apply_unmerged_index_entries(repo: &GitRepo, capsule: &OperationCapsule) 
         }
     }
     repo.run_with_stdin(&["update-index", "--index-info"], index_info.as_bytes())?;
+    Ok(())
+}
+
+pub fn restore_conflict_worktree_files(repo: &GitRepo, capsule: &OperationCapsule) -> Result<()> {
+    for file in &capsule.worktree_files {
+        let path = repo.path().join(PathBuf::from(&file.path));
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, &file.contents)?;
+    }
     Ok(())
 }
 
@@ -162,6 +185,27 @@ fn capture_unmerged_index_entries(repo: &GitRepo) -> Result<Vec<UnmergedIndexEnt
         .collect())
 }
 
+fn capture_conflict_worktree_files(
+    repo: &GitRepo,
+    unmerged_entries: &[UnmergedIndexEntry],
+) -> Result<Vec<ConflictWorktreeFile>> {
+    let mut files = Vec::new();
+    for entry in unmerged_entries {
+        let path = repo.path().join(PathBuf::from(&entry.path));
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        files.push(ConflictWorktreeFile {
+            path: entry.path.clone(),
+            contents: fs::read(path)?,
+        });
+    }
+    Ok(files)
+}
+
 fn malformed_record(record: &str) -> DevRelayError {
     DevRelayError::Config(format!("unexpected git ls-files -u record: {record:?}"))
 }
@@ -208,6 +252,11 @@ mod tests {
         );
         assert!(entry.stages.iter().all(|stage| stage.mode == "100644"));
         assert!(entry.stages.iter().all(|stage| !stage.oid.is_empty()));
+        assert_eq!(capsule.worktree_files.len(), 1);
+        let marker_text = String::from_utf8(capsule.worktree_files[0].contents.clone()).unwrap();
+        assert!(marker_text.contains("<<<<<<< HEAD"));
+        assert!(marker_text.contains("======="));
+        assert!(marker_text.contains(">>>>>>> feature"));
     }
 
     #[test]
@@ -236,11 +285,16 @@ mod tests {
         let target = GitRepo::new(&target_path);
 
         apply_unmerged_index_entries(&target, &capsule).unwrap();
+        restore_conflict_worktree_files(&target, &capsule).unwrap();
 
         assert_eq!(target.status().unwrap().counts.unmerged, 1);
         assert_eq!(
             capture_unmerged_index_entries(&target).unwrap(),
             capsule.unmerged_entries
+        );
+        assert_eq!(
+            fs::read(target_path.join("conflict.txt")).unwrap(),
+            capsule.worktree_files[0].contents
         );
     }
 

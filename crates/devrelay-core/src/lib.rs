@@ -121,8 +121,9 @@ pub use manifest::{
     SyncConfig, SyncMode, TaskCacheMode, TaskConfig, TaskSandbox, UntrackedPolicy, WorkspaceConfig,
 };
 pub use operation_capsule::{
-    GitOperationKind, GitOperationMetadata, IndexStageEntry, OperationCapsule, UnmergedIndexEntry,
-    apply_unmerged_index_entries, capture_operation_capsule,
+    ConflictWorktreeFile, GitOperationKind, GitOperationMetadata, IndexStageEntry,
+    OperationCapsule, UnmergedIndexEntry, apply_unmerged_index_entries, capture_operation_capsule,
+    restore_conflict_worktree_files,
 };
 pub use pairing::{
     PAIRING_ID_PREFIX, PairingEphemeralKey, PairingSession, PairingState,

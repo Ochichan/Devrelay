@@ -1675,9 +1675,9 @@ Conventions:
 - [x] Capture operation metadata.
 - [x] Store operation capsule.
 - [x] Apply unmerged index to target.
-- [ ] Restore conflict markers.
-- [ ] Verify staged entries.
-- [ ] Add conflict round-trip tests.
+- [x] Restore conflict markers.
+- [x] Verify staged entries.
+- [x] Add conflict round-trip tests.
 
 ### M12.2 Submodules
 
