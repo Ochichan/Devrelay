@@ -701,26 +701,26 @@ Conventions:
 
 ### M3.7 Handoff Protocol
 
-- [ ] Add handoff ID generation.
-- [ ] Add begin handoff transaction.
-- [ ] Store expected epoch.
-- [ ] Store source device ID.
-- [ ] Store target device ID.
-- [ ] Store source generation.
-- [ ] Store expiration.
-- [ ] Add target prepare state.
-- [ ] Add target verified state.
-- [ ] Add source ready state.
-- [ ] Add commit state.
-- [ ] Add abort state.
-- [ ] Increment lease epoch on commit.
-- [ ] Change holder on commit.
-- [ ] Reject commit if source generation changed.
-- [ ] Reject commit if handoff expired.
-- [ ] Add handoff happy path test.
-- [ ] Add source-change abort test.
-- [ ] Add target-apply-failure test.
-- [ ] Add concurrent handoff test.
+- [x] Add handoff ID generation.
+- [x] Add begin handoff transaction.
+- [x] Store expected epoch.
+- [x] Store source device ID.
+- [x] Store target device ID.
+- [x] Store source generation.
+- [x] Store expiration.
+- [x] Add target prepare state.
+- [x] Add target verified state.
+- [x] Add source ready state.
+- [x] Add commit state.
+- [x] Add abort state.
+- [x] Increment lease epoch on commit.
+- [x] Change holder on commit.
+- [x] Reject commit if source generation changed.
+- [x] Reject commit if handoff expired.
+- [x] Add handoff happy path test.
+- [x] Add source-change abort test.
+- [x] Add target-apply-failure test.
+- [x] Add concurrent handoff test.
 
 ### M3.8 Inactive Edit Fork
 

@@ -39,6 +39,7 @@ mod config;
 mod error;
 mod events;
 mod git;
+mod handoff;
 mod home;
 mod ipc;
 mod lease;
@@ -67,6 +68,7 @@ pub use events::{
     SnapshotLocalCreatedEvent, TypedEventPayload, WorkspaceStateChangedEvent,
 };
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
+pub use handoff::{HANDOFF_ID_PREFIX, HandoffRecord, HandoffState, generate_handoff_id};
 pub use home::{AnchorLayout, DevRelayHome};
 pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 #[cfg(unix)]

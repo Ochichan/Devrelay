@@ -5,8 +5,9 @@
 //! inside a transaction so a failed migration leaves the previous schema intact.
 
 use crate::{
-    DeviceIdentity, LeaseRecord, LeaseState, Result, SessionState, SnapshotMetadata, StoredSession,
-    StoredSnapshot, generate_session_id, unix_now_seconds,
+    DeviceIdentity, HandoffRecord, HandoffState, LeaseRecord, LeaseState, Result, SessionState,
+    SnapshotMetadata, StoredSession, StoredSnapshot, generate_handoff_id, generate_session_id,
+    unix_now_seconds,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction};
 use std::collections::BTreeSet;
@@ -175,6 +176,19 @@ CREATE INDEX idx_sessions_project_state
     ON sessions(project_id, state);
 CREATE INDEX idx_sessions_parent
     ON sessions(parent_session_id);
+"#,
+    },
+    Migration {
+        version: 4,
+        name: "handoff_protocol",
+        sql: r#"
+ALTER TABLE handoffs ADD COLUMN lease_id TEXT;
+ALTER TABLE handoffs ADD COLUMN source_generation TEXT;
+ALTER TABLE handoffs ADD COLUMN committed_at_unix_seconds INTEGER;
+ALTER TABLE handoffs ADD COLUMN aborted_at_unix_seconds INTEGER;
+
+CREATE INDEX idx_handoffs_lease_state
+    ON handoffs(lease_id, state);
 "#,
     },
 ];
@@ -717,6 +731,262 @@ INSERT INTO snapshots (
             latest_snapshot_id: request.metadata.snapshot_id.clone(),
         })
     }
+
+    pub fn begin_handoff(
+        &mut self,
+        lease_id: &str,
+        source_device_id: &str,
+        target_device_id: &str,
+        source_generation: &str,
+        ttl_seconds: u64,
+    ) -> Result<HandoffRecord> {
+        let tx = self.conn.transaction()?;
+        let lease = tx
+            .query_row(
+                r#"
+SELECT lease_id,
+       project_id,
+       session_id,
+       state,
+       epoch,
+       holder_device_id,
+       latest_snapshot_id,
+       handoff_id
+FROM leases
+WHERE lease_id = ?1
+"#,
+                [lease_id],
+                lease_record_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| crate::DevRelayError::Config(format!("unknown lease {lease_id}")))?;
+        let existing: Option<String> = tx
+            .query_row(
+                r#"
+SELECT handoff_id
+FROM handoffs
+WHERE lease_id = ?1 AND state NOT IN ('committed', 'aborted')
+ORDER BY created_at_unix_seconds ASC, handoff_id ASC
+LIMIT 1
+"#,
+                [lease_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            return Err(crate::DevRelayError::Config(format!(
+                "handoff already pending: {existing}"
+            )));
+        }
+        if lease.state != LeaseState::Active {
+            return Err(crate::DevRelayError::Config(format!(
+                "cannot begin handoff from {} lease",
+                lease.state.as_str()
+            )));
+        }
+        if lease.holder_device_id.as_deref() != Some(source_device_id) {
+            return Err(crate::DevRelayError::Config(
+                "handoff source does not hold lease".to_string(),
+            ));
+        }
+
+        let now = unix_now_seconds();
+        let expires_at = now.saturating_add(ttl_seconds.max(1));
+        let handoff = HandoffRecord {
+            handoff_id: generate_handoff_id(),
+            lease_id: lease_id.to_string(),
+            project_id: lease.project_id.clone(),
+            expected_epoch: lease.epoch,
+            source_device_id: source_device_id.to_string(),
+            target_device_id: target_device_id.to_string(),
+            source_generation: source_generation.to_string(),
+            expires_at_unix_seconds: expires_at,
+            state: HandoffState::TargetPrepare,
+        };
+        tx.execute(
+            r#"
+INSERT INTO handoffs (
+    handoff_id,
+    project_id,
+    source_workspace_id,
+    target_workspace_id,
+    state,
+    lease_id,
+    expected_epoch,
+    source_device_id,
+    target_device_id,
+    source_generation,
+    expires_at_unix_seconds,
+    created_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+"#,
+            (
+                handoff.handoff_id.as_str(),
+                handoff.project_id.as_str(),
+                Option::<&str>::None,
+                Option::<&str>::None,
+                handoff.state.as_str(),
+                handoff.lease_id.as_str(),
+                handoff.expected_epoch as i64,
+                handoff.source_device_id.as_str(),
+                handoff.target_device_id.as_str(),
+                handoff.source_generation.as_str(),
+                handoff.expires_at_unix_seconds as i64,
+                now as i64,
+            ),
+        )?;
+        tx.execute(
+            "UPDATE leases SET state = ?1, handoff_id = ?2 WHERE lease_id = ?3",
+            (
+                LeaseState::HandoffPending.as_str(),
+                handoff.handoff_id.as_str(),
+                lease_id,
+            ),
+        )?;
+        tx.commit()?;
+        Ok(handoff)
+    }
+
+    pub fn mark_handoff_target_verified(&self, handoff_id: &str) -> Result<HandoffRecord> {
+        self.update_handoff_state(
+            handoff_id,
+            HandoffState::TargetPrepare,
+            HandoffState::TargetVerified,
+        )
+    }
+
+    pub fn mark_handoff_source_ready(&self, handoff_id: &str) -> Result<HandoffRecord> {
+        self.update_handoff_state(
+            handoff_id,
+            HandoffState::TargetVerified,
+            HandoffState::SourceReady,
+        )
+    }
+
+    pub fn abort_handoff(&self, handoff_id: &str) -> Result<HandoffRecord> {
+        let handoff = self
+            .get_handoff(handoff_id)?
+            .ok_or_else(|| crate::DevRelayError::Config(format!("unknown handoff {handoff_id}")))?;
+        self.conn.execute(
+            "UPDATE handoffs SET state = ?1, aborted_at_unix_seconds = ?2 WHERE handoff_id = ?3",
+            (
+                HandoffState::Aborted.as_str(),
+                unix_now_seconds() as i64,
+                handoff_id,
+            ),
+        )?;
+        self.conn.execute(
+            "UPDATE leases SET state = ?1, handoff_id = NULL WHERE lease_id = ?2 AND handoff_id = ?3",
+            (LeaseState::Active.as_str(), handoff.lease_id.as_str(), handoff_id),
+        )?;
+        self.get_handoff(handoff_id)?
+            .ok_or_else(|| crate::DevRelayError::Config("handoff abort disappeared".to_string()))
+    }
+
+    pub fn commit_handoff(
+        &mut self,
+        handoff_id: &str,
+        observed_source_generation: &str,
+        now_unix_seconds: u64,
+    ) -> Result<HandoffRecord> {
+        let tx = self.conn.transaction()?;
+        let handoff = tx
+            .query_row(
+                handoff_select_sql("WHERE handoff_id = ?1").as_str(),
+                [handoff_id],
+                handoff_record_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| crate::DevRelayError::Config(format!("unknown handoff {handoff_id}")))?;
+        if handoff.state != HandoffState::SourceReady {
+            return Err(crate::DevRelayError::Config(format!(
+                "handoff is not source-ready: {}",
+                handoff.state.as_str()
+            )));
+        }
+        let abort_reason = if now_unix_seconds > handoff.expires_at_unix_seconds {
+            Some("handoff expired")
+        } else if observed_source_generation != handoff.source_generation {
+            Some("source generation changed")
+        } else {
+            None
+        };
+        if let Some(reason) = abort_reason {
+            tx.execute(
+                "UPDATE handoffs SET state = ?1, aborted_at_unix_seconds = ?2 WHERE handoff_id = ?3",
+                (HandoffState::Aborted.as_str(), now_unix_seconds as i64, handoff_id),
+            )?;
+            tx.execute(
+                "UPDATE leases SET state = ?1, handoff_id = NULL WHERE lease_id = ?2 AND handoff_id = ?3",
+                (LeaseState::Active.as_str(), handoff.lease_id.as_str(), handoff_id),
+            )?;
+            tx.commit()?;
+            return Err(crate::DevRelayError::Config(format!(
+                "handoff commit rejected: {reason}"
+            )));
+        }
+
+        tx.execute(
+            r#"
+UPDATE leases
+SET state = ?1,
+    epoch = ?2,
+    holder_device_id = ?3,
+    handoff_id = NULL
+WHERE lease_id = ?4 AND epoch = ?5 AND handoff_id = ?6
+"#,
+            (
+                LeaseState::Active.as_str(),
+                handoff.expected_epoch.saturating_add(1) as i64,
+                handoff.target_device_id.as_str(),
+                handoff.lease_id.as_str(),
+                handoff.expected_epoch as i64,
+                handoff_id,
+            ),
+        )?;
+        tx.execute(
+            "UPDATE handoffs SET state = ?1, committed_at_unix_seconds = ?2 WHERE handoff_id = ?3",
+            (
+                HandoffState::Committed.as_str(),
+                now_unix_seconds as i64,
+                handoff_id,
+            ),
+        )?;
+        tx.commit()?;
+        self.get_handoff(handoff_id)?
+            .ok_or_else(|| crate::DevRelayError::Config("handoff commit disappeared".to_string()))
+    }
+
+    pub fn get_handoff(&self, handoff_id: &str) -> Result<Option<HandoffRecord>> {
+        self.conn
+            .query_row(
+                handoff_select_sql("WHERE handoff_id = ?1").as_str(),
+                [handoff_id],
+                handoff_record_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn update_handoff_state(
+        &self,
+        handoff_id: &str,
+        expected: HandoffState,
+        next: HandoffState,
+    ) -> Result<HandoffRecord> {
+        let changed = self.conn.execute(
+            "UPDATE handoffs SET state = ?1 WHERE handoff_id = ?2 AND state = ?3",
+            (next.as_str(), handoff_id, expected.as_str()),
+        )?;
+        if changed == 0 {
+            return Err(crate::DevRelayError::Config(format!(
+                "handoff {handoff_id} is not {}",
+                expected.as_str()
+            )));
+        }
+        self.get_handoff(handoff_id)?
+            .ok_or_else(|| crate::DevRelayError::Config("handoff update disappeared".to_string()))
+    }
 }
 
 fn device_identity_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceIdentity> {
@@ -784,6 +1054,40 @@ fn stale_publish_error(detail: &str) -> crate::DevRelayError {
     crate::DevRelayError::Config(format!(
         "stale publish: {detail}; safe action: refresh lease"
     ))
+}
+
+fn handoff_select_sql(where_clause: &str) -> String {
+    format!(
+        r#"
+SELECT handoff_id,
+       lease_id,
+       project_id,
+       expected_epoch,
+       source_device_id,
+       target_device_id,
+       source_generation,
+       expires_at_unix_seconds,
+       state
+FROM handoffs
+{where_clause}
+"#
+    )
+}
+
+fn handoff_record_from_row(row: &Row<'_>) -> rusqlite::Result<HandoffRecord> {
+    Ok(HandoffRecord {
+        handoff_id: row.get(0)?,
+        lease_id: row
+            .get::<_, Option<String>>(1)?
+            .unwrap_or_else(|| "unknown-lease".to_string()),
+        project_id: row.get(2)?,
+        expected_epoch: row.get::<_, Option<i64>>(3)?.unwrap_or_default().max(0) as u64,
+        source_device_id: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+        target_device_id: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+        source_generation: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+        expires_at_unix_seconds: row.get::<_, Option<i64>>(7)?.unwrap_or_default().max(0) as u64,
+        state: HandoffState::parse(&row.get::<_, String>(8)?),
+    })
 }
 
 #[cfg(test)]
@@ -872,6 +1176,7 @@ mod tests {
         assert!(index_exists(&db, "idx_handoffs_project_state"));
         assert!(index_exists(&db, "idx_handoffs_source_device_state"));
         assert!(index_exists(&db, "idx_handoffs_target_device_state"));
+        assert!(index_exists(&db, "idx_handoffs_lease_state"));
 
         let journal_mode: String = db
             .connection()
@@ -928,8 +1233,10 @@ mod tests {
         }
         for column in [
             "expected_epoch",
+            "lease_id",
             "source_device_id",
             "target_device_id",
+            "source_generation",
             "expires_at_unix_seconds",
         ] {
             assert!(column_exists(&db, "handoffs", column), "{column}");
@@ -1238,6 +1545,134 @@ mod tests {
         );
     }
 
+    #[test]
+    fn handoff_happy_path_commits_holder_and_epoch() {
+        let (mut db, _session, lease) = setup_publish_db(7, LeaseState::Active);
+
+        let handoff = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 60)
+            .unwrap();
+        assert!(handoff.handoff_id.starts_with("ho_"));
+        assert_eq!(handoff.expected_epoch, 7);
+        assert_eq!(handoff.source_device_id, "device-a");
+        assert_eq!(handoff.target_device_id, "device-b");
+        assert_eq!(handoff.source_generation, "gen-1");
+        assert_eq!(handoff.state, HandoffState::TargetPrepare);
+
+        let pending = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(pending.state, LeaseState::HandoffPending);
+        assert_eq!(
+            pending.handoff_id.as_deref(),
+            Some(handoff.handoff_id.as_str())
+        );
+
+        db.mark_handoff_target_verified(&handoff.handoff_id)
+            .unwrap();
+        db.mark_handoff_source_ready(&handoff.handoff_id).unwrap();
+        let committed = db
+            .commit_handoff(
+                &handoff.handoff_id,
+                "gen-1",
+                handoff.expires_at_unix_seconds - 1,
+            )
+            .unwrap();
+        assert_eq!(committed.state, HandoffState::Committed);
+
+        let updated = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(updated.state, LeaseState::Active);
+        assert_eq!(updated.epoch, 8);
+        assert_eq!(updated.holder_device_id.as_deref(), Some("device-b"));
+        assert_eq!(updated.handoff_id, None);
+    }
+
+    #[test]
+    fn handoff_source_change_aborts_without_holder_change() {
+        let (mut db, _session, lease) = setup_publish_db(3, LeaseState::Active);
+        let handoff = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 60)
+            .unwrap();
+        db.mark_handoff_target_verified(&handoff.handoff_id)
+            .unwrap();
+        db.mark_handoff_source_ready(&handoff.handoff_id).unwrap();
+
+        let err = db
+            .commit_handoff(
+                &handoff.handoff_id,
+                "gen-2",
+                handoff.expires_at_unix_seconds - 1,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("source generation changed"));
+        assert_eq!(
+            db.get_handoff(&handoff.handoff_id).unwrap().unwrap().state,
+            HandoffState::Aborted
+        );
+        let updated = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(updated.state, LeaseState::Active);
+        assert_eq!(updated.epoch, 3);
+        assert_eq!(updated.holder_device_id.as_deref(), Some("device-a"));
+    }
+
+    #[test]
+    fn handoff_target_apply_failure_aborts() {
+        let (mut db, _session, lease) = setup_publish_db(4, LeaseState::Active);
+        let handoff = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 60)
+            .unwrap();
+
+        let aborted = db.abort_handoff(&handoff.handoff_id).unwrap();
+        assert_eq!(aborted.state, HandoffState::Aborted);
+        let updated = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(updated.state, LeaseState::Active);
+        assert_eq!(updated.epoch, 4);
+        assert_eq!(updated.holder_device_id.as_deref(), Some("device-a"));
+        assert_eq!(updated.handoff_id, None);
+    }
+
+    #[test]
+    fn handoff_commit_rejects_expired_handoff() {
+        let (mut db, _session, lease) = setup_publish_db(5, LeaseState::Active);
+        let handoff = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 1)
+            .unwrap();
+        db.mark_handoff_target_verified(&handoff.handoff_id)
+            .unwrap();
+        db.mark_handoff_source_ready(&handoff.handoff_id).unwrap();
+
+        let err = db
+            .commit_handoff(
+                &handoff.handoff_id,
+                "gen-1",
+                handoff.expires_at_unix_seconds + 1,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("handoff expired"));
+        assert_eq!(
+            db.get_handoff(&handoff.handoff_id).unwrap().unwrap().state,
+            HandoffState::Aborted
+        );
+        let updated = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(updated.epoch, 5);
+        assert_eq!(updated.holder_device_id.as_deref(), Some("device-a"));
+    }
+
+    #[test]
+    fn concurrent_handoff_attempt_is_rejected_deterministically() {
+        let (mut db, _session, lease) = setup_publish_db(6, LeaseState::Active);
+        let handoff = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 60)
+            .unwrap();
+
+        let err = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-c", "gen-1", 60)
+            .unwrap_err();
+        assert!(err.to_string().contains("handoff already pending"));
+        assert_eq!(
+            db.get_handoff(&handoff.handoff_id).unwrap().unwrap().state,
+            HandoffState::TargetPrepare
+        );
+    }
+
     fn snapshots_for_project(db: &MetadataDb, project_id: &str) -> Vec<String> {
         let mut statement = db
             .connection()
@@ -1266,7 +1701,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 3);
+        assert_eq!(count, 4);
     }
 
     #[test]
