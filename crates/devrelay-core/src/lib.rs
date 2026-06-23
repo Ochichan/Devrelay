@@ -193,8 +193,9 @@ pub use retention::{
     RetentionKeepReason, RetentionPolicy, SnapshotRetentionEntry, plan_snapshot_pruning,
 };
 pub use route_selection::{
-    SnapshotRouteDecision, SnapshotRouteMeasurements, SnapshotRouteMetrics, SnapshotRoutePolicy,
-    SnapshotTransferRoute, select_snapshot_route, select_snapshot_route_after_failure,
+    SnapshotRouteDecision, SnapshotRouteMeasurementInput, SnapshotRouteMeasurements,
+    SnapshotRouteMetrics, SnapshotRoutePolicy, SnapshotTransferRoute, measure_snapshot_route,
+    select_snapshot_route, select_snapshot_route_after_failure,
 };
 #[cfg(unix)]
 pub use rpc::AgentRpcClient;

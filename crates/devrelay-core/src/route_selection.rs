@@ -1,9 +1,11 @@
-//! Snapshot transfer route selection.
+//! Snapshot transfer route measurement and selection.
 //!
-//! Route selection is intentionally pure: discovery and network layers provide
-//! measurements, and this module returns the route, fallback, explanation, and
-//! metrics that callers can log or expose.
+//! Route selection remains pure once measurements are available. Local probes
+//! can fill those measurements from source and anchor repositories before the
+//! selector returns the route, fallback, explanation, and metrics that callers
+//! can log or expose.
 
+use crate::{AnchorSnapshotRepo, GitRepo, SnapshotMetadata};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,6 +21,13 @@ pub struct SnapshotRouteMeasurements {
     pub source_online: bool,
     pub anchor_available: bool,
     pub anchor_has_snapshot: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SnapshotRouteMeasurementInput<'a> {
+    pub source_repo: Option<&'a GitRepo>,
+    pub anchor_repo: Option<&'a AnchorSnapshotRepo>,
+    pub snapshot: &'a SnapshotMetadata,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +66,29 @@ pub struct SnapshotRouteDecision {
     pub explanation: String,
     pub fallback_route: Option<SnapshotTransferRoute>,
     pub metrics: SnapshotRouteMetrics,
+}
+
+pub fn measure_snapshot_route(
+    input: SnapshotRouteMeasurementInput<'_>,
+) -> SnapshotRouteMeasurements {
+    let source_online = input
+        .source_repo
+        .is_some_and(|repo| repo.run(&["rev-parse", "--git-dir"]).is_ok());
+    let anchor_available = input.anchor_repo.is_some_and(|anchor| {
+        anchor.repo_path().join("HEAD").exists()
+            && GitRepo::new(anchor.repo_path())
+                .run(&["rev-parse", "--git-dir"])
+                .is_ok()
+    });
+    let anchor_has_snapshot = input
+        .anchor_repo
+        .is_some_and(|anchor| anchor.verify_snapshot_available(input.snapshot).is_ok());
+
+    SnapshotRouteMeasurements {
+        source_online,
+        anchor_available,
+        anchor_has_snapshot,
+    }
 }
 
 pub fn select_snapshot_route(
@@ -206,6 +238,9 @@ fn anchor_cache_ready(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DevRelayHome, Manifest, SnapshotStore};
+    use std::fs;
+    use std::path::Path;
 
     fn measurements(
         source_online: bool,
@@ -217,6 +252,76 @@ mod tests {
             anchor_available,
             anchor_has_snapshot,
         }
+    }
+
+    fn manifest() -> Manifest {
+        Manifest::parse(
+            r#"
+schema = 1
+project_id = "route-project"
+name = "Route Project"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#,
+        )
+        .unwrap()
+    }
+
+    fn init_repo(path: &Path) -> GitRepo {
+        fs::create_dir(path).unwrap();
+        let repo = GitRepo::new(path);
+        repo.run(&["init", "-b", "main"]).unwrap();
+        repo.run(&["config", "user.name", "DevRelay Test"]).unwrap();
+        repo.run(&["config", "user.email", "devrelay-test@example.local"])
+            .unwrap();
+        fs::write(path.join("tracked.txt"), "base\n").unwrap();
+        repo.run(&["add", "."]).unwrap();
+        repo.run(&["commit", "-m", "base"]).unwrap();
+        repo
+    }
+
+    #[test]
+    fn route_measurement_detects_source_and_anchor_availability() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        let manifest = manifest();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id).unwrap();
+
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let stored = store.checkpoint(&source, &manifest, false, None).unwrap();
+        let anchor = AnchorSnapshotRepo::open(&home, &manifest.project_id).unwrap();
+        anchor
+            .import_snapshot_from_store(&store, &stored.snapshot_id)
+            .unwrap();
+
+        let online = measure_snapshot_route(SnapshotRouteMeasurementInput {
+            source_repo: Some(&source),
+            anchor_repo: Some(&anchor),
+            snapshot: &stored.metadata,
+        });
+        assert_eq!(online, measurements(true, true, true));
+
+        fs::remove_dir_all(&source_path).unwrap();
+        let source_offline = measure_snapshot_route(SnapshotRouteMeasurementInput {
+            source_repo: Some(&source),
+            anchor_repo: Some(&anchor),
+            snapshot: &stored.metadata,
+        });
+        assert_eq!(source_offline, measurements(false, true, true));
+
+        GitRepo::new(anchor.repo_path())
+            .run(&["update-ref", "-d", &stored.metadata.work_ref()])
+            .unwrap();
+        let missing_anchor_snapshot = measure_snapshot_route(SnapshotRouteMeasurementInput {
+            source_repo: None,
+            anchor_repo: Some(&anchor),
+            snapshot: &stored.metadata,
+        });
+        assert_eq!(missing_anchor_snapshot, measurements(false, true, false));
     }
 
     #[test]

@@ -897,8 +897,8 @@ Conventions:
 
 ### M5.3 Route Selection
 
-- [ ] Measure source online status.
-- [ ] Measure anchor availability.
+- [x] Measure source online status.
+- [x] Measure anchor availability.
 - [x] Add direct peer route.
 - [x] Add anchor cache route.
 - [x] Add source-required route.
