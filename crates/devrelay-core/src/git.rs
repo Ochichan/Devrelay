@@ -189,7 +189,7 @@ impl GitRepo {
             "--branch",
             "--untracked-files=all",
         ])?;
-        parse_status(&raw)
+        parse_status_porcelain_v2(&raw)
     }
 
     pub fn current_index_tree(&self) -> Result<String> {
@@ -197,7 +197,8 @@ impl GitRepo {
     }
 }
 
-fn parse_status(raw: &str) -> Result<GitStatus> {
+#[doc(hidden)]
+pub fn parse_status_porcelain_v2(raw: &str) -> Result<GitStatus> {
     let records: Vec<&str> = raw
         .split('\0')
         .filter(|record| !record.is_empty())
@@ -366,7 +367,7 @@ mod tests {
             "1 .M N... 100644 100644 100644 a b src/lib.rs\0",
             "? notes.md\0",
         );
-        let status = parse_status(raw).expect("status should parse");
+        let status = parse_status_porcelain_v2(raw).expect("status should parse");
         assert_eq!(status.head_oid, "abc");
         assert_eq!(status.branch.as_deref(), Some("main"));
         assert_eq!(status.upstream.as_deref(), Some("origin/main"));
@@ -386,7 +387,7 @@ mod tests {
             "# branch.head (detached)\0",
             "# branch.upstream origin/main\0",
         );
-        let status = parse_status(raw).expect("status should parse");
+        let status = parse_status_porcelain_v2(raw).expect("status should parse");
         assert_eq!(status.head_oid, "abc");
         assert_eq!(status.branch, None);
         assert_eq!(status.upstream.as_deref(), Some("origin/main"));
@@ -403,7 +404,7 @@ mod tests {
             "1 .M N... 100644 100644 100644 a a unstaged-mod.rs\0",
             "1 .D N... 100644 100644 000000 a a unstaged-del.rs\0",
         );
-        let status = parse_status(raw).expect("status should parse");
+        let status = parse_status_porcelain_v2(raw).expect("status should parse");
         assert_eq!(status.counts.staged, 3);
         assert_eq!(status.counts.unstaged, 2);
         assert_eq!(
@@ -438,7 +439,7 @@ mod tests {
             "2 C. N... 100644 100644 100644 a b C100 copied.rs\0",
             "source.rs\0",
         );
-        let status = parse_status(raw).expect("status should parse");
+        let status = parse_status_porcelain_v2(raw).expect("status should parse");
         assert_eq!(status.entries[0].kind, StatusEntryKind::Renamed);
         assert_eq!(status.entries[0].path, "new name.rs");
         assert_eq!(
@@ -462,7 +463,7 @@ mod tests {
             "! target/debug/devrelay\0",
             "u UU N... 100644 100644 100644 100644 a b c conflicted path.rs\0",
         );
-        let status = parse_status(raw).expect("status should parse");
+        let status = parse_status_porcelain_v2(raw).expect("status should parse");
         assert_eq!(status.counts.untracked, 1);
         assert_eq!(status.counts.ignored, 1);
         assert_eq!(status.counts.unmerged, 1);
@@ -481,7 +482,7 @@ mod tests {
             "1 .M N... 100644 100644 100644 a b path\twith\ttabs.rs\0",
             "1 .M N... 100644 100644 100644 a b 유니코드.rs\0",
         );
-        let status = parse_status(raw).expect("status should parse");
+        let status = parse_status_porcelain_v2(raw).expect("status should parse");
         assert_eq!(
             status
                 .entries
@@ -499,7 +500,7 @@ mod tests {
             "# branch.head main\0",
             "? first.txt\0",
         );
-        let status = parse_status(raw).expect("initial status should parse");
+        let status = parse_status_porcelain_v2(raw).expect("initial status should parse");
         assert_eq!(status.head_oid, "(initial)");
         assert_eq!(status.branch.as_deref(), Some("main"));
         assert!(status.is_initial());

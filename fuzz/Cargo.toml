@@ -41,4 +41,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "porcelain_parser"
+path = "fuzz_targets/porcelain_parser.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

@@ -129,7 +129,10 @@ pub use events::{
     SessionDivergedEvent, SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent,
     SnapshotLocalCreatedEvent, TypedEventPayload, WorkspaceStateChangedEvent,
 };
-pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
+pub use git::{
+    GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary,
+    parse_status_porcelain_v2,
+};
 pub use git_doctor::{
     GitPerformanceDoctorReport, GitPerformanceFix, GitPerformanceRecommendation, GitVersion,
     run_git_performance_doctor,

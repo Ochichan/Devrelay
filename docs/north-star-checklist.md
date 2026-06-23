@@ -1751,7 +1751,7 @@ Conventions:
 
 ### M13.2 Fuzzing
 
-- [ ] Add fuzz target for porcelain parser.
+- [x] Add fuzz target for porcelain parser.
 - [x] Add fuzz target for manifest parser.
 - [x] Add fuzz target for path canonicalization.
 - [x] Add fuzz target for CAS manifest parser.
