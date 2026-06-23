@@ -1625,10 +1625,10 @@ Conventions:
 
 ### M11.4 Executable Bit
 
-- [ ] Preserve Git tree mode.
-- [ ] Verify executable bit on POSIX.
-- [ ] Preserve index mode on Windows.
-- [ ] Add executable-bit tests.
+- [x] Preserve Git tree mode.
+- [x] Verify executable bit on POSIX.
+- [x] Preserve index mode on Windows.
+- [x] Add executable-bit tests.
 
 ### M11.5 Symlink Policy
 

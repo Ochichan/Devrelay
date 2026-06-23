@@ -86,6 +86,30 @@ fn assert_status_equivalent_after_apply(target: &GitRepo, snapshot: &SnapshotMet
     assert_eq!(status.counts.untracked, snapshot.included_untracked.len());
 }
 
+fn tree_mode(repo: &GitRepo, treeish: &str, path: &str) -> String {
+    repo.run(&["ls-tree", treeish, "--", path])
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+fn index_mode(repo: &GitRepo, path: &str) -> String {
+    repo.run(&["ls-files", "-s", "--", path])
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+fn assert_executable_mode_preserved(target: &GitRepo, snapshot: &SnapshotMetadata, path: &str) {
+    assert_eq!(tree_mode(target, &snapshot.index_tree_oid, path), "100755");
+    assert_eq!(tree_mode(target, &snapshot.work_tree_oid, path), "100755");
+    assert_eq!(index_mode(target, path), "100755");
+}
+
 fn round_trip<F, A>(mutate: F, assert_target: A)
 where
     F: FnOnce(&Path, &GitRepo),
@@ -214,9 +238,25 @@ fn round_trips_executable_bit_on_posix() {
             fs::set_permissions(&script, permissions).unwrap();
             source.run(&["add", "script.sh"]).unwrap();
         },
-        |target_path, _target, _snapshot, _verification| {
+        |target_path, target, snapshot, _verification| {
+            assert_executable_mode_preserved(target, snapshot, "script.sh");
             let mode = fs::metadata(target_path.join("script.sh")).unwrap().mode();
             assert_ne!(mode & 0o111, 0);
+        },
+    );
+}
+
+#[test]
+fn round_trips_executable_index_mode_when_filemode_is_ignored() {
+    round_trip(
+        |_source_path, source| {
+            source.run(&["config", "core.filemode", "false"]).unwrap();
+            source
+                .run(&["update-index", "--chmod=+x", "script.sh"])
+                .unwrap();
+        },
+        |_target_path, target, snapshot, _verification| {
+            assert_executable_mode_preserved(target, snapshot, "script.sh");
         },
     );
 }
