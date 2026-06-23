@@ -1,13 +1,17 @@
 //! Git LFS pointer and local object availability inspection.
 
-use crate::{DevRelayError, GitRepo, Result, SnapshotMetadata};
+use crate::{
+    CasChunkHash, CasStore, DevRelayError, GitRepo, Result, SnapshotMetadata, SnapshotSidecar,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::PathBuf;
 
 const LFS_POINTER_VERSION: &str = "https://git-lfs.github.com/spec/v1";
+pub const LFS_LOCAL_OBJECT_SIDECAR_CLASSIFICATION: &str = "git-lfs-local-object";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LfsObjectReport {
@@ -71,6 +75,10 @@ fn inspect_lfs_objects_inner(
 
 pub fn ensure_lfs_objects_available(repo: &GitRepo) -> Result<()> {
     let report = inspect_lfs_objects(repo)?;
+    ensure_lfs_report_objects_available(&report)
+}
+
+pub fn ensure_lfs_report_objects_available(report: &LfsObjectReport) -> Result<()> {
     if report.missing_objects.is_empty() {
         return Ok(());
     }
@@ -83,6 +91,61 @@ pub fn ensure_lfs_objects_available(repo: &GitRepo) -> Result<()> {
     Err(DevRelayError::UnsupportedRepositoryState(format!(
         "missing or invalid Git LFS objects required for handoff: {missing}"
     )))
+}
+
+pub fn capture_local_only_lfs_objects(
+    repo: &GitRepo,
+    report: &LfsObjectReport,
+    cas_store: &CasStore,
+    chunk_size_bytes: usize,
+) -> Result<Vec<SnapshotSidecar>> {
+    if chunk_size_bytes == 0 {
+        return Err(DevRelayError::Config(
+            "LFS sidecar chunk size must be positive".to_string(),
+        ));
+    }
+
+    let git_dir = repo.git_dir()?;
+    let mut captured_oids = BTreeSet::new();
+    let mut sidecars = Vec::new();
+    for object in &report.local_only_objects {
+        if !captured_oids.insert(object.oid_sha256.clone()) {
+            continue;
+        }
+        let pointer = report
+            .pointers
+            .iter()
+            .find(|pointer| pointer.oid_sha256 == object.oid_sha256)
+            .ok_or_else(|| {
+                DevRelayError::Config(format!(
+                    "LFS local-only object {} did not have a pointer report",
+                    object.oid_sha256
+                ))
+            })?;
+        if !verify_lfs_object(&git_dir, &object.oid_sha256, pointer.size)? {
+            return Err(DevRelayError::MissingSourceObject(format!(
+                "local-only Git LFS object {} disappeared before CAS capture",
+                object.oid_sha256
+            )));
+        }
+        let chunk_hashes = upload_lfs_object_chunks(
+            &lfs_object_path(&git_dir, &object.oid_sha256),
+            cas_store,
+            chunk_size_bytes,
+        )?;
+        let manifest = cas_store.create_manifest(&chunk_hashes)?;
+        sidecars.push(SnapshotSidecar {
+            logical_path: lfs_object_sidecar_path(&object.oid_sha256)?,
+            file_mode: "100644".to_string(),
+            classification: LFS_LOCAL_OBJECT_SIDECAR_CLASSIFICATION.to_string(),
+            size_bytes: pointer.size,
+            chunk_size_bytes: chunk_size_bytes as u64,
+            root_hash: manifest.manifest_id.clone(),
+            cas_manifest_id: manifest.manifest_id,
+        });
+    }
+    sidecars.sort_by(|left, right| left.logical_path.cmp(&right.logical_path));
+    Ok(sidecars)
 }
 
 pub fn inspect_snapshot_lfs_objects(
@@ -103,12 +166,33 @@ pub fn ensure_snapshot_lfs_objects_available(
     repo: &GitRepo,
     snapshot: &SnapshotMetadata,
 ) -> Result<()> {
+    ensure_snapshot_lfs_objects_available_inner(repo, snapshot, false)
+}
+
+pub fn ensure_snapshot_lfs_objects_available_or_sidecars(
+    repo: &GitRepo,
+    snapshot: &SnapshotMetadata,
+) -> Result<()> {
+    ensure_snapshot_lfs_objects_available_inner(repo, snapshot, true)
+}
+
+fn ensure_snapshot_lfs_objects_available_inner(
+    repo: &GitRepo,
+    snapshot: &SnapshotMetadata,
+    allow_lfs_sidecars: bool,
+) -> Result<()> {
     let report = inspect_snapshot_lfs_objects(repo, snapshot)?;
-    if report.missing_objects.is_empty() {
+    let missing_objects = report
+        .missing_objects
+        .iter()
+        .filter(|object| {
+            !allow_lfs_sidecars || !snapshot_has_lfs_object_sidecar(snapshot, &object.oid_sha256)
+        })
+        .collect::<Vec<_>>();
+    if missing_objects.is_empty() {
         return Ok(());
     }
-    let missing = report
-        .missing_objects
+    let missing = missing_objects
         .iter()
         .map(|object| format!("{} ({})", object.path, object.oid_sha256))
         .collect::<Vec<_>>()
@@ -116,6 +200,16 @@ pub fn ensure_snapshot_lfs_objects_available(
     Err(DevRelayError::MissingSourceObject(format!(
         "missing or invalid Git LFS objects required by snapshot: {missing}"
     )))
+}
+
+pub fn snapshot_has_lfs_object_sidecar(snapshot: &SnapshotMetadata, oid_sha256: &str) -> bool {
+    let Ok(logical_path) = lfs_object_sidecar_path(oid_sha256) else {
+        return false;
+    };
+    snapshot.sidecars.iter().any(|sidecar| {
+        sidecar.classification == LFS_LOCAL_OBJECT_SIDECAR_CLASSIFICATION
+            && sidecar.logical_path == logical_path
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,6 +368,29 @@ fn lfs_pointer_report(
     })
 }
 
+fn upload_lfs_object_chunks(
+    path: &std::path::Path,
+    cas_store: &CasStore,
+    chunk_size_bytes: usize,
+) -> Result<Vec<CasChunkHash>> {
+    let mut file = File::open(path)?;
+    let mut buffer = vec![0_u8; chunk_size_bytes];
+    let mut hashes = Vec::new();
+
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let chunk = &buffer[..read];
+        let hash = CasChunkHash::from_bytes(chunk);
+        cas_store.upload_chunk(chunk, &hash)?;
+        hashes.push(hash);
+    }
+
+    Ok(hashes)
+}
+
 fn verify_lfs_object(git_dir: &std::path::Path, oid_sha256: &str, size: u64) -> Result<bool> {
     let path = lfs_object_path(git_dir, oid_sha256);
     let mut file = match File::open(&path) {
@@ -315,6 +432,25 @@ fn lfs_object_path(git_dir: &std::path::Path, oid_sha256: &str) -> PathBuf {
         .join(&oid_sha256[..2])
         .join(&oid_sha256[2..4])
         .join(oid_sha256)
+}
+
+fn lfs_object_sidecar_path(oid_sha256: &str) -> Result<String> {
+    if !is_lfs_oid(oid_sha256) {
+        return Err(DevRelayError::Config(format!(
+            "invalid Git LFS object id {oid_sha256}"
+        )));
+    }
+    let oid = oid_sha256.to_ascii_lowercase();
+    Ok(format!(
+        ".git/lfs/objects/{}/{}/{}",
+        &oid[..2],
+        &oid[2..4],
+        oid
+    ))
+}
+
+fn is_lfs_oid(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[cfg(test)]

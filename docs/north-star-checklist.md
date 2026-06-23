@@ -1696,7 +1696,7 @@ Conventions:
 - [x] Detect LFS pointer files.
 - [x] Detect required local LFS objects.
 - [x] Check upstream availability.
-- [ ] Store local-only LFS object in CAS.
+- [x] Store local-only LFS object in CAS.
 - [x] Verify LFS object before apply.
 - [x] Block apply if object missing.
 - [x] Add LFS tests with fake objects.

@@ -16,8 +16,10 @@ use crate::policy::classify_untracked_paths;
 use crate::snapshot_schema::{SNAPSHOT_ID_PREFIX, SNAPSHOT_SCHEMA_VERSION, calculate_state_hash};
 use crate::{
     CasStore, DEFAULT_SIDECAR_CHUNK_BYTES, GitRepo, GitStatus, Manifest, PathDecision,
-    SnapshotMetadata, capture_large_sidecars, ensure_lfs_objects_available,
-    ensure_sidecars_available, ensure_snapshot_lfs_objects_available, materialize_sidecars,
+    SnapshotMetadata, capture_large_sidecars, capture_local_only_lfs_objects,
+    ensure_lfs_report_objects_available, ensure_sidecars_available,
+    ensure_snapshot_lfs_objects_available, ensure_snapshot_lfs_objects_available_or_sidecars,
+    inspect_lfs_objects, inspect_lfs_objects_with_upstream, materialize_sidecars,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
@@ -70,7 +72,7 @@ impl SnapshotApplyFaultPoint {
 }
 
 pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMetadata> {
-    create_snapshot_inner(repo, manifest, None)
+    create_snapshot_inner(repo, manifest, None, None)
 }
 
 pub fn create_snapshot_with_sidecars(
@@ -78,28 +80,58 @@ pub fn create_snapshot_with_sidecars(
     manifest: &Manifest,
     cas_store: &CasStore,
 ) -> Result<SnapshotMetadata> {
-    create_snapshot_inner(repo, manifest, Some(cas_store))
+    create_snapshot_inner(repo, manifest, Some(cas_store), None)
+}
+
+pub fn create_snapshot_with_sidecars_and_lfs_upstream(
+    repo: &GitRepo,
+    manifest: &Manifest,
+    cas_store: &CasStore,
+    lfs_upstream_git_dir: impl AsRef<Path>,
+) -> Result<SnapshotMetadata> {
+    create_snapshot_inner(
+        repo,
+        manifest,
+        Some(cas_store),
+        Some(lfs_upstream_git_dir.as_ref()),
+    )
 }
 
 fn create_snapshot_inner(
     repo: &GitRepo,
     manifest: &Manifest,
     cas_store: Option<&CasStore>,
+    lfs_upstream_git_dir: Option<&Path>,
 ) -> Result<SnapshotMetadata> {
     let status = repo.status()?;
     ensure_checkpoint_supported(repo, &status)?;
-    ensure_lfs_objects_available(repo)?;
+    let lfs_report = if let Some(upstream_git_dir) = lfs_upstream_git_dir {
+        inspect_lfs_objects_with_upstream(repo, upstream_git_dir)?
+    } else {
+        inspect_lfs_objects(repo)?
+    };
+    ensure_lfs_report_objects_available(&lfs_report)?;
     let classified = classify_untracked_paths(repo.path(), manifest, status.untracked_paths())?;
-    let sidecars = if let Some(cas_store) = cas_store {
-        capture_large_sidecars(
+    let mut sidecars = if let Some(cas_store) = cas_store {
+        let mut sidecars = capture_large_sidecars(
             repo.path(),
             &classified,
             cas_store,
             DEFAULT_SIDECAR_CHUNK_BYTES,
-        )?
+        )?;
+        if lfs_upstream_git_dir.is_some() {
+            sidecars.extend(capture_local_only_lfs_objects(
+                repo,
+                &lfs_report,
+                cas_store,
+                DEFAULT_SIDECAR_CHUNK_BYTES,
+            )?);
+        }
+        sidecars
     } else {
         Vec::new()
     };
+    sidecars.sort_by(|left, right| left.logical_path.cmp(&right.logical_path));
     let mut included_untracked = classified
         .iter()
         .filter(|item| item.decision == PathDecision::Include)
@@ -197,7 +229,7 @@ pub fn apply_snapshot(
     source: &GitRepo,
     snapshot: &SnapshotMetadata,
 ) -> Result<VerificationDetails> {
-    apply_snapshot_inner(target, source, snapshot, None)
+    apply_snapshot_inner(target, source, snapshot, None, false)
 }
 
 pub fn apply_snapshot_with_sidecars(
@@ -207,7 +239,7 @@ pub fn apply_snapshot_with_sidecars(
     cas_store: &CasStore,
 ) -> Result<VerificationDetails> {
     ensure_sidecars_available(target.path(), &snapshot.sidecars, cas_store)?;
-    let verification = apply_snapshot_inner(target, source, snapshot, None)?;
+    let verification = apply_snapshot_inner(target, source, snapshot, None, true)?;
     materialize_sidecars(target.path(), &snapshot.sidecars, cas_store)?;
     Ok(verification)
 }
@@ -218,7 +250,7 @@ pub fn apply_snapshot_with_fault_injection(
     snapshot: &SnapshotMetadata,
     fault: SnapshotApplyFaultPoint,
 ) -> Result<VerificationDetails> {
-    apply_snapshot_inner(target, source, snapshot, Some(fault))
+    apply_snapshot_inner(target, source, snapshot, Some(fault), false)
 }
 
 fn apply_snapshot_inner(
@@ -226,9 +258,14 @@ fn apply_snapshot_inner(
     source: &GitRepo,
     snapshot: &SnapshotMetadata,
     fault: Option<SnapshotApplyFaultPoint>,
+    allow_lfs_sidecars: bool,
 ) -> Result<VerificationDetails> {
     plan_apply_snapshot(target, source, snapshot)?;
-    ensure_snapshot_lfs_objects_available(source, snapshot)?;
+    if allow_lfs_sidecars {
+        ensure_snapshot_lfs_objects_available_or_sidecars(source, snapshot)?;
+    } else {
+        ensure_snapshot_lfs_objects_available(source, snapshot)?;
+    }
     let target_platform_key = current_platform_key();
     ensure_no_reparse_points_before_materialization(target)?;
     ensure_snapshot_paths_supported(source, snapshot, &target_platform_key)?;
@@ -977,6 +1014,57 @@ large_file_threshold_mib = 1
         assert_eq!(reconstructed, large);
         assert_eq!(snapshot.state_hash, calculate_state_hash(&snapshot));
         snapshot.validate().unwrap();
+    }
+
+    #[test]
+    fn snapshot_with_sidecars_captures_local_only_lfs_object_in_cas() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let upstream_git_dir = temp.path().join("upstream.git");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::create_dir_all(&upstream_git_dir).unwrap();
+        let cas = CasStore::open(temp.path().join("cas")).unwrap();
+        let object = b"local-only lfs payload";
+        let oid = sha256_hex(object);
+        fs::write(
+            source_path.join("asset.bin"),
+            lfs_pointer(&oid, object.len() as u64),
+        )
+        .unwrap();
+        source.run(&["add", "asset.bin"]).unwrap();
+        source.run(&["commit", "-m", "lfs pointer"]).unwrap();
+        write_lfs_object(&source, &oid, object);
+
+        let snapshot = create_snapshot_with_sidecars_and_lfs_upstream(
+            &source,
+            &manifest(),
+            &cas,
+            &upstream_git_dir,
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.sidecars.len(), 1);
+        let sidecar = &snapshot.sidecars[0];
+        assert_eq!(
+            sidecar.classification,
+            crate::LFS_LOCAL_OBJECT_SIDECAR_CLASSIFICATION
+        );
+        assert_eq!(
+            sidecar.logical_path,
+            format!(".git/lfs/objects/{}/{}/{}", &oid[..2], &oid[2..4], oid)
+        );
+        assert_eq!(sidecar.size_bytes, object.len() as u64);
+        assert_eq!(sidecar.root_hash, sidecar.cas_manifest_id);
+
+        fs::remove_file(lfs_object_path(&source, &oid)).unwrap();
+        clone_repo(&source_path, &target_path);
+        let target = GitRepo::new(&target_path);
+
+        apply_snapshot_with_sidecars(&target, &source, &snapshot, &cas).unwrap();
+
+        assert_eq!(fs::read(lfs_object_path(&target, &oid)).unwrap(), object);
     }
 
     #[test]

@@ -151,9 +151,12 @@ pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 pub use ipc::{UnixIpcConnection, UnixIpcListener};
 pub use lease::{LeaseRecord, LeaseState};
 pub use lfs::{
-    LfsLocalOnlyObject, LfsMissingObject, LfsObjectReport, LfsPointer,
-    ensure_lfs_objects_available, ensure_snapshot_lfs_objects_available, inspect_lfs_objects,
+    LFS_LOCAL_OBJECT_SIDECAR_CLASSIFICATION, LfsLocalOnlyObject, LfsMissingObject, LfsObjectReport,
+    LfsPointer, capture_local_only_lfs_objects, ensure_lfs_objects_available,
+    ensure_lfs_report_objects_available, ensure_snapshot_lfs_objects_available,
+    ensure_snapshot_lfs_objects_available_or_sidecars, inspect_lfs_objects,
     inspect_lfs_objects_with_upstream, inspect_snapshot_lfs_objects,
+    snapshot_has_lfs_object_sidecar,
 };
 pub use line_ending_doctor::{
     LineEndingDoctorReport, LineEndingHashMismatch, LineEndingWarning, LineEndingWarningCode,
@@ -233,8 +236,8 @@ pub use sidecar::{
 pub use snapshot::{
     ApplyPlan, SnapshotApplyFaultPoint, VerificationDetails, apply_snapshot,
     apply_snapshot_with_fault_injection, apply_snapshot_with_sidecars, create_snapshot,
-    create_snapshot_with_sidecars, plan_apply_snapshot, read_snapshot_file, verify_snapshot,
-    write_snapshot_file,
+    create_snapshot_with_sidecars, create_snapshot_with_sidecars_and_lfs_upstream,
+    plan_apply_snapshot, read_snapshot_file, verify_snapshot, write_snapshot_file,
 };
 pub use snapshot_schema::{SnapshotMetadata, SnapshotSidecar};
 pub use snapshot_store::{
