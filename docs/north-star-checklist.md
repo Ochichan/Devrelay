@@ -1079,10 +1079,10 @@ Conventions:
 ### M6 Exit Gate
 
 - [ ] Idle agent CPU/RSS meets target on test repos.
-- [ ] Many file events coalesce into bounded work.
-- [ ] Disk pressure prunes only unpinned/evictable data.
-- [ ] Background failures surface as protection status.
-- [ ] Background watcher is not used as source of truth.
+- [x] Many file events coalesce into bounded work.
+- [x] Disk pressure prunes only unpinned/evictable data.
+- [x] Background failures surface as protection status.
+- [x] Background watcher is not used as source of truth.
 
 ## M7. Desktop UX: Tray And Dashboard
 
