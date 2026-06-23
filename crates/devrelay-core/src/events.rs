@@ -198,6 +198,8 @@ pub enum EventType {
     SnapshotApplyStarted,
     #[serde(rename = "snapshot.apply.verified")]
     SnapshotApplyVerified,
+    #[serde(rename = "session.diverged")]
+    SessionDiverged,
     #[serde(rename = "security.blocked")]
     SecurityBlocked,
     #[serde(rename = "quota.warning")]
@@ -285,6 +287,22 @@ pub struct SnapshotApplyVerifiedEvent {
 impl TypedEventPayload for SnapshotApplyVerifiedEvent {
     fn event_type(&self) -> EventType {
         EventType::SnapshotApplyVerified
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionDivergedEvent {
+    pub project_id: String,
+    pub original_session_id: String,
+    pub fork_session_id: String,
+    pub snapshot_id: String,
+    pub canonical_latest_snapshot_id: Option<String>,
+    pub reason: String,
+}
+
+impl TypedEventPayload for SessionDivergedEvent {
+    fn event_type(&self) -> EventType {
+        EventType::SessionDiverged
     }
 }
 
@@ -620,9 +638,30 @@ mod tests {
             "state-hash"
         );
 
-        let security = EventEnvelope::with_typed_payload_at(
+        let diverged = EventEnvelope::with_typed_payload_at(
             EventSequence::new(4).unwrap(),
             EventTimestampMillis::new(40),
+            SessionDivergedEvent {
+                project_id: "12345678".to_string(),
+                original_session_id: "se_original".to_string(),
+                fork_session_id: "se_fork".to_string(),
+                snapshot_id: "s1_fork".to_string(),
+                canonical_latest_snapshot_id: Some("s1_latest".to_string()),
+                reason: "inactive workspace published separate work".to_string(),
+            },
+        )
+        .unwrap();
+        let encoded = serde_json::to_value(diverged).unwrap();
+        assert_eq!(encoded["type"], "session.diverged");
+        assert_eq!(encoded["payload"]["fork_session_id"], "se_fork");
+        assert_eq!(
+            encoded["payload"]["canonical_latest_snapshot_id"],
+            "s1_latest"
+        );
+
+        let security = EventEnvelope::with_typed_payload_at(
+            EventSequence::new(5).unwrap(),
+            EventTimestampMillis::new(50),
             SecurityBlockedEvent {
                 code: "DR-SECURITY-BLOCKED".to_string(),
                 title: "Security block".to_string(),
@@ -642,8 +681,8 @@ mod tests {
         );
 
         let quota = EventEnvelope::with_typed_payload_at(
-            EventSequence::new(5).unwrap(),
-            EventTimestampMillis::new(50),
+            EventSequence::new(6).unwrap(),
+            EventTimestampMillis::new(60),
             QuotaWarningEvent {
                 quota: "snapshot-store".to_string(),
                 scope: "project".to_string(),

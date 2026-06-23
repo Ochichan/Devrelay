@@ -214,6 +214,21 @@ pub struct CanonicalPublishResult {
     pub latest_snapshot_id: String,
 }
 
+pub struct InactiveForkPublishRequest<'a> {
+    pub lease_id: &'a str,
+    pub session_id: &'a str,
+    pub holder_device_id: &'a str,
+    pub metadata: &'a SnapshotMetadata,
+    pub label: Option<&'a str>,
+}
+
+#[derive(Debug)]
+pub struct InactiveForkPublishResult {
+    pub fork_session: StoredSession,
+    pub snapshot: StoredSnapshot,
+    pub canonical_latest_snapshot_id: Option<String>,
+}
+
 impl MetadataDb {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -729,6 +744,204 @@ INSERT INTO snapshots (
         Ok(CanonicalPublishResult {
             snapshot,
             latest_snapshot_id: request.metadata.snapshot_id.clone(),
+        })
+    }
+
+    pub fn publish_inactive_snapshot_as_fork(
+        &mut self,
+        request: InactiveForkPublishRequest<'_>,
+    ) -> Result<InactiveForkPublishResult> {
+        if request.metadata.session_id.as_deref() != Some(request.session_id) {
+            return Err(crate::DevRelayError::Config(
+                "snapshot session_id does not match inactive publish session".to_string(),
+            ));
+        }
+
+        let tx = self.conn.transaction()?;
+        let lease = tx
+            .query_row(
+                r#"
+SELECT lease_id,
+       project_id,
+       session_id,
+       state,
+       epoch,
+       holder_device_id,
+       latest_snapshot_id,
+       handoff_id
+FROM leases
+WHERE lease_id = ?1
+"#,
+                [request.lease_id],
+                lease_record_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| {
+                crate::DevRelayError::Config(format!("unknown lease {}", request.lease_id))
+            })?;
+
+        if lease.project_id != request.metadata.project_id {
+            return Err(crate::DevRelayError::Config(
+                "lease project_id does not match snapshot project_id".to_string(),
+            ));
+        }
+        if lease.session_id != request.session_id {
+            return Err(crate::DevRelayError::Config(
+                "lease session_id does not match inactive publish session".to_string(),
+            ));
+        }
+        if lease.holder_device_id.as_deref() != Some(request.holder_device_id) {
+            return Err(crate::DevRelayError::Config(
+                "inactive publish rejected: holder device mismatch".to_string(),
+            ));
+        }
+        if lease.state != LeaseState::Inactive {
+            return Err(crate::DevRelayError::Config(format!(
+                "inactive edit fork requires inactive lease; found {}",
+                lease.state.as_str()
+            )));
+        }
+
+        let parent_session = tx
+            .query_row(
+                r#"
+SELECT session_id,
+       project_id,
+       name,
+       parent_session_id,
+       active_workspace_id,
+       state,
+       archived_at_unix_seconds,
+       created_at_unix_seconds,
+       updated_at_unix_seconds
+FROM sessions
+WHERE session_id = ?1 AND project_id = ?2
+"#,
+                (request.session_id, request.metadata.project_id.as_str()),
+                stored_session_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| {
+                crate::DevRelayError::Config(format!("unknown session {}", request.session_id))
+            })?;
+
+        let mut forked_lease = lease.clone();
+        forked_lease.state = LeaseState::Forked;
+        lease.validate_transition_to(&forked_lease)?;
+
+        let now = unix_now_seconds();
+        let fork_session_id = generate_session_id();
+        let fork_name = format!("Separate work from {}", parent_session.name);
+        tx.execute(
+            r#"
+INSERT INTO sessions (
+    session_id,
+    project_id,
+    active_workspace_id,
+    state,
+    name,
+    parent_session_id,
+    archived_at_unix_seconds,
+    created_at_unix_seconds,
+    updated_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+"#,
+            (
+                fork_session_id.as_str(),
+                parent_session.project_id.as_str(),
+                parent_session.active_workspace_id.as_deref(),
+                SessionState::Fork.as_str(),
+                fork_name.as_str(),
+                parent_session.session_id.as_str(),
+                Option::<i64>::None,
+                now as i64,
+                now as i64,
+            ),
+        )?;
+        let fork_session = StoredSession {
+            session_id: fork_session_id.clone(),
+            project_id: parent_session.project_id.clone(),
+            name: fork_name,
+            parent_session_id: Some(parent_session.session_id.clone()),
+            active_workspace_id: parent_session.active_workspace_id.clone(),
+            state: SessionState::Fork,
+            archived_at_unix_seconds: None,
+            created_at_unix_seconds: now,
+            updated_at_unix_seconds: now,
+        };
+
+        let mut fork_metadata = request.metadata.clone();
+        fork_metadata.session_id = Some(fork_session_id.clone());
+        if fork_metadata.parent_snapshot_id.is_none() {
+            fork_metadata.parent_snapshot_id = lease.latest_snapshot_id.clone();
+        }
+        fork_metadata.validate()?;
+
+        let metadata_json = serde_json::to_string(&fork_metadata)?;
+        let sequence_number: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM snapshots WHERE project_id = ?1",
+            [fork_metadata.project_id.as_str()],
+            |row| row.get(0),
+        )?;
+        let label = request
+            .label
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "separate work from inactive workspace".to_string());
+        tx.execute(
+            r#"
+INSERT INTO snapshots (
+    snapshot_id,
+    project_id,
+    session_id,
+    parent_snapshot_id,
+    sequence_number,
+    pinned,
+    label,
+    metadata_json,
+    created_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+"#,
+            (
+                fork_metadata.snapshot_id.as_str(),
+                fork_metadata.project_id.as_str(),
+                fork_session_id.as_str(),
+                fork_metadata.parent_snapshot_id.as_deref(),
+                sequence_number,
+                true,
+                label.as_str(),
+                metadata_json.as_str(),
+                fork_metadata.created_at_unix_seconds as i64,
+            ),
+        )?;
+        let changed = tx.execute(
+            "UPDATE leases SET state = ?1 WHERE lease_id = ?2 AND state = ?3",
+            (
+                LeaseState::Forked.as_str(),
+                request.lease_id,
+                LeaseState::Inactive.as_str(),
+            ),
+        )?;
+        if changed != 1 {
+            return Err(crate::DevRelayError::Config(
+                "inactive edit fork lost lease state race".to_string(),
+            ));
+        }
+        tx.commit()?;
+
+        Ok(InactiveForkPublishResult {
+            snapshot: StoredSnapshot {
+                snapshot_id: fork_metadata.snapshot_id.clone(),
+                project_id: fork_metadata.project_id.clone(),
+                session_id: Some(fork_session_id),
+                parent_snapshot_id: fork_metadata.parent_snapshot_id.clone(),
+                sequence_number,
+                pinned: true,
+                label: Some(label),
+                metadata: fork_metadata,
+                created_at_unix_seconds: request.metadata.created_at_unix_seconds,
+            },
+            fork_session,
+            canonical_latest_snapshot_id: lease.latest_snapshot_id,
         })
     }
 
@@ -1546,6 +1759,101 @@ mod tests {
     }
 
     #[test]
+    fn inactive_publish_creates_fork_without_latest_change() {
+        let (mut db, session, lease) = setup_publish_db(1, LeaseState::Active);
+        let canonical = publish_metadata("s1_000000000000000000000107", &session.session_id);
+        db.publish_snapshot_canonical(CanonicalPublishRequest {
+            lease_id: &lease.lease_id,
+            session_id: &session.session_id,
+            expected_epoch: 1,
+            holder_device_id: "device-a",
+            expected_latest_snapshot_id: None,
+            metadata: &canonical,
+            pinned: false,
+            label: Some("canonical"),
+        })
+        .unwrap();
+
+        let mut inactive = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        inactive.state = LeaseState::Inactive;
+        db.upsert_lease(&inactive).unwrap();
+
+        let edit = publish_metadata("s1_000000000000000000000108", &session.session_id);
+        let fork = db
+            .publish_inactive_snapshot_as_fork(InactiveForkPublishRequest {
+                lease_id: &lease.lease_id,
+                session_id: &session.session_id,
+                holder_device_id: "device-a",
+                metadata: &edit,
+                label: None,
+            })
+            .unwrap();
+
+        assert_eq!(fork.fork_session.state, SessionState::Fork);
+        assert_eq!(
+            fork.fork_session.parent_session_id.as_deref(),
+            Some(session.session_id.as_str())
+        );
+        assert_eq!(
+            fork.canonical_latest_snapshot_id.as_deref(),
+            Some(canonical.snapshot_id.as_str())
+        );
+        assert!(fork.snapshot.pinned);
+        assert_eq!(
+            fork.snapshot.session_id.as_deref(),
+            Some(fork.fork_session.session_id.as_str())
+        );
+        assert_eq!(
+            fork.snapshot.parent_snapshot_id.as_deref(),
+            Some(canonical.snapshot_id.as_str())
+        );
+        assert_eq!(
+            snapshots_for_project(&db, "project123"),
+            vec![canonical.snapshot_id.clone(), edit.snapshot_id.clone()]
+        );
+
+        let updated = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(updated.state, LeaseState::Forked);
+        assert_eq!(
+            updated.latest_snapshot_id.as_deref(),
+            Some(canonical.snapshot_id.as_str())
+        );
+    }
+
+    #[test]
+    fn inactive_fork_snapshot_is_recoverable_from_store() {
+        let (mut db, session, lease) = setup_publish_db(1, LeaseState::Inactive);
+        let edit = publish_metadata("s1_000000000000000000000109", &session.session_id);
+        let fork = db
+            .publish_inactive_snapshot_as_fork(InactiveForkPublishRequest {
+                lease_id: &lease.lease_id,
+                session_id: &session.session_id,
+                holder_device_id: "device-a",
+                metadata: &edit,
+                label: Some("separate work"),
+            })
+            .unwrap();
+
+        let stored = snapshot_from_store(&db, &fork.snapshot.snapshot_id);
+        assert_eq!(stored.snapshot_id, fork.snapshot.snapshot_id);
+        assert_eq!(
+            stored.session_id.as_deref(),
+            Some(fork.fork_session.session_id.as_str())
+        );
+        assert_eq!(
+            stored.metadata.session_id.as_deref(),
+            Some(fork.fork_session.session_id.as_str())
+        );
+        assert_eq!(stored.label.as_deref(), Some("separate work"));
+        assert!(stored.pinned);
+        assert!(
+            db.get_session(&fork.fork_session.session_id)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
     fn handoff_happy_path_commits_holder_and_epoch() {
         let (mut db, _session, lease) = setup_publish_db(7, LeaseState::Active);
 
@@ -1671,6 +1979,65 @@ mod tests {
             db.get_handoff(&handoff.handoff_id).unwrap().unwrap().state,
             HandoffState::TargetPrepare
         );
+    }
+
+    fn snapshot_from_store(db: &MetadataDb, snapshot_id: &str) -> StoredSnapshot {
+        struct SnapshotRow {
+            snapshot_id: String,
+            project_id: String,
+            session_id: Option<String>,
+            parent_snapshot_id: Option<String>,
+            sequence_number: i64,
+            pinned: bool,
+            label: Option<String>,
+            metadata_json: String,
+            created_at_unix_seconds: i64,
+        }
+
+        let row: SnapshotRow = db
+            .connection()
+            .query_row(
+                r#"
+SELECT snapshot_id,
+       project_id,
+       session_id,
+       parent_snapshot_id,
+       sequence_number,
+       pinned,
+       label,
+       metadata_json,
+       created_at_unix_seconds
+FROM snapshots
+WHERE snapshot_id = ?1
+"#,
+                [snapshot_id],
+                |row| {
+                    Ok(SnapshotRow {
+                        snapshot_id: row.get(0)?,
+                        project_id: row.get(1)?,
+                        session_id: row.get(2)?,
+                        parent_snapshot_id: row.get(3)?,
+                        sequence_number: row.get(4)?,
+                        pinned: row.get(5)?,
+                        label: row.get(6)?,
+                        metadata_json: row.get(7)?,
+                        created_at_unix_seconds: row.get(8)?,
+                    })
+                },
+            )
+            .unwrap();
+
+        StoredSnapshot {
+            snapshot_id: row.snapshot_id,
+            project_id: row.project_id,
+            session_id: row.session_id,
+            parent_snapshot_id: row.parent_snapshot_id,
+            sequence_number: row.sequence_number,
+            pinned: row.pinned,
+            label: row.label,
+            metadata: serde_json::from_str(&row.metadata_json).unwrap(),
+            created_at_unix_seconds: row.created_at_unix_seconds.max(0) as u64,
+        }
     }
 
     fn snapshots_for_project(db: &MetadataDb, project_id: &str) -> Vec<String> {

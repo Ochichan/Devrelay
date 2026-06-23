@@ -2460,6 +2460,15 @@ fn apply_dirty_policy_snapshots_backup_and_can_use_new_workspace() {
             .as_str()
             .is_some_and(|value| value.starts_with("fork_"))
     );
+    assert!(
+        apply_json["safe_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value
+                .as_str()
+                .is_some_and(|text| text.contains("separate work")))
+    );
     let backup_snapshot_id = apply_json["backup"]["snapshot_id"].as_str().unwrap();
     assert_eq!(
         std::fs::read_to_string(target.join("README.md")).unwrap(),

@@ -724,14 +724,14 @@ Conventions:
 
 ### M3.8 Inactive Edit Fork
 
-- [ ] Detect publish attempt from inactive workspace.
-- [ ] Create fork session.
-- [ ] Preserve inactive changes as snapshot.
-- [ ] Pin fork snapshot by default.
-- [ ] Emit `session.diverged`.
-- [ ] Add CLI output for "separate work".
-- [ ] Add test that canonical latest is unchanged.
-- [ ] Add test that fork snapshot is recoverable.
+- [x] Detect publish attempt from inactive workspace.
+- [x] Create fork session.
+- [x] Preserve inactive changes as snapshot.
+- [x] Pin fork snapshot by default.
+- [x] Emit `session.diverged`.
+- [x] Add CLI output for "separate work".
+- [x] Add test that canonical latest is unchanged.
+- [x] Add test that fork snapshot is recoverable.
 
 ### M3.9 Crash Recovery
 

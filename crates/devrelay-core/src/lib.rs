@@ -64,8 +64,9 @@ pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{
     EVENT_SCHEMA_VERSION, EventEnvelope, EventGapDetector, EventReplayCursor, EventSequence,
     EventSequenceGap, EventSequencer, EventStreamMessage, EventTimestampMillis, EventType,
-    QuotaWarningEvent, SecurityBlockedEvent, SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent,
-    SnapshotLocalCreatedEvent, TypedEventPayload, WorkspaceStateChangedEvent,
+    QuotaWarningEvent, SecurityBlockedEvent, SessionDivergedEvent, SnapshotApplyStartedEvent,
+    SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent, TypedEventPayload,
+    WorkspaceStateChangedEvent,
 };
 pub use git::{GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary};
 pub use handoff::{HANDOFF_ID_PREFIX, HandoffRecord, HandoffState, generate_handoff_id};
@@ -112,4 +113,7 @@ pub use snapshot::{
 };
 pub use snapshot_schema::SnapshotMetadata;
 pub use snapshot_store::{SnapshotStore, StoredSnapshot};
-pub use storage::{CanonicalPublishRequest, CanonicalPublishResult, MetadataDb};
+pub use storage::{
+    CanonicalPublishRequest, CanonicalPublishResult, InactiveForkPublishRequest,
+    InactiveForkPublishResult, MetadataDb,
+};

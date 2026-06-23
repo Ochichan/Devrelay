@@ -2576,7 +2576,7 @@ fn prepare_apply_target(
             Ok(PreparedApplyTarget {
                 repo: target.clone(),
                 safe_actions: vec![format!(
-                    "dirty target preserved as pinned backup snapshot {}",
+                    "separate work preserved as pinned backup snapshot {}",
                     backup.snapshot_id
                 )],
                 backup: Some(backup),
