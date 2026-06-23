@@ -40,6 +40,9 @@ project directory is only the DevRelay implementation workspace unless you run
 See [docs/cli.md](docs/cli.md) for CLI examples, JSON output, snapshot file
 defaults, and exit code conventions.
 
+See [docs/fuzzing.md](docs/fuzzing.md) for parser and payload fuzz target
+commands.
+
 ## Current Scope
 
 The first milestone intentionally excludes background watchers, LAN discovery,
