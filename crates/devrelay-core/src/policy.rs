@@ -19,7 +19,9 @@ pub mod classification_reason {
     pub const SSH_CREDENTIAL_PATH: &str = "ssh-credential-path";
     pub const PRIVATE_KEY_FILENAME: &str = "private-key-filename";
     pub const PRIVATE_KEY_CONTENT: &str = "private-key-content";
-    pub const HIGH_ENTROPY_PLACEHOLDER: &str = "high-entropy-placeholder";
+    pub const TOKEN_PATTERN_CONTENT: &str = "token-pattern-content";
+    pub const HIGH_ENTROPY_CONTENT: &str = "high-entropy-content";
+    pub const HIGH_ENTROPY_PLACEHOLDER: &str = HIGH_ENTROPY_CONTENT;
     pub const WINDOWS_REPARSE_POINT: &str = "windows-reparse-point";
     pub const SYMLINK_TARGET_OUTSIDE_WORKSPACE: &str = "symlink-target-outside-workspace";
     pub const MANIFEST_OR_GENERATED_EXCLUDE: &str = "manifest-or-generated-exclude";
@@ -99,11 +101,8 @@ fn classify_one(
             classification_reason::SYMLINK_TARGET_OUTSIDE_WORKSPACE,
         );
     }
-    if path_has_private_key_header(repo_root, path) {
-        return excluded(path, classification_reason::PRIVATE_KEY_CONTENT);
-    }
-    if has_high_entropy_secret(repo_root, path) {
-        return excluded(path, classification_reason::HIGH_ENTROPY_PLACEHOLDER);
+    if let Some(reason) = secret_content_reason(repo_root, path) {
+        return excluded(path, reason);
     }
     if exclude.is_match(path) {
         return excluded(path, classification_reason::MANIFEST_OR_GENERATED_EXCLUDE);
@@ -173,7 +172,36 @@ fn excluded(path: &str, reason: &str) -> ClassifiedPath {
 fn secret_path_reason(path: &str) -> Option<&'static str> {
     let normalized = normalize_repo_path(path).to_ascii_lowercase();
     let basename = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
-    if basename == ".env" || basename.starts_with(".env.") {
+    if basename == ".env"
+        || basename.starts_with(".env.")
+        || matches!(
+            basename,
+            ".npmrc"
+                | ".pypirc"
+                | ".netrc"
+                | "auth.json"
+                | "credentials"
+                | "credentials.json"
+                | "secret.json"
+                | "secrets.json"
+                | "service-account.json"
+        )
+        || basename.ends_with(".secret")
+        || basename.ends_with(".secrets")
+        || basename.ends_with(".credentials")
+        || basename.ends_with(".p12")
+        || basename.ends_with(".pfx")
+        || basename.ends_with(".jks")
+        || basename.ends_with(".keystore")
+        || basename.ends_with(".kdbx")
+        || basename.ends_with(".age")
+        || basename.ends_with(".gpg")
+        || basename.contains("firebase-adminsdk")
+        || basename.contains("service_account")
+        || basename.contains("service-account")
+        || basename.contains("client-secret")
+        || basename.contains("client_secret")
+    {
         return Some(classification_reason::SECRET_FILENAME);
     }
     if normalized == ".ssh" || normalized.starts_with(".ssh/") || normalized.contains("/.ssh/") {
@@ -183,42 +211,185 @@ fn secret_path_reason(path: &str) -> Option<&'static str> {
         || basename.ends_with(".key")
         || basename == "id_rsa"
         || basename == "id_ed25519"
+        || basename == "id_ecdsa"
+        || basename == "id_dsa"
+        || basename == "id_xmss"
+        || basename == "id_ed25519_sk"
+        || basename == "id_ecdsa_sk"
     {
         return Some(classification_reason::PRIVATE_KEY_FILENAME);
     }
     None
 }
 
-fn path_has_private_key_header(repo_root: &Path, path: &str) -> bool {
+fn secret_content_reason(repo_root: &Path, path: &str) -> Option<&'static str> {
     let full = repo_root.join(PathBuf::from(path));
     let Ok(metadata) = fs::symlink_metadata(&full) else {
-        return false;
+        return None;
     };
     if is_traversal_boundary(&metadata) {
-        return false;
+        return None;
     }
     let Ok(mut file) = File::open(full) else {
-        return false;
+        return None;
     };
-    let mut buffer = [0_u8; 8192];
+    let mut buffer = [0_u8; 64 * 1024];
     let Ok(read) = file.read(&mut buffer) else {
-        return false;
+        return None;
     };
     let haystack = String::from_utf8_lossy(&buffer[..read]);
+    if has_private_key_header(&haystack) {
+        return Some(classification_reason::PRIVATE_KEY_CONTENT);
+    }
+    if has_token_pattern(&haystack) {
+        return Some(classification_reason::TOKEN_PATTERN_CONTENT);
+    }
+    if has_high_entropy_secret(&haystack) {
+        return Some(classification_reason::HIGH_ENTROPY_CONTENT);
+    }
+    None
+}
+
+fn has_private_key_header(haystack: &str) -> bool {
     haystack.contains("BEGIN PRIVATE KEY")
         || haystack.contains("BEGIN RSA PRIVATE KEY")
         || haystack.contains("BEGIN OPENSSH PRIVATE KEY")
         || haystack.contains("BEGIN EC PRIVATE KEY")
+        || haystack.contains("BEGIN DSA PRIVATE KEY")
+        || haystack.contains("BEGIN ENCRYPTED PRIVATE KEY")
+        || haystack.contains("BEGIN PGP PRIVATE KEY BLOCK")
 }
 
-#[cfg(feature = "entropy-detection")]
-fn has_high_entropy_secret(_repo_root: &Path, _path: &str) -> bool {
+fn has_token_pattern(haystack: &str) -> bool {
+    haystack.lines().any(|line| {
+        token_candidates(line).any(looks_like_known_token)
+            || assignment_value(line).is_some_and(|value| {
+                let value = trim_token_value(value);
+                looks_like_known_token(value)
+            })
+    })
+}
+
+fn has_high_entropy_secret(haystack: &str) -> bool {
+    haystack.lines().any(|line| {
+        if !has_secret_context(line) {
+            return false;
+        }
+        token_candidates(line).any(|candidate| {
+            let candidate = trim_token_value(candidate);
+            candidate.len() >= 32
+                && is_secret_token_charset(candidate)
+                && token_entropy(candidate) >= 4.2
+        })
+    })
+}
+
+fn has_secret_context(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    [
+        "api_key",
+        "apikey",
+        "access_key",
+        "access-token",
+        "access_token",
+        "auth_token",
+        "client_secret",
+        "client-secret",
+        "password",
+        "private_key",
+        "private-key",
+        "secret",
+        "token",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn assignment_value(line: &str) -> Option<&str> {
+    if !has_secret_context(line) {
+        return None;
+    }
+    line.split_once('=')
+        .or_else(|| line.split_once(':'))
+        .map(|(_, value)| value.trim())
+}
+
+fn token_candidates(line: &str) -> impl Iterator<Item = &str> {
+    line.split(|ch: char| {
+        !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | '+' | '='))
+    })
+    .filter(|candidate| !candidate.is_empty())
+}
+
+fn trim_token_value(value: &str) -> &str {
+    value.trim_matches(|ch: char| {
+        ch == '"'
+            || ch == '\''
+            || ch == '`'
+            || ch == ','
+            || ch == ';'
+            || ch == ')'
+            || ch == ']'
+            || ch == '}'
+    })
+}
+
+fn looks_like_known_token(token: &str) -> bool {
+    let token = trim_token_value(token);
+    if token.len() == 20
+        && (token.starts_with("AKIA") || token.starts_with("ASIA"))
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    {
+        return true;
+    }
+    if token.starts_with("github_pat_") && token.len() >= 40 {
+        return true;
+    }
+    if ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
+        .iter()
+        .any(|prefix| token.starts_with(prefix))
+        && token.len() >= 30
+    {
+        return true;
+    }
+    if ["xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"]
+        .iter()
+        .any(|prefix| token.starts_with(prefix))
+        && token.len() >= 20
+    {
+        return true;
+    }
+    if token.starts_with("sk-") && token.len() >= 32 {
+        return token_entropy(token) >= 4.0;
+    }
     false
 }
 
-#[cfg(not(feature = "entropy-detection"))]
-fn has_high_entropy_secret(_repo_root: &Path, _path: &str) -> bool {
-    false
+fn is_secret_token_charset(value: &str) -> bool {
+    value.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b'+' | b'=')
+    })
+}
+
+fn token_entropy(value: &str) -> f64 {
+    if value.is_empty() {
+        return 0.0;
+    }
+    let mut counts = [0_usize; 256];
+    for byte in value.bytes() {
+        counts[byte as usize] += 1;
+    }
+    let len = value.len() as f64;
+    counts
+        .into_iter()
+        .filter(|count| *count > 0)
+        .map(|count| {
+            let probability = count as f64 / len;
+            -probability * probability.log2()
+        })
+        .sum()
 }
 
 fn exceeds_threshold(repo_root: &Path, path: &str, threshold_bytes: u64) -> bool {
@@ -326,12 +497,27 @@ large_file_threshold_mib = {threshold_mib}
 
     #[test]
     fn excludes_secret_names() {
-        let decisions = decisions(&[".env", ".env.local", "config/.env.production", "notes.md"]);
+        let decisions = decisions(&[
+            ".env",
+            ".env.local",
+            "config/.env.production",
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
+            "credentials.json",
+            "service-account.json",
+            "firebase-adminsdk-prod.json",
+            "prod.client-secret",
+            "vault.kdbx",
+            "notes.md",
+        ]);
         assert_eq!(decisions[0].decision, PathDecision::Exclude);
         assert_eq!(decisions[0].reason, classification_reason::SECRET_FILENAME);
-        assert_eq!(decisions[1].decision, PathDecision::Exclude);
-        assert_eq!(decisions[2].decision, PathDecision::Exclude);
-        assert_eq!(decisions[3].decision, PathDecision::Include);
+        for decision in &decisions[1..11] {
+            assert_eq!(decision.decision, PathDecision::Exclude);
+            assert_eq!(decision.reason, classification_reason::SECRET_FILENAME);
+        }
+        assert_eq!(decisions[11].decision, PathDecision::Include);
     }
 
     #[test]
@@ -342,6 +528,7 @@ large_file_threshold_mib = {threshold_mib}
             "deploy.pem",
             "deploy.key",
             "id_ed25519",
+            "id_ecdsa",
             "src/main.rs",
         ]);
 
@@ -353,7 +540,12 @@ large_file_threshold_mib = {threshold_mib}
             assert_eq!(decision.decision, PathDecision::Exclude);
             assert_eq!(decision.reason, classification_reason::PRIVATE_KEY_FILENAME);
         }
-        assert_eq!(decisions[5].decision, PathDecision::Include);
+        assert_eq!(decisions[5].decision, PathDecision::Exclude);
+        assert_eq!(
+            decisions[5].reason,
+            classification_reason::PRIVATE_KEY_FILENAME
+        );
+        assert_eq!(decisions[6].decision, PathDecision::Include);
     }
 
     #[test]
@@ -372,6 +564,63 @@ large_file_threshold_mib = {threshold_mib}
             decisions[0].reason,
             classification_reason::PRIVATE_KEY_CONTENT
         );
+    }
+
+    #[test]
+    fn excludes_token_pattern_content() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("notes.txt"),
+            "temporary token ghp_abcdefghijklmnopqrstuvwxyz1234567890\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("aws.txt"),
+            "aws_access_key_id=AKIA1234567890ABCDEF\n",
+        )
+        .unwrap();
+
+        let decisions =
+            classify_untracked_paths(temp.path(), &safe_manifest(), ["notes.txt", "aws.txt"])
+                .unwrap();
+
+        for decision in decisions {
+            assert_eq!(decision.decision, PathDecision::Exclude);
+            assert_eq!(
+                decision.reason,
+                classification_reason::TOKEN_PATTERN_CONTENT
+            );
+        }
+    }
+
+    #[test]
+    fn excludes_high_entropy_secret_assignments() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("config.txt"),
+            "api_key = \"S3cr3tAbCdEfGhIjKlMnOpQrStUvWxYz1234567890+/=\"\n",
+        )
+        .unwrap();
+
+        let decisions =
+            classify_untracked_paths(temp.path(), &safe_manifest(), ["config.txt"]).unwrap();
+
+        assert_eq!(decisions[0].decision, PathDecision::Exclude);
+        assert_eq!(
+            decisions[0].reason,
+            classification_reason::HIGH_ENTROPY_CONTENT
+        );
+    }
+
+    #[test]
+    fn does_not_exclude_low_entropy_secret_assignments() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("config.txt"), "token = \"development\"\n").unwrap();
+
+        let decisions =
+            classify_untracked_paths(temp.path(), &safe_manifest(), ["config.txt"]).unwrap();
+
+        assert_eq!(decisions[0].decision, PathDecision::Include);
     }
 
     #[test]

@@ -1762,10 +1762,10 @@ Conventions:
 
 ### M13.3 Secret Scanning
 
-- [ ] Expand sensitive filename rules.
-- [ ] Add private key header scanner.
-- [ ] Add token pattern scanner.
-- [ ] Add high-entropy heuristic.
+- [x] Expand sensitive filename rules.
+- [x] Add private key header scanner.
+- [x] Add token pattern scanner.
+- [x] Add high-entropy heuristic.
 - [ ] Add user-configured scanner hook.
 - [ ] Add raw secret redaction tests.
 - [ ] Add false-positive override design.
