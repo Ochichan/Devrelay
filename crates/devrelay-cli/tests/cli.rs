@@ -1819,6 +1819,65 @@ fn anchor_init_and_status_report_layout() {
 }
 
 #[test]
+fn project_add_in_anchor_mode_creates_anchor_project_repo() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-anchor-project-add-test-{}",
+        std::process::id()
+    ));
+    let repo = root.join("repo");
+    let config = root.join("config.toml");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    write_manifest(&repo, "anchor-project", "Anchor Project");
+
+    let init = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["anchor", "init", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let add = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args([
+            "project",
+            "add",
+            repo.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let anchor_repo = root
+        .join("anchor")
+        .join("snapshots")
+        .join("anchor-project.git");
+    assert!(anchor_repo.join("HEAD").exists());
+    let bare = Command::new("git")
+        .arg("-C")
+        .arg(&anchor_repo)
+        .args(["rev-parse", "--is-bare-repository"])
+        .output()
+        .unwrap();
+    assert!(bare.status.success());
+    assert_eq!(String::from_utf8_lossy(&bare.stdout).trim(), "true");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn device_commands_show_generated_local_identity() {
     let root = std::env::temp_dir().join(format!("devrelay-device-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

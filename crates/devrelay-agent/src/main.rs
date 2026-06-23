@@ -10,8 +10,8 @@ use devrelay_core::{
 };
 #[cfg(unix)]
 use devrelay_core::{
-    ApplySnapshotParams, ApplySnapshotResult, AuditEventInput, AuditEventType, AuditOutcome,
-    CheckpointCreateParams, CheckpointCreateResult, DiagnosticsExportParams,
+    AnchorSnapshotRepo, ApplySnapshotParams, ApplySnapshotResult, AuditEventInput, AuditEventType,
+    AuditOutcome, CheckpointCreateParams, CheckpointCreateResult, DiagnosticsExportParams,
     DiagnosticsExportResult, EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage,
     EventsSubscribeParams, EventsSubscribeResult, GitRepo, IpcConnection, IpcLimits, IpcTransport,
     Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
@@ -1354,6 +1354,11 @@ fn handle_projects_add(
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
     if let Err(err) = ensure_workspace_not_registered(&config, &entry.local_path) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    if AgentRole::from_anchor_mode(config.anchor_mode) == AgentRole::Anchor
+        && let Err(err) = AnchorSnapshotRepo::open(&state.home, &entry.project_id)
+    {
         return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
     }
     merge_project_registry_entry(&mut config, entry.clone());

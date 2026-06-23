@@ -9,13 +9,13 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(unix)]
 use devrelay_core::AgentRpcClient;
 use devrelay_core::{
-    AgentRole, AnchorLayout, AnchorMode, ApplySnapshotParams, ApplySnapshotResult, AuditEventInput,
-    AuditEventRecord, AuditEventType, AuditOutcome, CheckpointCreateParams, CheckpointCreateResult,
-    DevRelayError, DevRelayHome, DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord,
-    DiagnosticsExportParams, DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole,
-    DiscoveryService, ErrorInfo, FabricIdentityBundle, FabricIdentityStore,
-    GitPerformanceDoctorReport, GitRepo, LineEndingDoctorReport, LocalConfig, LogRedactor,
-    METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
+    AgentRole, AnchorLayout, AnchorMode, AnchorSnapshotRepo, ApplySnapshotParams,
+    ApplySnapshotResult, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
+    CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome, DeviceIdentity,
+    DevicePublicIdentity, DeviceRevocationRecord, DiagnosticsExportParams, DiagnosticsExportResult,
+    DiscoveryAdvertisement, DiscoveryRole, DiscoveryService, ErrorInfo, FabricIdentityBundle,
+    FabricIdentityStore, GitPerformanceDoctorReport, GitRepo, LineEndingDoctorReport, LocalConfig,
+    LogRedactor, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
     METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
     METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
     MetadataDb, PairingSession, PairingStartRequest, PathDecision, PathPortabilityDoctorReport,
@@ -2303,9 +2303,22 @@ fn project_add_direct(
         .get(&project_id)
         .cloned()
         .ok_or_else(|| DevRelayError::Config("project disappeared".to_string()))?;
+    let home = DevRelayHome::resolve()?;
+    ensure_anchor_project_repo_for_config(&home, &local_config, &added.project_id)?;
     local_config.save(&config_path)?;
     ensure_default_session_for_project(&added)?;
     Ok((added, config_path))
+}
+
+fn ensure_anchor_project_repo_for_config(
+    home: &DevRelayHome,
+    config: &LocalConfig,
+    project_id: &str,
+) -> anyhow::Result<()> {
+    if AgentRole::from_anchor_mode(config.anchor_mode) == AgentRole::Anchor {
+        AnchorSnapshotRepo::open(home, project_id)?;
+    }
+    Ok(())
 }
 
 fn project_show_direct(

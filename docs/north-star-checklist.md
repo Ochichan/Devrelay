@@ -886,14 +886,14 @@ Conventions:
 
 ### M5.2 Anchor Snapshot Repos
 
-- [ ] Create anchor project repo on project registration.
-- [ ] Store snapshot refs in anchor repo.
-- [ ] Fetch source snapshot into anchor repo.
-- [ ] Serve target fetch from anchor repo.
-- [ ] Add orphan snapshot scan.
+- [x] Create anchor project repo on project registration.
+- [x] Store snapshot refs in anchor repo.
+- [x] Fetch source snapshot into anchor repo.
+- [x] Serve target fetch from anchor repo.
+- [x] Add orphan snapshot scan.
 - [ ] Add anchor repo maintenance command.
-- [ ] Add anchor repo GC guard.
-- [ ] Add anchor repo tests.
+- [x] Add anchor repo GC guard.
+- [x] Add anchor repo tests.
 
 ### M5.3 Route Selection
 

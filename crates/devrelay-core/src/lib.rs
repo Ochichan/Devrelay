@@ -35,6 +35,7 @@
 //! # Ok::<(), devrelay_core::DevRelayError>(())
 //! ```
 
+mod anchor_snapshot;
 mod audit;
 mod background_checkpoint;
 mod config;
@@ -75,6 +76,7 @@ mod transport_security;
 mod watcher;
 mod wsl_doctor;
 
+pub use anchor_snapshot::{AnchorSnapshotMaintenanceReport, AnchorSnapshotRef, AnchorSnapshotRepo};
 pub use audit::{
     AUDIT_SCHEMA_VERSION, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
 };
