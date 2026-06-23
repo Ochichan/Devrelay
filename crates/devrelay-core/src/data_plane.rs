@@ -3,7 +3,7 @@
 //! These helpers define the ref namespace and object checks that any future
 //! network-facing Git transport must enforce before serving or accepting data.
 
-use crate::{DevRelayError, GitRepo, Result};
+use crate::{DevRelayError, GitRepo, ProjectRegistryIndex, Result, WorkspaceState};
 use serde::{Deserialize, Serialize};
 
 pub const DEVRELAY_REF_NAMESPACE: &str = "refs/devrelay/";
@@ -32,6 +32,37 @@ impl Default for GitDataPlanePolicy {
 pub struct GitDataPlaneRefSpec {
     pub source: String,
     pub destination: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GitDataPlaneOperation {
+    FetchSnapshot,
+    PushSnapshot,
+}
+
+impl GitDataPlaneOperation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FetchSnapshot => "fetch-snapshot",
+            Self::PushSnapshot => "push-snapshot",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GitDataPlaneAuthorizationRequest<'a> {
+    pub project_id: &'a str,
+    pub device_id: &'a str,
+    pub operation: GitDataPlaneOperation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitDataPlaneAuthorization {
+    pub project_id: String,
+    pub device_id: String,
+    pub operation: GitDataPlaneOperation,
+    pub workspace_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +139,60 @@ impl GitDataPlanePolicy {
         }
         Ok(())
     }
+}
+
+pub fn authorize_git_data_plane_project(
+    registry: &ProjectRegistryIndex,
+    request: GitDataPlaneAuthorizationRequest<'_>,
+) -> Result<GitDataPlaneAuthorization> {
+    if request.project_id.is_empty() {
+        return Err(DevRelayError::Config(
+            "data-plane project authorization requires project_id".to_string(),
+        ));
+    }
+    if request.device_id.is_empty() {
+        return Err(DevRelayError::Config(
+            "data-plane project authorization requires device_id".to_string(),
+        ));
+    }
+
+    let project = registry.projects.get(request.project_id).ok_or_else(|| {
+        DevRelayError::Config(format!(
+            "data-plane {} rejected: project {} is not registered",
+            request.operation.as_str(),
+            request.project_id
+        ))
+    })?;
+    let mut workspace_ids = project
+        .workspaces
+        .values()
+        .filter(|workspace| {
+            workspace.project_id == project.project_id
+                && workspace.device_id == request.device_id
+                && matches!(
+                    workspace.state,
+                    WorkspaceState::Active | WorkspaceState::Inactive
+                )
+        })
+        .map(|workspace| workspace.workspace_id.clone())
+        .collect::<Vec<_>>();
+    workspace_ids.sort();
+
+    if workspace_ids.is_empty() {
+        return Err(DevRelayError::Config(format!(
+            "data-plane {} rejected: device {} is not authorized for project {}",
+            request.operation.as_str(),
+            request.device_id,
+            request.project_id
+        )));
+    }
+
+    Ok(GitDataPlaneAuthorization {
+        project_id: project.project_id.clone(),
+        device_id: request.device_id.to_string(),
+        operation: request.operation,
+        workspace_ids,
+    })
 }
 
 pub fn inspect_git_object(
@@ -224,6 +309,8 @@ fn validate_refname(refname: &str, label: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ProjectRegistryEntry, WorkspaceRegistryEntry};
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
 
@@ -237,6 +324,102 @@ mod tests {
         repo.run(&["add", "."]).unwrap();
         repo.run(&["commit", "-m", "base"]).unwrap();
         repo
+    }
+
+    fn registry_with_workspaces() -> ProjectRegistryIndex {
+        ProjectRegistryIndex {
+            projects: BTreeMap::from([(
+                "project-a".to_string(),
+                ProjectRegistryEntry {
+                    project_id: "project-a".to_string(),
+                    display_name: "Project A".to_string(),
+                    local_path: Path::new("/tmp/project-a").to_path_buf(),
+                    manifest_path: None,
+                    remote_url_fingerprint: None,
+                    root_commit_fingerprint: None,
+                    workspaces: BTreeMap::from([
+                        (
+                            "ws-active".to_string(),
+                            WorkspaceRegistryEntry {
+                                workspace_id: "ws-active".to_string(),
+                                project_id: "project-a".to_string(),
+                                device_id: "device-a".to_string(),
+                                local_path: Path::new("/tmp/project-a").to_path_buf(),
+                                platform_profile: "macos-arm64".to_string(),
+                                state: WorkspaceState::Active,
+                                last_seen_head: None,
+                                last_checkpoint_id: None,
+                            },
+                        ),
+                        (
+                            "ws-stale".to_string(),
+                            WorkspaceRegistryEntry {
+                                workspace_id: "ws-stale".to_string(),
+                                project_id: "project-a".to_string(),
+                                device_id: "device-stale".to_string(),
+                                local_path: Path::new("/tmp/project-a-old").to_path_buf(),
+                                platform_profile: "macos-arm64".to_string(),
+                                state: WorkspaceState::Stale,
+                                last_seen_head: None,
+                                last_checkpoint_id: None,
+                            },
+                        ),
+                    ]),
+                },
+            )]),
+        }
+    }
+
+    #[test]
+    fn data_plane_authorization_requires_registered_project_device_workspace() {
+        let registry = registry_with_workspaces();
+
+        let authorization = authorize_git_data_plane_project(
+            &registry,
+            GitDataPlaneAuthorizationRequest {
+                project_id: "project-a",
+                device_id: "device-a",
+                operation: GitDataPlaneOperation::FetchSnapshot,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(authorization.project_id, "project-a");
+        assert_eq!(authorization.device_id, "device-a");
+        assert_eq!(authorization.workspace_ids, vec!["ws-active"]);
+
+        let unknown_project = authorize_git_data_plane_project(
+            &registry,
+            GitDataPlaneAuthorizationRequest {
+                project_id: "project-missing",
+                device_id: "device-a",
+                operation: GitDataPlaneOperation::FetchSnapshot,
+            },
+        )
+        .unwrap_err();
+        assert!(unknown_project.to_string().contains("not registered"));
+
+        let wrong_device = authorize_git_data_plane_project(
+            &registry,
+            GitDataPlaneAuthorizationRequest {
+                project_id: "project-a",
+                device_id: "device-b",
+                operation: GitDataPlaneOperation::PushSnapshot,
+            },
+        )
+        .unwrap_err();
+        assert!(wrong_device.to_string().contains("not authorized"));
+
+        let stale_device = authorize_git_data_plane_project(
+            &registry,
+            GitDataPlaneAuthorizationRequest {
+                project_id: "project-a",
+                device_id: "device-stale",
+                operation: GitDataPlaneOperation::FetchSnapshot,
+            },
+        )
+        .unwrap_err();
+        assert!(stale_device.to_string().contains("not authorized"));
     }
 
     #[test]

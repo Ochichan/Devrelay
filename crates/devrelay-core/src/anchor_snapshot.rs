@@ -5,10 +5,11 @@
 //! serving target fetches or accepting imported source snapshots.
 
 use crate::{
-    DEVRELAY_SNAPSHOT_REF_NAMESPACE, DevRelayError, DevRelayHome, GitDataPlanePolicy,
-    GitDataPlaneRefSpec, GitRepo, GitRepositorySize, Result, SnapshotMetadata, SnapshotStore,
-    StoredSnapshot, ensure_git_object_available, inspect_git_repository_size,
-    verify_git_repository_integrity,
+    DEVRELAY_SNAPSHOT_REF_NAMESPACE, DevRelayError, DevRelayHome, GitDataPlaneAuthorization,
+    GitDataPlaneAuthorizationRequest, GitDataPlaneOperation, GitDataPlanePolicy,
+    GitDataPlaneRefSpec, GitRepo, GitRepositorySize, ProjectRegistryIndex, Result,
+    SnapshotMetadata, SnapshotStore, StoredSnapshot, authorize_git_data_plane_project,
+    ensure_git_object_available, inspect_git_repository_size, verify_git_repository_integrity,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -121,6 +122,19 @@ impl AnchorSnapshotRepo {
         Ok(())
     }
 
+    pub fn import_snapshot_from_repo_authorized(
+        &self,
+        source: &GitRepo,
+        metadata: &SnapshotMetadata,
+        registry: &ProjectRegistryIndex,
+        device_id: &str,
+    ) -> Result<GitDataPlaneAuthorization> {
+        let authorization =
+            self.authorize_device(registry, device_id, GitDataPlaneOperation::PushSnapshot)?;
+        self.import_snapshot_from_repo(source, metadata)?;
+        Ok(authorization)
+    }
+
     pub fn export_snapshot_to_repo(
         &self,
         target: &GitRepo,
@@ -139,6 +153,19 @@ impl AnchorSnapshotRepo {
             &[],
         )?;
         Ok(())
+    }
+
+    pub fn export_snapshot_to_repo_authorized(
+        &self,
+        target: &GitRepo,
+        metadata: &SnapshotMetadata,
+        registry: &ProjectRegistryIndex,
+        device_id: &str,
+    ) -> Result<GitDataPlaneAuthorization> {
+        let authorization =
+            self.authorize_device(registry, device_id, GitDataPlaneOperation::FetchSnapshot)?;
+        self.export_snapshot_to_repo(target, metadata)?;
+        Ok(authorization)
     }
 
     pub fn verify_snapshot_available(&self, metadata: &SnapshotMetadata) -> Result<()> {
@@ -273,6 +300,22 @@ impl AnchorSnapshotRepo {
         self.policy.validate_repository_quota(&size)
     }
 
+    fn authorize_device(
+        &self,
+        registry: &ProjectRegistryIndex,
+        device_id: &str,
+        operation: GitDataPlaneOperation,
+    ) -> Result<GitDataPlaneAuthorization> {
+        authorize_git_data_plane_project(
+            registry,
+            GitDataPlaneAuthorizationRequest {
+                project_id: &self.project_id,
+                device_id,
+                operation,
+            },
+        )
+    }
+
     fn list_snapshot_refs(&self) -> Result<Vec<String>> {
         let namespace = DEVRELAY_SNAPSHOT_REF_NAMESPACE.trim_end_matches('/');
         let raw = self
@@ -358,7 +401,11 @@ fn ensure_bare_repo(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Manifest, SnapshotStore};
+    use crate::{
+        Manifest, ProjectRegistryEntry, ProjectRegistryIndex, SnapshotStore,
+        WorkspaceRegistryEntry, WorkspaceState,
+    };
+    use std::collections::BTreeMap;
     use std::fs;
 
     fn manifest() -> Manifest {
@@ -387,6 +434,35 @@ portable_paths = "strict"
         repo.run(&["add", "."]).unwrap();
         repo.run(&["commit", "-m", "base"]).unwrap();
         repo
+    }
+
+    fn authorized_registry(project_id: &str) -> ProjectRegistryIndex {
+        ProjectRegistryIndex {
+            projects: BTreeMap::from([(
+                project_id.to_string(),
+                ProjectRegistryEntry {
+                    project_id: project_id.to_string(),
+                    display_name: "Anchor Project".to_string(),
+                    local_path: PathBuf::from("/tmp/anchor-project"),
+                    manifest_path: None,
+                    remote_url_fingerprint: None,
+                    root_commit_fingerprint: None,
+                    workspaces: BTreeMap::from([(
+                        "ws-authorized".to_string(),
+                        WorkspaceRegistryEntry {
+                            workspace_id: "ws-authorized".to_string(),
+                            project_id: project_id.to_string(),
+                            device_id: "device-a".to_string(),
+                            local_path: PathBuf::from("/tmp/anchor-project"),
+                            platform_profile: "macos-arm64".to_string(),
+                            state: WorkspaceState::Active,
+                            last_seen_head: None,
+                            last_checkpoint_id: None,
+                        },
+                    )]),
+                },
+            )]),
+        }
     }
 
     #[test]
@@ -419,6 +495,69 @@ portable_paths = "strict"
         anchor
             .export_snapshot_to_repo(&target, &stored.metadata)
             .unwrap();
+        assert!(
+            target
+                .run(&["rev-parse", "--verify", &stored.metadata.work_ref()])
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn anchor_repo_authorized_wrappers_gate_import_and_export_by_project_device() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        let target = init_repo(&target_path);
+        let manifest = manifest();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id).unwrap();
+
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let stored = store.checkpoint(&source, &manifest, false, None).unwrap();
+        let source_store_repo = GitRepo::new(store.snapshot_repo_path());
+        let anchor = AnchorSnapshotRepo::open(&home, &manifest.project_id).unwrap();
+        let registry = authorized_registry(&manifest.project_id);
+
+        let rejected = anchor
+            .import_snapshot_from_repo_authorized(
+                &source_store_repo,
+                &stored.metadata,
+                &registry,
+                "device-b",
+            )
+            .unwrap_err();
+        assert!(rejected.to_string().contains("not authorized"));
+        assert!(
+            GitRepo::new(anchor.repo_path())
+                .run(&["rev-parse", "--verify", &stored.metadata.index_ref()])
+                .is_err()
+        );
+
+        let import_auth = anchor
+            .import_snapshot_from_repo_authorized(
+                &source_store_repo,
+                &stored.metadata,
+                &registry,
+                "device-a",
+            )
+            .unwrap();
+        assert_eq!(import_auth.workspace_ids, vec!["ws-authorized"]);
+
+        let export_rejected = anchor
+            .export_snapshot_to_repo_authorized(&target, &stored.metadata, &registry, "device-b")
+            .unwrap_err();
+        assert!(export_rejected.to_string().contains("not authorized"));
+        assert!(
+            target
+                .run(&["rev-parse", "--verify", &stored.metadata.work_ref()])
+                .is_err()
+        );
+
+        let export_auth = anchor
+            .export_snapshot_to_repo_authorized(&target, &stored.metadata, &registry, "device-a")
+            .unwrap();
+        assert_eq!(export_auth.workspace_ids, vec!["ws-authorized"]);
         assert!(
             target
                 .run(&["rev-parse", "--verify", &stored.metadata.work_ref()])

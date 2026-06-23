@@ -877,7 +877,7 @@ Conventions:
 - [ ] Serve project snapshot bare repo.
 - [x] Restrict fetch to `refs/devrelay/*`.
 - [x] Restrict push to permitted snapshot refs.
-- [ ] Enforce project authorization.
+- [x] Enforce project authorization.
 - [x] Enforce object size limits.
 - [x] Enforce repository quota.
 - [x] Add object availability check.
@@ -971,7 +971,7 @@ Conventions:
 - [ ] Missing chunk blocks apply before lease transfer.
 - [ ] Anchor can serve snapshot after source offline.
 - [x] Partial upload never changes canonical latest.
-- [ ] Data plane enforces project authorization.
+- [x] Data plane enforces project authorization.
 
 ## M6. Background Protection
 
