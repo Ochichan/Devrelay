@@ -5,9 +5,9 @@
 //! whether to create durable snapshot metadata.
 
 use crate::{
-    DebouncedCheckpoint, DevRelayError, DevRelayHome, GitRepo, Manifest, ProjectRegistryEntry,
-    ProtectionStatus, ProtectionStatusEvent, Result, SnapshotCheckpointResult, SnapshotStore,
-    StoredSnapshot, WorkspaceRegistryEntry,
+    AnchorSnapshotRepo, DebouncedCheckpoint, DevRelayError, DevRelayHome, GitRepo, Manifest,
+    ProjectRegistryEntry, ProtectionStatus, ProtectionStatusEvent, Result,
+    SnapshotCheckpointResult, SnapshotStore, StoredSnapshot, WorkspaceRegistryEntry,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -140,7 +140,17 @@ impl BackgroundCheckpointManager {
         workspace: &BackgroundWorkspace,
         checkpoint: &DebouncedCheckpoint,
     ) -> BackgroundCheckpointReport {
-        let result = self.handle_checkpoint_inner(home, workspace, checkpoint);
+        self.handle_checkpoint_with_anchor(home, workspace, checkpoint, None)
+    }
+
+    pub fn handle_checkpoint_with_anchor(
+        &mut self,
+        home: &DevRelayHome,
+        workspace: &BackgroundWorkspace,
+        checkpoint: &DebouncedCheckpoint,
+        anchor_repo: Option<&AnchorSnapshotRepo>,
+    ) -> BackgroundCheckpointReport {
+        let result = self.handle_checkpoint_inner(home, workspace, checkpoint, anchor_repo);
         match result {
             Ok(SnapshotCheckpointResult::Created { snapshot }) => {
                 self.record_created(workspace, checkpoint.source_generation, *snapshot)
@@ -163,6 +173,7 @@ impl BackgroundCheckpointManager {
         home: &DevRelayHome,
         workspace: &BackgroundWorkspace,
         checkpoint: &DebouncedCheckpoint,
+        anchor_repo: Option<&AnchorSnapshotRepo>,
     ) -> Result<SnapshotCheckpointResult> {
         if checkpoint.workspace_id != workspace.workspace_id {
             return Err(DevRelayError::Config(format!(
@@ -188,12 +199,18 @@ impl BackgroundCheckpointManager {
 
         let _status = repo.status()?;
         let mut store = SnapshotStore::open(home, &manifest.project_id)?;
-        store.checkpoint_if_changed(
+        let result = store.checkpoint_if_changed(
             &repo,
             &manifest,
             false,
             Some(format!("background-{}", checkpoint.source_generation)),
-        )
+        )?;
+        if let Some(anchor_repo) = anchor_repo
+            && let SnapshotCheckpointResult::Created { snapshot } = &result
+        {
+            anchor_repo.import_snapshot_from_store(&store, &snapshot.snapshot_id)?;
+        }
+        Ok(result)
     }
 
     fn record_created(
@@ -464,6 +481,34 @@ portable_paths = "strict"
 
         let store = SnapshotStore::open(&home, "bg-project").unwrap();
         assert_eq!(store.list_snapshots().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn background_checkpoint_publishes_created_snapshot_to_anchor_when_available() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        init_repo(&source_path);
+        let workspace = background_workspace(&source_path);
+        let anchor = AnchorSnapshotRepo::open(&home, "bg-project").unwrap();
+        let mut manager = BackgroundCheckpointManager::new();
+
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let report = manager.handle_checkpoint_with_anchor(
+            &home,
+            &workspace,
+            &debounced_checkpoint(1),
+            Some(&anchor),
+        );
+
+        assert_eq!(report.event.status, ProtectionStatus::Protected);
+        let stored = report.snapshot.as_ref().unwrap();
+        anchor.verify_snapshot_available(&stored.metadata).unwrap();
+        assert!(
+            GitRepo::new(anchor.repo_path())
+                .run(&["rev-parse", "--verify", &stored.metadata.work_ref()])
+                .is_ok()
+        );
     }
 
     #[test]

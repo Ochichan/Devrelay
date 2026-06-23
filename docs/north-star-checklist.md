@@ -1008,7 +1008,7 @@ Conventions:
 - [x] Trigger Git status after quiet window.
 - [x] Skip checkpoint if semantic state unchanged.
 - [x] Create local snapshot.
-- [ ] Publish to anchor if available.
+- [x] Publish to anchor if available.
 - [x] Emit protection status event.
 - [x] Avoid notifications for normal success.
 - [x] Surface repeated failures.
