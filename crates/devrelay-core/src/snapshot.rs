@@ -14,7 +14,10 @@ use crate::path_doctor::{
 use crate::platform::{current_platform_key, platform_capabilities_for_key};
 use crate::policy::classify_untracked_paths;
 use crate::snapshot_schema::{SNAPSHOT_ID_PREFIX, SNAPSHOT_SCHEMA_VERSION, calculate_state_hash};
-use crate::{GitRepo, GitStatus, Manifest, PathDecision, SnapshotMetadata};
+use crate::{
+    CasStore, DEFAULT_SIDECAR_CHUNK_BYTES, GitRepo, GitStatus, Manifest, PathDecision,
+    SnapshotMetadata, capture_large_sidecars,
+};
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -63,9 +66,35 @@ impl SnapshotApplyFaultPoint {
 }
 
 pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMetadata> {
+    create_snapshot_inner(repo, manifest, None)
+}
+
+pub fn create_snapshot_with_sidecars(
+    repo: &GitRepo,
+    manifest: &Manifest,
+    cas_store: &CasStore,
+) -> Result<SnapshotMetadata> {
+    create_snapshot_inner(repo, manifest, Some(cas_store))
+}
+
+fn create_snapshot_inner(
+    repo: &GitRepo,
+    manifest: &Manifest,
+    cas_store: Option<&CasStore>,
+) -> Result<SnapshotMetadata> {
     let status = repo.status()?;
     ensure_checkpoint_supported(repo, &status)?;
     let classified = classify_untracked_paths(repo.path(), manifest, status.untracked_paths())?;
+    let sidecars = if let Some(cas_store) = cas_store {
+        capture_large_sidecars(
+            repo.path(),
+            &classified,
+            cas_store,
+            DEFAULT_SIDECAR_CHUNK_BYTES,
+        )?
+    } else {
+        Vec::new()
+    };
     let mut included_untracked = classified
         .iter()
         .filter(|item| item.decision == PathDecision::Include)
@@ -117,6 +146,7 @@ pub fn create_snapshot(repo: &GitRepo, manifest: &Manifest) -> Result<SnapshotMe
         operation_capsule: None,
         included_untracked,
         excluded,
+        sidecars,
         state_hash: String::new(),
         created_at_unix_seconds: unix_seconds(),
     };
@@ -721,6 +751,58 @@ portable_paths = "strict"
         assert_eq!(target_status.counts.unstaged, 1);
         assert_eq!(target_status.counts.untracked, 1);
         assert!(!target_path.join(".env").exists());
+    }
+
+    #[test]
+    fn snapshot_with_sidecars_captures_large_untracked_file_in_cas() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo_path = temp.path().join("repo");
+        let repo = init_repo(&repo_path);
+        commit_base(&repo, &repo_path);
+        let cas = CasStore::open(temp.path().join("cas")).unwrap();
+        let manifest = Manifest::parse(
+            r#"
+schema = 1
+project_id = "12345678"
+name = "demo"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+large_file_threshold_mib = 1
+"#,
+        )
+        .unwrap();
+        let large = vec![7_u8; 1024 * 1024 + 17];
+        fs::write(repo_path.join("large.bin"), &large).unwrap();
+
+        let snapshot = create_snapshot_with_sidecars(&repo, &manifest, &cas).unwrap();
+
+        assert!(snapshot.included_untracked.is_empty());
+        assert!(snapshot.excluded.iter().any(|item| {
+            item.path == "large.bin"
+                && item.reason == crate::classification_reason::LARGE_FILE_THRESHOLD
+        }));
+        assert_eq!(snapshot.sidecars.len(), 1);
+        let sidecar = &snapshot.sidecars[0];
+        assert_eq!(sidecar.logical_path, "large.bin");
+        assert_eq!(
+            sidecar.classification,
+            crate::classification_reason::LARGE_FILE_THRESHOLD
+        );
+        assert_eq!(sidecar.size_bytes, large.len() as u64);
+        assert_eq!(sidecar.chunk_size_bytes, DEFAULT_SIDECAR_CHUNK_BYTES as u64);
+        assert_eq!(sidecar.root_hash, sidecar.cas_manifest_id);
+
+        let manifest = cas.fetch_manifest(&sidecar.cas_manifest_id).unwrap();
+        assert!(manifest.chunks.len() >= 2);
+        let mut reconstructed = Vec::new();
+        for chunk in manifest.chunks {
+            reconstructed.extend(cas.download_chunk(&chunk.hash).unwrap());
+        }
+        assert_eq!(reconstructed, large);
+        assert_eq!(snapshot.state_hash, calculate_state_hash(&snapshot));
+        snapshot.validate().unwrap();
     }
 
     #[test]

@@ -68,6 +68,7 @@ mod route_selection;
 mod rpc;
 mod service;
 mod session;
+mod sidecar;
 mod snapshot;
 mod snapshot_schema;
 mod snapshot_store;
@@ -214,12 +215,13 @@ pub use service::{
 pub use session::{
     SESSION_ID_PREFIX, SessionState, StoredSession, generate_session_id, unix_now_seconds,
 };
+pub use sidecar::{DEFAULT_SIDECAR_CHUNK_BYTES, capture_large_sidecars};
 pub use snapshot::{
     ApplyPlan, SnapshotApplyFaultPoint, VerificationDetails, apply_snapshot,
-    apply_snapshot_with_fault_injection, create_snapshot, plan_apply_snapshot, read_snapshot_file,
-    verify_snapshot, write_snapshot_file,
+    apply_snapshot_with_fault_injection, create_snapshot, create_snapshot_with_sidecars,
+    plan_apply_snapshot, read_snapshot_file, verify_snapshot, write_snapshot_file,
 };
-pub use snapshot_schema::SnapshotMetadata;
+pub use snapshot_schema::{SnapshotMetadata, SnapshotSidecar};
 pub use snapshot_store::{
     SnapshotCheckpointResult, SnapshotPruneResult, SnapshotStore, SnapshotStoreFaultPoint,
     StoredSnapshot,

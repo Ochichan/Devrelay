@@ -926,17 +926,17 @@ Conventions:
 
 ### M5.5 Large Sidecars
 
-- [ ] Detect untracked file over threshold.
-- [ ] Store large accepted file in CAS.
-- [ ] Add content-defined chunking placeholder or fixed chunk first pass.
-- [ ] Bound upload buffer memory.
+- [x] Detect untracked file over threshold.
+- [x] Store large accepted file in CAS.
+- [x] Add content-defined chunking placeholder or fixed chunk first pass.
+- [x] Bound upload buffer memory.
 - [ ] Bound download buffer memory.
-- [ ] Add sidecar root hash.
-- [ ] Add sidecar file mode.
-- [ ] Add sidecar logical path.
-- [ ] Add sidecar classification.
-- [ ] Add sidecar manifest to snapshot metadata.
-- [ ] Add large file round-trip test.
+- [x] Add sidecar root hash.
+- [x] Add sidecar file mode.
+- [x] Add sidecar logical path.
+- [x] Add sidecar classification.
+- [x] Add sidecar manifest to snapshot metadata.
+- [x] Add large file round-trip test.
 - [ ] Add corrupt chunk test.
 - [ ] Add missing chunk test.
 

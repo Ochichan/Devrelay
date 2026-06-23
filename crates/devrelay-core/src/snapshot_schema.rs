@@ -38,8 +38,21 @@ pub struct SnapshotMetadata {
     pub operation_capsule: Option<OperationCapsule>,
     pub included_untracked: Vec<String>,
     pub excluded: Vec<ClassifiedPath>,
+    #[serde(default)]
+    pub sidecars: Vec<SnapshotSidecar>,
     pub state_hash: String,
     pub created_at_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotSidecar {
+    pub logical_path: String,
+    pub file_mode: String,
+    pub classification: String,
+    pub size_bytes: u64,
+    pub chunk_size_bytes: u64,
+    pub root_hash: String,
+    pub cas_manifest_id: String,
 }
 
 impl SnapshotMetadata {
@@ -80,6 +93,55 @@ impl SnapshotMetadata {
                 )));
             }
         }
+        for sidecar in &self.sidecars {
+            sidecar.validate()?;
+        }
+        Ok(())
+    }
+}
+
+impl SnapshotSidecar {
+    pub fn validate(&self) -> Result<()> {
+        for (field, value) in [
+            ("sidecar.logical_path", self.logical_path.as_str()),
+            ("sidecar.file_mode", self.file_mode.as_str()),
+            ("sidecar.classification", self.classification.as_str()),
+            ("sidecar.root_hash", self.root_hash.as_str()),
+            ("sidecar.cas_manifest_id", self.cas_manifest_id.as_str()),
+        ] {
+            if value.is_empty() {
+                return Err(DevRelayError::SnapshotMetadata(format!(
+                    "{field} must not be empty"
+                )));
+            }
+        }
+        if self.logical_path.starts_with('/')
+            || self.logical_path.contains('\\')
+            || self.logical_path.split('/').any(|part| part == "..")
+        {
+            return Err(DevRelayError::SnapshotMetadata(format!(
+                "sidecar logical_path {} must be repository-relative",
+                self.logical_path
+            )));
+        }
+        if self.size_bytes == 0 {
+            return Err(DevRelayError::SnapshotMetadata(format!(
+                "sidecar {} size_bytes must be positive",
+                self.logical_path
+            )));
+        }
+        if self.chunk_size_bytes == 0 {
+            return Err(DevRelayError::SnapshotMetadata(format!(
+                "sidecar {} chunk_size_bytes must be positive",
+                self.logical_path
+            )));
+        }
+        if self.root_hash != self.cas_manifest_id {
+            return Err(DevRelayError::SnapshotMetadata(format!(
+                "sidecar {} root_hash must match cas_manifest_id",
+                self.logical_path
+            )));
+        }
         Ok(())
     }
 }
@@ -103,6 +165,13 @@ pub(crate) fn calculate_state_hash(metadata: &SnapshotMetadata) -> String {
             .then(decision_order(left.decision).cmp(&decision_order(right.decision)))
     });
 
+    let mut sidecars = metadata.sidecars.clone();
+    sidecars.sort_by(|left, right| {
+        left.logical_path
+            .cmp(&right.logical_path)
+            .then(left.cas_manifest_id.cmp(&right.cas_manifest_id))
+    });
+
     let mut hasher = blake3::Hasher::new();
     update_hash_field(&mut hasher, "devrelay.state.v1");
     update_hash_field(&mut hasher, &metadata.project_id);
@@ -120,6 +189,16 @@ pub(crate) fn calculate_state_hash(metadata: &SnapshotMetadata) -> String {
         update_hash_field(&mut hasher, "excluded");
         update_hash_field(&mut hasher, &item.path);
         update_hash_field(&mut hasher, &item.reason);
+    }
+    for sidecar in &sidecars {
+        update_hash_field(&mut hasher, "sidecar");
+        update_hash_field(&mut hasher, &sidecar.logical_path);
+        update_hash_field(&mut hasher, &sidecar.file_mode);
+        update_hash_field(&mut hasher, &sidecar.classification);
+        update_hash_field(&mut hasher, &sidecar.size_bytes.to_string());
+        update_hash_field(&mut hasher, &sidecar.chunk_size_bytes.to_string());
+        update_hash_field(&mut hasher, &sidecar.root_hash);
+        update_hash_field(&mut hasher, &sidecar.cas_manifest_id);
     }
     hasher.finalize().to_hex().to_string()
 }
@@ -287,6 +366,7 @@ mod tests {
             "operation_capsule",
             "included_untracked",
             "excluded",
+            "sidecars",
             "state_hash",
             "created_at_unix_seconds",
         ];
@@ -357,6 +437,27 @@ mod tests {
         second.work_tree_oid = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string();
 
         assert_ne!(calculate_state_hash(&first), calculate_state_hash(&second));
+    }
+
+    #[test]
+    fn state_hash_changes_when_sidecar_manifest_changes() {
+        let first = metadata();
+        let mut second = first.clone();
+        second.sidecars.push(SnapshotSidecar {
+            logical_path: "large.bin".to_string(),
+            file_mode: "100644".to_string(),
+            classification: "large-file-threshold".to_string(),
+            size_bytes: 1024,
+            chunk_size_bytes: 512,
+            root_hash: "b3_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            cas_manifest_id: "b3_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+        });
+
+        assert_ne!(calculate_state_hash(&first), calculate_state_hash(&second));
+        second.state_hash = calculate_state_hash(&second);
+        second.validate().unwrap();
     }
 
     #[test]
