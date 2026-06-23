@@ -862,10 +862,10 @@ Conventions:
 
 ### M4 Exit Gate
 
-- [ ] Pairing requires matching displayed code.
+- [x] Pairing requires matching displayed code.
 - [ ] Revoked device cannot connect.
-- [ ] mDNS TXT records do not leak sensitive data.
-- [ ] Transport tests cover expired, wrong-fabric, and revoked certificates.
+- [x] mDNS TXT records do not leak sensitive data.
+- [x] Transport tests cover expired, wrong-fabric, and revoked certificates.
 - [ ] Control API rejects unauthenticated requests.
 
 ## M5. Data Plane: Git Object Transfer And Sidecar CAS
