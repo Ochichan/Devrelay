@@ -65,6 +65,32 @@ pub(crate) fn reparse_points_in_workspace(_root: &Path) -> io::Result<Vec<PathBu
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_workspace_reports_junction_reparse_point() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let junction = temp.path().join("junction");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("file.txt"), "demo\n").unwrap();
+
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "mklink /J failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let points = reparse_points_in_workspace(temp.path()).unwrap();
+
+        assert_eq!(points, vec![PathBuf::from("junction")]);
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn non_windows_workspace_has_no_reparse_points() {

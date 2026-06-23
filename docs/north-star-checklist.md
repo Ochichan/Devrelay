@@ -1644,7 +1644,7 @@ Conventions:
 - [x] Detect reparse points in workspace.
 - [x] Prevent reparse point traversal during scan.
 - [x] Prevent reparse point traversal during materialization.
-- [ ] Add Windows-specific tests where possible.
+- [x] Add Windows-specific tests where possible.
 
 ### M11.7 WSL/Native Separation
 

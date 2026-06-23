@@ -890,6 +890,35 @@ portable_paths = "strict"
         ensure_snapshot_paths_supported(&source, &snapshot, "linux-gnu-x86_64").unwrap();
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn blocks_windows_reparse_points_before_materialization() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo_path = temp.path().join("repo");
+        let junction_target = temp.path().join("junction-target");
+        let junction = repo_path.join("junction");
+        let repo = init_repo(&repo_path);
+        commit_base(&repo, &repo_path);
+        fs::create_dir(&junction_target).unwrap();
+
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&junction_target)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "mklink /J failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let err = ensure_no_reparse_points_before_materialization(&repo).unwrap_err();
+
+        assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
+        assert!(err.to_string().contains("junction"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn blocks_symlink_materialization_for_targets_without_symlink_support() {
