@@ -1043,20 +1043,20 @@ Conventions:
 
 ### M6.6 Retention And Quota
 
-- [ ] Define hot snapshot retention.
-- [ ] Define hourly thinning.
-- [ ] Define daily thinning.
-- [ ] Protect latest canonical snapshot.
-- [ ] Protect pinned snapshots.
-- [ ] Protect handoff snapshots for configured duration.
-- [ ] Add device cache quota.
-- [ ] Add anchor project quota.
-- [ ] Add free disk warning threshold.
-- [ ] Add free disk hard stop threshold.
-- [ ] Add pruning planner.
+- [x] Define hot snapshot retention.
+- [x] Define hourly thinning.
+- [x] Define daily thinning.
+- [x] Protect latest canonical snapshot.
+- [x] Protect pinned snapshots.
+- [x] Protect handoff snapshots for configured duration.
+- [x] Add device cache quota.
+- [x] Add anchor project quota.
+- [x] Add free disk warning threshold.
+- [x] Add free disk hard stop threshold.
+- [x] Add pruning planner.
 - [ ] Add pruning executor.
-- [ ] Add retention tests.
-- [ ] Add quota tests.
+- [x] Add retention tests.
+- [x] Add quota tests.
 
 ### M6.7 Crash Journal
 

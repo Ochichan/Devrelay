@@ -58,6 +58,7 @@ mod pairing;
 mod path_doctor;
 mod platform;
 mod policy;
+mod retention;
 mod rpc;
 mod service;
 mod session;
@@ -156,6 +157,11 @@ pub use platform::{
     platform_capabilities_for_key, platform_device_scope_key,
 };
 pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
+pub use retention::{
+    HandoffSnapshotProtection, PruningDecision, PruningDecisionAction, PruningPlan,
+    PruningPlanInput, PruningPlanWarning, PruningPlanWarningCode, PruningReason, PruningScope,
+    RetentionKeepReason, RetentionPolicy, SnapshotRetentionEntry, plan_snapshot_pruning,
+};
 #[cfg(unix)]
 pub use rpc::AgentRpcClient;
 pub use rpc::{
