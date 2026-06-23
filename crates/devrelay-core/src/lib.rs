@@ -41,6 +41,7 @@ mod events;
 mod git;
 mod handoff;
 mod home;
+mod identity;
 mod ipc;
 mod lease;
 mod logging;
@@ -74,6 +75,10 @@ pub use handoff::{
     HandoffRecoveryOutcome, HandoffState, generate_handoff_id,
 };
 pub use home::{AnchorLayout, DevRelayHome};
+pub use identity::{
+    DevicePublicIdentity, FABRIC_ID_PREFIX, FabricIdentityBundle, FabricIdentityStore,
+    FabricRootIdentity, RecoveryExportStatus,
+};
 pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 #[cfg(unix)]
 pub use ipc::{UnixIpcConnection, UnixIpcListener};

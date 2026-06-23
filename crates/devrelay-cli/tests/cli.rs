@@ -1467,6 +1467,92 @@ fn device_commands_show_generated_local_identity() {
 }
 
 #[test]
+fn identity_commands_create_public_fabric_identity() {
+    let root = std::env::temp_dir().join(format!("devrelay-identity-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let init = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["identity", "init", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let init_json: serde_json::Value = serde_json::from_slice(&init.stdout).unwrap();
+    let fabric_id = init_json["root"]["fabric_id"].as_str().unwrap();
+    assert!(fabric_id.starts_with("f_"));
+    assert_eq!(
+        init_json["root"]["root_public_key_hex"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+    assert_eq!(
+        init_json["device"]["fabric_id"].as_str().unwrap(),
+        fabric_id
+    );
+    assert_eq!(
+        init_json["device"]["signing_public_key_hex"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+    assert_eq!(
+        init_json["device"]["network_public_key_hex"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+    assert_eq!(init_json["recovery_export"]["available"], false);
+    assert!(
+        root.join("identity")
+            .join("dev-fabric-secret.json")
+            .exists()
+    );
+    assert!(root.join("agent.sqlite").exists());
+
+    let show = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["identity", "show", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        show.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&show.stderr)
+    );
+    let show_json: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(show_json["root"]["fabric_id"].as_str().unwrap(), fabric_id);
+
+    let export = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["identity", "recovery-export", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        export.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&export.stderr)
+    );
+    let export_json: serde_json::Value = serde_json::from_slice(&export.stdout).unwrap();
+    assert_eq!(export_json["available"], false);
+    assert!(
+        export_json["message"]
+            .as_str()
+            .unwrap()
+            .contains("recovery export")
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn project_registry_commands_round_trip() {
     let root = std::env::temp_dir().join(format!(
         "devrelay-project-test-{}-{}",

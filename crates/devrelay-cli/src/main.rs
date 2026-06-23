@@ -11,19 +11,20 @@ use devrelay_core::AgentRpcClient;
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, ApplySnapshotParams, ApplySnapshotResult,
     CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome, DeviceIdentity,
-    DiagnosticsExportParams, DiagnosticsExportResult, ErrorInfo, GitRepo, LocalConfig,
-    METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
-    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
-    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
-    MetadataDb, PathDecision, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
-    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
-    RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
-    RecoverShowResult, ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind,
-    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
-    StoredSession, StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
-    WorkspaceState, apply_snapshot, classify_untracked_paths, create_snapshot,
-    linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
-    read_snapshot_file, workspace_id_for, write_snapshot_file,
+    DiagnosticsExportParams, DiagnosticsExportResult, ErrorInfo, FabricIdentityBundle,
+    FabricIdentityStore, GitRepo, LocalConfig, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
+    METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
+    METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
+    METHOD_STATUS_GET, Manifest, MetadataDb, PathDecision, PatternConfig, PortablePathsPolicy,
+    ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
+    ProjectsRemoveParams, ProjectsShowParams, RecoverListParams, RecoverListResult,
+    RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult, ServiceTemplate,
+    ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetParams,
+    StatusGetResult, StatusSummary, StoredSession, StoredSnapshot, UntrackedPolicy,
+    WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
+    classify_untracked_paths, create_snapshot, linux_systemd_user_template,
+    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file, workspace_id_for,
+    write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -74,6 +75,10 @@ enum Command {
     Devices {
         #[command(subcommand)]
         command: DevicesCommand,
+    },
+    Identity {
+        #[command(subcommand)]
+        command: IdentityCommand,
     },
     Continue {
         #[arg(long)]
@@ -223,6 +228,22 @@ enum DeviceCommand {
 #[derive(Debug, Subcommand)]
 enum DevicesCommand {
     List {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum IdentityCommand {
+    Init {
+        #[arg(long)]
+        json: bool,
+    },
+    Show {
+        #[arg(long)]
+        json: bool,
+    },
+    RecoveryExport {
         #[arg(long)]
         json: bool,
     },
@@ -586,6 +607,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Diagnostics { command } => handle_diagnostics_command(command, &agent_options)?,
         Command::Device { command } => handle_device_command(command)?,
         Command::Devices { command } => handle_devices_command(command)?,
+        Command::Identity { command } => handle_identity_command(command)?,
         Command::Manifest { command } => match command {
             ManifestCommand::Check { path, json } => {
                 let manifest = Manifest::load(&path)
@@ -1029,6 +1051,79 @@ fn handle_devices_command(command: DevicesCommand) -> anyhow::Result<()> {
             render_devices_list(&devices, json)
         }
     }
+}
+
+fn handle_identity_command(command: IdentityCommand) -> anyhow::Result<()> {
+    match command {
+        IdentityCommand::Init { json } => {
+            let (bundle, _registry) = open_identity_bundle(true)?;
+            render_identity_bundle(&bundle, json)
+        }
+        IdentityCommand::Show { json } => {
+            let (bundle, _registry) = open_identity_bundle(false)?;
+            render_identity_bundle(&bundle, json)
+        }
+        IdentityCommand::RecoveryExport { json } => {
+            let status = devrelay_core::RecoveryExportStatus {
+                available: false,
+                message: "recovery export is reserved for M4 key backup".to_string(),
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("recovery export: unavailable");
+                println!("  {}", status.message);
+            }
+            Ok(())
+        }
+    }
+}
+
+fn open_identity_bundle(create: bool) -> anyhow::Result<(FabricIdentityBundle, DeviceRegistry)> {
+    let registry = open_device_registry()?;
+    let home = DevRelayHome::resolve()?;
+    let store = FabricIdentityStore::new(home);
+    let bundle = if create {
+        store.open_or_create(&registry.config)?
+    } else {
+        store.public_bundle_from_store(&registry.config)?
+    };
+    registry.db.upsert_fabric_root_identity(&bundle.root)?;
+    registry.db.upsert_device_public_identity(&bundle.device)?;
+    Ok((bundle, registry))
+}
+
+fn render_identity_bundle(bundle: &FabricIdentityBundle, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(bundle)?);
+    } else {
+        println!(
+            "fabric: {} ({})",
+            bundle.root.fabric_name, bundle.root.fabric_id
+        );
+        println!("  root public key: {}", bundle.root.root_public_key_hex);
+        println!(
+            "device: {} ({})",
+            bundle.device.display_name, bundle.device.device_id
+        );
+        println!(
+            "  signing public key: {}",
+            bundle.device.signing_public_key_hex
+        );
+        println!(
+            "  network public key: {}",
+            bundle.device.network_public_key_hex
+        );
+        println!(
+            "  recovery export: {}",
+            if bundle.recovery_export.available {
+                "available"
+            } else {
+                "unavailable"
+            }
+        );
+    }
+    Ok(())
 }
 
 fn handle_device_command(command: DeviceCommand) -> anyhow::Result<()> {

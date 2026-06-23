@@ -12,6 +12,8 @@ entropy-detection = []
 
 [dependencies]
 blake3.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
 globset.workspace = true
 libc.workspace = true
 rusqlite.workspace = true
@@ -20,3 +22,4 @@ serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 toml.workspace = true
+x25519-dalek.workspace = true

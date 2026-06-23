@@ -758,16 +758,16 @@ Conventions:
 
 ### M4.1 Fabric Identity
 
-- [ ] Select crypto crates.
-- [ ] Generate fabric root key.
-- [ ] Store fabric root key securely in dev mode.
-- [ ] Generate device signing key.
-- [ ] Generate network certificate key.
-- [ ] Store device public identity.
-- [ ] Store root public identity.
-- [ ] Add recovery export placeholder.
-- [ ] Add identity rotation design note.
-- [ ] Add identity serialization tests.
+- [x] Select crypto crates.
+- [x] Generate fabric root key.
+- [x] Store fabric root key securely in dev mode.
+- [x] Generate device signing key.
+- [x] Generate network certificate key.
+- [x] Store device public identity.
+- [x] Store root public identity.
+- [x] Add recovery export placeholder.
+- [x] Add identity rotation design note.
+- [x] Add identity serialization tests.
 
 ### M4.2 Pairing Protocol
 

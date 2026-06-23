@@ -5,10 +5,10 @@
 //! inside a transaction so a failed migration leaves the previous schema intact.
 
 use crate::{
-    DeviceIdentity, HandoffJournalPhase, HandoffJournalRecord, HandoffRecord,
-    HandoffRecoveryOutcome, HandoffState, LeaseRecord, LeaseState, Result, SessionState,
-    SnapshotMetadata, StoredSession, StoredSnapshot, generate_handoff_id, generate_session_id,
-    unix_now_seconds,
+    DeviceIdentity, DevicePublicIdentity, FabricRootIdentity, HandoffJournalPhase,
+    HandoffJournalRecord, HandoffRecord, HandoffRecoveryOutcome, HandoffState, LeaseRecord,
+    LeaseState, Result, SessionState, SnapshotMetadata, StoredSession, StoredSnapshot,
+    generate_handoff_id, generate_session_id, unix_now_seconds,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction};
 use std::collections::BTreeSet;
@@ -214,6 +214,35 @@ CREATE INDEX idx_handoff_journal_project_phase
     ON handoff_journal(project_id, phase, created_at_unix_seconds);
 "#,
     },
+    Migration {
+        version: 6,
+        name: "fabric_identity",
+        sql: r#"
+CREATE TABLE fabric_roots (
+    fabric_id TEXT PRIMARY KEY,
+    fabric_name TEXT NOT NULL,
+    root_public_key_hex TEXT NOT NULL,
+    created_at_unix_seconds INTEGER NOT NULL,
+    rotation_epoch INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE device_public_identities (
+    device_id TEXT PRIMARY KEY,
+    fabric_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    signing_public_key_hex TEXT NOT NULL,
+    network_public_key_hex TEXT NOT NULL,
+    platform_key TEXT NOT NULL,
+    architecture TEXT NOT NULL,
+    created_at_unix_seconds INTEGER NOT NULL,
+    last_seen_unix_seconds INTEGER NOT NULL,
+    FOREIGN KEY(fabric_id) REFERENCES fabric_roots(fabric_id)
+);
+
+CREATE INDEX idx_device_public_identities_fabric
+    ON device_public_identities(fabric_id, device_id);
+"#,
+    },
 ];
 
 pub struct MetadataDb {
@@ -382,6 +411,115 @@ WHERE device_id = ?1
         } else {
             Ok(None)
         }
+    }
+
+    pub fn upsert_fabric_root_identity(&self, root: &FabricRootIdentity) -> Result<()> {
+        self.conn.execute(
+            r#"
+INSERT INTO fabric_roots (
+    fabric_id,
+    fabric_name,
+    root_public_key_hex,
+    created_at_unix_seconds,
+    rotation_epoch
+) VALUES (?1, ?2, ?3, ?4, ?5)
+ON CONFLICT(fabric_id) DO UPDATE SET
+    fabric_name = excluded.fabric_name,
+    root_public_key_hex = excluded.root_public_key_hex,
+    rotation_epoch = excluded.rotation_epoch
+"#,
+            (
+                root.fabric_id.as_str(),
+                root.fabric_name.as_str(),
+                root.root_public_key_hex.as_str(),
+                root.created_at_unix_seconds as i64,
+                root.rotation_epoch as i64,
+            ),
+        )?;
+        Ok(())
+    }
+
+    pub fn get_fabric_root_identity(&self, fabric_id: &str) -> Result<Option<FabricRootIdentity>> {
+        self.conn
+            .query_row(
+                r#"
+SELECT fabric_id,
+       fabric_name,
+       root_public_key_hex,
+       created_at_unix_seconds,
+       rotation_epoch
+FROM fabric_roots
+WHERE fabric_id = ?1
+"#,
+                [fabric_id],
+                fabric_root_identity_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn upsert_device_public_identity(&self, device: &DevicePublicIdentity) -> Result<()> {
+        self.conn.execute(
+            r#"
+INSERT INTO device_public_identities (
+    device_id,
+    fabric_id,
+    display_name,
+    signing_public_key_hex,
+    network_public_key_hex,
+    platform_key,
+    architecture,
+    created_at_unix_seconds,
+    last_seen_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+ON CONFLICT(device_id) DO UPDATE SET
+    fabric_id = excluded.fabric_id,
+    display_name = excluded.display_name,
+    signing_public_key_hex = excluded.signing_public_key_hex,
+    network_public_key_hex = excluded.network_public_key_hex,
+    platform_key = excluded.platform_key,
+    architecture = excluded.architecture,
+    last_seen_unix_seconds = excluded.last_seen_unix_seconds
+"#,
+            (
+                device.device_id.as_str(),
+                device.fabric_id.as_str(),
+                device.display_name.as_str(),
+                device.signing_public_key_hex.as_str(),
+                device.network_public_key_hex.as_str(),
+                device.platform_key.as_str(),
+                device.architecture.as_str(),
+                device.created_at_unix_seconds as i64,
+                device.last_seen_unix_seconds as i64,
+            ),
+        )?;
+        Ok(())
+    }
+
+    pub fn get_device_public_identity(
+        &self,
+        device_id: &str,
+    ) -> Result<Option<DevicePublicIdentity>> {
+        self.conn
+            .query_row(
+                r#"
+SELECT device_id,
+       display_name,
+       fabric_id,
+       signing_public_key_hex,
+       network_public_key_hex,
+       platform_key,
+       architecture,
+       created_at_unix_seconds,
+       last_seen_unix_seconds
+FROM device_public_identities
+WHERE device_id = ?1
+"#,
+                [device_id],
+                device_public_identity_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn ensure_default_session(
@@ -1399,6 +1537,32 @@ fn device_identity_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceI
     })
 }
 
+fn fabric_root_identity_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FabricRootIdentity> {
+    Ok(FabricRootIdentity {
+        fabric_id: row.get(0)?,
+        fabric_name: row.get(1)?,
+        root_public_key_hex: row.get(2)?,
+        created_at_unix_seconds: row.get::<_, i64>(3)?.max(0) as u64,
+        rotation_epoch: row.get::<_, i64>(4)?.max(0) as u64,
+    })
+}
+
+fn device_public_identity_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<DevicePublicIdentity> {
+    Ok(DevicePublicIdentity {
+        device_id: row.get(0)?,
+        display_name: row.get(1)?,
+        fabric_id: row.get(2)?,
+        signing_public_key_hex: row.get(3)?,
+        network_public_key_hex: row.get(4)?,
+        platform_key: row.get(5)?,
+        architecture: row.get(6)?,
+        created_at_unix_seconds: row.get::<_, i64>(7)?.max(0) as u64,
+        last_seen_unix_seconds: row.get::<_, i64>(8)?.max(0) as u64,
+    })
+}
+
 fn stored_session_from_row(row: &Row<'_>) -> rusqlite::Result<StoredSession> {
     let archived_at_unix_seconds = row
         .get::<_, Option<i64>>(6)?
@@ -1613,6 +1777,8 @@ mod tests {
             "leases",
             "handoffs",
             "handoff_journal",
+            "fabric_roots",
+            "device_public_identities",
             "devices",
             "task_runs",
         ] {
@@ -1632,6 +1798,7 @@ mod tests {
         assert!(index_exists(&db, "idx_handoffs_lease_state"));
         assert!(index_exists(&db, "idx_handoff_journal_handoff"));
         assert!(index_exists(&db, "idx_handoff_journal_project_phase"));
+        assert!(index_exists(&db, "idx_device_public_identities_fabric"));
 
         let journal_mode: String = db
             .connection()
@@ -1707,6 +1874,31 @@ mod tests {
         ] {
             assert!(column_exists(&db, "handoff_journal", column), "{column}");
         }
+        for column in [
+            "fabric_id",
+            "fabric_name",
+            "root_public_key_hex",
+            "created_at_unix_seconds",
+            "rotation_epoch",
+        ] {
+            assert!(column_exists(&db, "fabric_roots", column), "{column}");
+        }
+        for column in [
+            "device_id",
+            "fabric_id",
+            "display_name",
+            "signing_public_key_hex",
+            "network_public_key_hex",
+            "platform_key",
+            "architecture",
+            "created_at_unix_seconds",
+            "last_seen_unix_seconds",
+        ] {
+            assert!(
+                column_exists(&db, "device_public_identities", column),
+                "{column}"
+            );
+        }
         assert!(column_exists(&db, "task_runs", "task_run_id"));
         assert!(column_exists(&db, "task_runs", "metadata_json"));
     }
@@ -1768,6 +1960,12 @@ mod tests {
         ));
         assert!(foreign_key_exists(
             &db,
+            "device_public_identities",
+            "fabric_id",
+            "fabric_roots"
+        ));
+        assert!(foreign_key_exists(
+            &db,
             "task_runs",
             "project_id",
             "projects"
@@ -1816,6 +2014,43 @@ mod tests {
 
         let devices = db.list_devices().unwrap();
         assert_eq!(devices, vec![renamed]);
+    }
+
+    #[test]
+    fn stores_public_fabric_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let db = MetadataDb::open(&path).unwrap();
+        let root = FabricRootIdentity {
+            fabric_id: "f_1234567890abcdef12345678".to_string(),
+            fabric_name: "Test Fabric".to_string(),
+            root_public_key_hex: "a".repeat(64),
+            created_at_unix_seconds: 100,
+            rotation_epoch: 0,
+        };
+        let device = DevicePublicIdentity {
+            device_id: "d_1234567890abcdef12345678".to_string(),
+            display_name: "Laptop".to_string(),
+            fabric_id: root.fabric_id.clone(),
+            signing_public_key_hex: "b".repeat(64),
+            network_public_key_hex: "c".repeat(64),
+            platform_key: "macos".to_string(),
+            architecture: "aarch64".to_string(),
+            created_at_unix_seconds: 100,
+            last_seen_unix_seconds: 120,
+        };
+
+        db.upsert_fabric_root_identity(&root).unwrap();
+        db.upsert_device_public_identity(&device).unwrap();
+
+        assert_eq!(
+            db.get_fabric_root_identity(&root.fabric_id).unwrap(),
+            Some(root)
+        );
+        assert_eq!(
+            db.get_device_public_identity(&device.device_id).unwrap(),
+            Some(device)
+        );
     }
 
     #[test]
@@ -2499,7 +2734,7 @@ WHERE snapshot_id = ?1
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 5);
+        assert_eq!(count, 6);
     }
 
     #[test]

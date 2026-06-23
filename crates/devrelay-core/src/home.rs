@@ -105,6 +105,14 @@ impl DevRelayHome {
         self.anchor_dir().join("startup.json")
     }
 
+    pub fn identity_dir(&self) -> PathBuf {
+        self.root.join("identity")
+    }
+
+    pub fn fabric_secret_path(&self) -> PathBuf {
+        self.identity_dir().join("dev-fabric-secret.json")
+    }
+
     pub fn anchor_layout(&self) -> AnchorLayout {
         AnchorLayout {
             data_dir: self.anchor_dir(),
