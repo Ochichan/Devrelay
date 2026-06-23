@@ -1,0 +1,24 @@
+schema = 1
+project_id = "0196d6a8-49f3-7a4f-baf5-71aa8c9f0d21"
+name = "payments-api"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+large_file_threshold_mib = 32
+
+[environment.profiles.posix]
+kind = "nix"
+targets = ["darwin-*", "linux-*"]
+command = ["nix", "develop"]
+healthcheck = ["bash", "-lc", "command -v cargo"]
+
+[tasks.test]
+profile = "posix"
+command = ["cargo", "test", "--workspace"]
+platforms = ["darwin-*", "linux-*"]
+cpu = 4
+memory_mib = 4096
+interactive = false
+cache = "read-write"
+outputs = ["target/test-results/**"]

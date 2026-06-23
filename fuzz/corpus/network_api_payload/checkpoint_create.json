@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "checkpoint.create",
+  "params": {
+    "repo": "/tmp/devrelay-project",
+    "manifest": "/tmp/devrelay-project/devrelay.toml",
+    "label": "seed",
+    "pin": true
+  }
+}

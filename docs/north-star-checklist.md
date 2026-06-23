@@ -1756,7 +1756,7 @@ Conventions:
 - [x] Add fuzz target for path canonicalization.
 - [x] Add fuzz target for CAS manifest parser.
 - [x] Add fuzz target for network API payloads.
-- [ ] Add fuzz corpus seeds.
+- [x] Add fuzz corpus seeds.
 - [ ] Add fuzz run documentation.
 - [ ] Add CI/nightly fuzz plan.
 

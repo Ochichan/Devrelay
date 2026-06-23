@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": "seed-status",
+  "method": "status.get",
+  "params": {
+    "repo": "/tmp/devrelay-project",
+    "manifest": null
+  }
+}
