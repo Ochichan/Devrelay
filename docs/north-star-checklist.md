@@ -1713,24 +1713,24 @@ Conventions:
 
 ### M12.5 Interactive Rebase And Sequencer
 
-- [ ] Detect interactive rebase.
-- [ ] Detect sequencer state.
-- [ ] Capture original HEAD.
-- [ ] Capture onto commit.
-- [ ] Capture todo list.
-- [ ] Capture current step.
-- [ ] Define target Git version compatibility.
+- [x] Detect interactive rebase.
+- [x] Detect sequencer state.
+- [x] Capture original HEAD.
+- [x] Capture onto commit.
+- [x] Capture todo list.
+- [x] Capture current step.
+- [x] Define target Git version compatibility.
 - [ ] Reconstruct operation on target.
-- [ ] Add safe block fallback.
-- [ ] Add operation capsule tests.
-- [ ] Keep feature disabled until tests are exhaustive.
+- [x] Add safe block fallback.
+- [x] Add operation capsule tests.
+- [x] Keep feature disabled until tests are exhaustive.
 
 ### M12 Exit Gate
 
-- [ ] Conflict round-trip preserves staged entries.
-- [ ] Unsupported operations block with recovery options.
-- [ ] Rebase support remains gated until exhaustive tests pass.
-- [ ] Advanced states never silently degrade into normal snapshots.
+- [x] Conflict round-trip preserves staged entries.
+- [x] Unsupported operations block with recovery options.
+- [x] Rebase support remains gated until exhaustive tests pass.
+- [x] Advanced states never silently degrade into normal snapshots.
 
 ## M13. Security, Privacy, And Operations Gate
 

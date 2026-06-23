@@ -753,16 +753,19 @@ portable_paths = "strict"
     }
 
     #[test]
-    fn checkpoint_rejects_rebase_state() {
-        let temp = tempfile::tempdir().unwrap();
-        let source_path = temp.path().join("source");
-        let source = init_repo(&source_path);
-        commit_base(&source, &source_path);
-        fs::create_dir(source.git_dir().unwrap().join("rebase-merge")).unwrap();
+    fn checkpoint_rejects_rebase_and_sequencer_states() {
+        for marker in ["rebase-merge", "rebase-apply", "sequencer"] {
+            let temp = tempfile::tempdir().unwrap();
+            let source_path = temp.path().join("source");
+            let source = init_repo(&source_path);
+            commit_base(&source, &source_path);
+            fs::create_dir(source.git_dir().unwrap().join(marker)).unwrap();
 
-        let err = create_snapshot(&source, &manifest()).unwrap_err();
-        assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
-        assert!(err.to_string().contains("rebase-merge"));
+            let err = create_snapshot(&source, &manifest()).unwrap_err();
+            assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
+            assert!(err.to_string().contains(marker));
+            assert!(err.to_string().contains("finish, abort, or recover"));
+        }
     }
 
     #[test]

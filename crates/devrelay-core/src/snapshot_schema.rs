@@ -133,6 +133,48 @@ fn update_operation_capsule_hash(hasher: &mut blake3::Hasher, capsule: &Operatio
         update_hash_field(hasher, "original-head");
         update_hash_field(hasher, oid);
     }
+    if let Some(progress) = &capsule.operation.progress {
+        update_hash_field(hasher, "operation-progress");
+        update_hash_field(
+            hasher,
+            if progress.interactive {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        if let Some(oid) = &progress.original_head_oid {
+            update_hash_field(hasher, "progress-original-head");
+            update_hash_field(hasher, oid);
+        }
+        if let Some(oid) = &progress.onto_oid {
+            update_hash_field(hasher, "progress-onto");
+            update_hash_field(hasher, oid);
+        }
+        if let Some(head_name) = &progress.head_name {
+            update_hash_field(hasher, "progress-head-name");
+            update_hash_field(hasher, head_name);
+        }
+        for todo in &progress.todo {
+            update_hash_field(hasher, "progress-todo");
+            update_hash_field(hasher, todo);
+        }
+        for done in &progress.done {
+            update_hash_field(hasher, "progress-done");
+            update_hash_field(hasher, done);
+        }
+        if let Some(step) = &progress.current_step {
+            update_hash_field(hasher, "progress-current-step");
+            if let Some(current) = step.current {
+                update_hash_field(hasher, "current");
+                update_hash_field(hasher, &current.to_string());
+            }
+            if let Some(total) = step.total {
+                update_hash_field(hasher, "total");
+                update_hash_field(hasher, &total.to_string());
+            }
+        }
+    }
     for entry in &capsule.unmerged_entries {
         update_hash_field(hasher, "unmerged-entry");
         update_hash_field(hasher, &entry.path);
@@ -325,6 +367,7 @@ mod tests {
                 current_head_oid: "1111111111111111111111111111111111111111".to_string(),
                 operation_oids: vec!["2222222222222222222222222222222222222222".to_string()],
                 original_head_oid: Some("3333333333333333333333333333333333333333".to_string()),
+                progress: None,
             },
             unmerged_entries: vec![UnmergedIndexEntry {
                 path: "conflict.txt".to_string(),

@@ -10,6 +10,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+pub const REBASE_OPERATION_RECONSTRUCTION_ENABLED: bool = false;
+pub const REBASE_OPERATION_MIN_TARGET_GIT_VERSION: Option<&str> = None;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OperationCapsule {
     pub operation: GitOperationMetadata,
@@ -24,6 +27,8 @@ pub struct GitOperationMetadata {
     pub current_head_oid: String,
     pub operation_oids: Vec<String>,
     pub original_head_oid: Option<String>,
+    #[serde(default)]
+    pub progress: Option<GitOperationProgress>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,6 +40,23 @@ pub enum GitOperationKind {
     RebaseMerge,
     RebaseApply,
     Sequencer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitOperationProgress {
+    pub interactive: bool,
+    pub original_head_oid: Option<String>,
+    pub onto_oid: Option<String>,
+    pub head_name: Option<String>,
+    pub todo: Vec<String>,
+    pub done: Vec<String>,
+    pub current_step: Option<GitOperationStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitOperationStep {
+    pub current: Option<u64>,
+    pub total: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -116,12 +138,73 @@ fn capture_operation_metadata(repo: &GitRepo) -> Result<Option<GitOperationMetad
     .find(|(_, marker_path)| git_dir.join(marker_path).exists()) else {
         return Ok(None);
     };
+    let marker = git_dir.join(marker_path);
+    let progress = capture_operation_progress(kind, &marker)?;
+    let original_head_oid = progress
+        .as_ref()
+        .and_then(|progress| progress.original_head_oid.clone())
+        .or(optional_oid_file(&git_dir.join("ORIG_HEAD"))?);
 
     Ok(Some(GitOperationMetadata {
         kind,
         current_head_oid: repo.run(&["rev-parse", "HEAD"])?,
-        operation_oids: marker_oids(&git_dir.join(marker_path))?,
-        original_head_oid: optional_oid_file(&git_dir.join("ORIG_HEAD"))?,
+        operation_oids: marker_oids(&marker)?,
+        original_head_oid,
+        progress,
+    }))
+}
+
+fn capture_operation_progress(
+    kind: GitOperationKind,
+    marker: &std::path::Path,
+) -> Result<Option<GitOperationProgress>> {
+    match kind {
+        GitOperationKind::RebaseMerge | GitOperationKind::RebaseApply => {
+            capture_rebase_progress(marker)
+        }
+        GitOperationKind::Sequencer => capture_sequencer_progress(marker),
+        GitOperationKind::Merge | GitOperationKind::CherryPick | GitOperationKind::Revert => {
+            Ok(None)
+        }
+    }
+}
+
+fn capture_rebase_progress(path: &std::path::Path) -> Result<Option<GitOperationProgress>> {
+    let todo = optional_lines_file(&path.join("git-rebase-todo"))?;
+    let done = optional_lines_file(&path.join("done"))?;
+    let mut current = optional_u64_file(&path.join("msgnum"))?;
+    let mut total = optional_u64_file(&path.join("end"))?;
+    if current.is_none() || total.is_none() {
+        let inferred = infer_step(&done, &todo);
+        current = current.or(inferred.current);
+        total = total.or(inferred.total);
+    }
+
+    Ok(Some(GitOperationProgress {
+        interactive: path.join("interactive").exists(),
+        original_head_oid: optional_oid_file(&path.join("orig-head"))?,
+        onto_oid: optional_oid_file(&path.join("onto"))?,
+        head_name: optional_trimmed_file(&path.join("head-name"))?,
+        todo,
+        done,
+        current_step: (current.is_some() || total.is_some())
+            .then_some(GitOperationStep { current, total }),
+    }))
+}
+
+fn capture_sequencer_progress(path: &std::path::Path) -> Result<Option<GitOperationProgress>> {
+    let todo = optional_lines_file(&path.join("todo"))?;
+    let done = optional_lines_file(&path.join("done"))?;
+    let inferred = infer_step(&done, &todo);
+
+    Ok(Some(GitOperationProgress {
+        interactive: false,
+        original_head_oid: optional_oid_file(&path.join("head"))?,
+        onto_oid: None,
+        head_name: None,
+        todo,
+        done,
+        current_step: (inferred.current.is_some() || inferred.total.is_some()).then_some(inferred),
     }))
 }
 
@@ -137,7 +220,21 @@ fn marker_oids(path: &std::path::Path) -> Result<Vec<String>> {
         .collect())
 }
 
+fn optional_lines_file(path: &std::path::Path) -> Result<Vec<String>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    Ok(fs::read_to_string(path)?
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
 fn optional_oid_file(path: &std::path::Path) -> Result<Option<String>> {
+    optional_trimmed_file(path)
+}
+
+fn optional_trimmed_file(path: &std::path::Path) -> Result<Option<String>> {
     if !path.exists() {
         return Ok(None);
     }
@@ -146,6 +243,35 @@ fn optional_oid_file(path: &std::path::Path) -> Result<Option<String>> {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(ToString::to_string))
+}
+
+fn optional_u64_file(path: &std::path::Path) -> Result<Option<u64>> {
+    let Some(value) = optional_trimmed_file(path)? else {
+        return Ok(None);
+    };
+    Ok(Some(value.parse::<u64>().map_err(|_| {
+        DevRelayError::Config(format!("unexpected numeric Git operation value: {value:?}"))
+    })?))
+}
+
+fn infer_step(done: &[String], todo: &[String]) -> GitOperationStep {
+    let done_count = todo_command_count(done);
+    let todo_count = todo_command_count(todo);
+    let total = done_count + todo_count;
+    GitOperationStep {
+        current: (total > 0).then_some((done_count + 1).min(total)),
+        total: (total > 0).then_some(total),
+    }
+}
+
+fn todo_command_count(lines: &[String]) -> u64 {
+    lines
+        .iter()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty() && !trimmed.starts_with('#')
+        })
+        .count() as u64
 }
 
 fn capture_unmerged_index_entries(repo: &GitRepo) -> Result<Vec<UnmergedIndexEntry>> {
@@ -215,6 +341,9 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::process::{Command, Output};
+
+    const _: () = assert!(!REBASE_OPERATION_RECONSTRUCTION_ENABLED);
+    const _: () = assert!(REBASE_OPERATION_MIN_TARGET_GIT_VERSION.is_none());
 
     #[test]
     fn captures_merge_metadata_and_index_stages() {
@@ -325,6 +454,108 @@ mod tests {
             );
             assert!(capsule.unmerged_entries.is_empty());
         }
+    }
+
+    #[test]
+    fn captures_interactive_rebase_progress_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = init_repo(temp.path());
+        fs::write(temp.path().join("file.txt"), "base\n").unwrap();
+        git(temp.path(), &["add", "file.txt"]);
+        git(temp.path(), &["commit", "-m", "base"]);
+        let head = repo.run(&["rev-parse", "HEAD"]).unwrap();
+        let onto = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let rebase_dir = repo.git_dir().unwrap().join("rebase-merge");
+        fs::create_dir(&rebase_dir).unwrap();
+        fs::write(rebase_dir.join("interactive"), "").unwrap();
+        fs::write(rebase_dir.join("orig-head"), format!("{head}\n")).unwrap();
+        fs::write(rebase_dir.join("onto"), format!("{onto}\n")).unwrap();
+        fs::write(rebase_dir.join("head-name"), "refs/heads/main\n").unwrap();
+        fs::write(rebase_dir.join("done"), format!("pick {head} base\n")).unwrap();
+        fs::write(
+            rebase_dir.join("git-rebase-todo"),
+            format!("# keep\npick {head} second\nfixup {head} third\n"),
+        )
+        .unwrap();
+        fs::write(rebase_dir.join("msgnum"), "2\n").unwrap();
+        fs::write(rebase_dir.join("end"), "3\n").unwrap();
+
+        let capsule = capture_operation_capsule(&repo)
+            .unwrap()
+            .expect("rebase metadata should produce an operation capsule");
+        let progress = capsule
+            .operation
+            .progress
+            .as_ref()
+            .expect("rebase should capture progress metadata");
+
+        assert_eq!(capsule.operation.kind, GitOperationKind::RebaseMerge);
+        assert_eq!(
+            capsule.operation.original_head_oid.as_deref(),
+            Some(head.as_str())
+        );
+        assert!(progress.interactive);
+        assert_eq!(progress.original_head_oid.as_deref(), Some(head.as_str()));
+        assert_eq!(progress.onto_oid.as_deref(), Some(onto));
+        assert_eq!(progress.head_name.as_deref(), Some("refs/heads/main"));
+        assert_eq!(
+            progress.todo,
+            vec![
+                "# keep".to_string(),
+                format!("pick {head} second"),
+                format!("fixup {head} third")
+            ]
+        );
+        assert_eq!(progress.done, vec![format!("pick {head} base")]);
+        assert_eq!(
+            progress.current_step,
+            Some(GitOperationStep {
+                current: Some(2),
+                total: Some(3),
+            })
+        );
+    }
+
+    #[test]
+    fn captures_sequencer_progress_and_keeps_rebase_reconstruction_disabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = init_repo(temp.path());
+        fs::write(temp.path().join("file.txt"), "base\n").unwrap();
+        git(temp.path(), &["add", "file.txt"]);
+        git(temp.path(), &["commit", "-m", "base"]);
+        let head = repo.run(&["rev-parse", "HEAD"]).unwrap();
+        let sequencer_dir = repo.git_dir().unwrap().join("sequencer");
+        fs::create_dir(&sequencer_dir).unwrap();
+        fs::write(sequencer_dir.join("head"), format!("{head}\n")).unwrap();
+        fs::write(sequencer_dir.join("done"), format!("pick {head} base\n")).unwrap();
+        fs::write(
+            sequencer_dir.join("todo"),
+            format!("pick {head} second\n# keep\npick {head} third\n"),
+        )
+        .unwrap();
+
+        let capsule = capture_operation_capsule(&repo)
+            .unwrap()
+            .expect("sequencer metadata should produce an operation capsule");
+        let progress = capsule
+            .operation
+            .progress
+            .as_ref()
+            .expect("sequencer should capture progress metadata");
+
+        assert_eq!(capsule.operation.kind, GitOperationKind::Sequencer);
+        assert_eq!(
+            capsule.operation.original_head_oid.as_deref(),
+            Some(head.as_str())
+        );
+        assert!(!progress.interactive);
+        assert_eq!(
+            progress.current_step,
+            Some(GitOperationStep {
+                current: Some(2),
+                total: Some(3),
+            })
+        );
     }
 
     fn init_repo(root: &Path) -> GitRepo {
