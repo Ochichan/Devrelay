@@ -910,19 +910,19 @@ Conventions:
 
 ### M5.4 CAS Core
 
-- [ ] Define chunk hash format.
-- [ ] Define CAS manifest schema.
-- [ ] Add chunk missing query.
-- [ ] Add chunk upload endpoint.
-- [ ] Add chunk download endpoint.
-- [ ] Verify chunk hash on upload.
-- [ ] Verify chunk hash on download.
-- [ ] Store chunk atomically.
-- [ ] Deduplicate chunks.
-- [ ] Add manifest create endpoint.
-- [ ] Add manifest fetch endpoint.
-- [ ] Add CAS reachability root concept.
-- [ ] Add CAS tests.
+- [x] Define chunk hash format.
+- [x] Define CAS manifest schema.
+- [x] Add chunk missing query.
+- [x] Add chunk upload endpoint.
+- [x] Add chunk download endpoint.
+- [x] Verify chunk hash on upload.
+- [x] Verify chunk hash on download.
+- [x] Store chunk atomically.
+- [x] Deduplicate chunks.
+- [x] Add manifest create endpoint.
+- [x] Add manifest fetch endpoint.
+- [x] Add CAS reachability root concept.
+- [x] Add CAS tests.
 
 ### M5.5 Large Sidecars
 

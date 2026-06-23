@@ -38,6 +38,7 @@
 mod anchor_snapshot;
 mod audit;
 mod background_checkpoint;
+mod cas;
 mod config;
 mod crash_journal;
 mod data_plane;
@@ -85,6 +86,10 @@ pub use background_checkpoint::{
     BackgroundCheckpointManager, BackgroundCheckpointOutcome, BackgroundCheckpointReport,
     BackgroundWorkspace, DEFAULT_BACKGROUND_FAILURE_NOTIFICATION_THRESHOLD,
     WorkspaceCheckpointState,
+};
+pub use cas::{
+    CAS_HASH_PREFIX, CAS_SCHEMA_VERSION, CasChunkHash, CasChunkRecord, CasManifest,
+    CasManifestChunk, CasReachabilityRoot, CasStore, CasUploadResult,
 };
 pub use config::{
     AgentRole, AnchorMode, DEVICE_ID_PREFIX, DeviceIdentity, EditorPreference, ForegroundLoad,
