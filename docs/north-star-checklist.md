@@ -536,7 +536,7 @@ Conventions:
 - [x] Route checkpoint through agent.
 - [x] Route recover through agent.
 - [x] Route apply through agent.
-- [ ] Preserve CLI JSON output compatibility.
+- [x] Preserve CLI JSON output compatibility.
 - [x] Add fallback message when agent is unavailable.
 - [x] Add integration test with spawned agent.
 
