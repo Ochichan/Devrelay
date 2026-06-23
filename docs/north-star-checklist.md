@@ -1803,16 +1803,16 @@ Conventions:
 
 ### M13.7 Diagnostic Bundle
 
-- [ ] Include version/capability.
-- [ ] Include redacted config.
-- [ ] Include recent structured logs.
+- [x] Include version/capability.
+- [x] Include redacted config.
+- [x] Include recent structured logs.
 - [ ] Include state machine records.
 - [ ] Include Git command exit codes.
-- [ ] Include timing metrics.
-- [ ] Exclude source code by default.
-- [ ] Exclude snapshot objects by default.
-- [ ] Add explicit sensitive export option.
-- [ ] Add diagnostic tests.
+- [x] Include timing metrics.
+- [x] Exclude source code by default.
+- [x] Exclude snapshot objects by default.
+- [x] Add explicit sensitive export option.
+- [x] Add diagnostic tests.
 
 ### M13.8 Fault Injection
 

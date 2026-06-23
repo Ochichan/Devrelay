@@ -200,7 +200,19 @@ fn diagnostics_export_uses_agent_and_redacts_bundle_by_default() {
         "bundle should redact DEVRELAY_HOME paths by default"
     );
     let bundle: serde_json::Value = serde_json::from_str(&raw_bundle).unwrap();
+    assert!(bundle["version"].as_str().is_some());
+    assert!(bundle["protocol_version"].as_u64().is_some());
+    assert_eq!(bundle["include_sensitive_paths"], false);
+    assert!(bundle["config"].as_object().is_some());
     assert_eq!(bundle["capabilities"]["structured_logs"], true);
+    assert!(
+        bundle["capabilities"]["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method == "diagnostics.export")
+    );
+    assert!(bundle["timing"]["duration_millis"].as_u64().is_some());
     assert!(
         !bundle["recent_structured_logs"]
             .as_array()
@@ -221,6 +233,41 @@ fn diagnostics_export_uses_agent_and_redacts_bundle_by_default() {
     );
     assert_eq!(bundle["source_code_included"], false);
     assert_eq!(bundle["snapshot_objects_included"], false);
+
+    let sensitive_out = running
+        .root
+        .join("diagnostics")
+        .join("sensitive-bundle.json");
+    let sensitive_output = devrelay()
+        .env("DEVRELAY_HOME", &running.root)
+        .args([
+            "--agent-socket",
+            running.socket.to_str().unwrap(),
+            "diagnostics",
+            "export",
+            "--out",
+            sensitive_out.to_str().unwrap(),
+            "--include-sensitive-paths",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        sensitive_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&sensitive_output.stderr)
+    );
+    let sensitive_exported: serde_json::Value =
+        serde_json::from_slice(&sensitive_output.stdout).unwrap();
+    assert_eq!(sensitive_exported["include_sensitive_paths"], true);
+    assert_eq!(sensitive_exported["source_code_included"], false);
+    assert_eq!(sensitive_exported["snapshot_objects_included"], false);
+    let sensitive_bundle: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sensitive_out).unwrap()).unwrap();
+    assert_eq!(sensitive_bundle["include_sensitive_paths"], true);
+    assert_eq!(sensitive_bundle["source_code_included"], false);
+    assert_eq!(sensitive_bundle["snapshot_objects_included"], false);
 
     running.stop();
 }
