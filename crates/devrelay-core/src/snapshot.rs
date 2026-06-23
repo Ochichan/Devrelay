@@ -6,6 +6,7 @@
 //! verifies HEAD, index tree, work tree, and state hash after materialization.
 
 use crate::error::{DevRelayError, Result};
+use crate::fs_safety::reparse_points_in_workspace;
 use crate::platform::{current_platform_key, platform_capabilities_for_key};
 use crate::policy::classify_untracked_paths;
 use crate::snapshot_schema::{SNAPSHOT_ID_PREFIX, SNAPSHOT_SCHEMA_VERSION, calculate_state_hash};
@@ -136,6 +137,7 @@ pub fn apply_snapshot(
     snapshot: &SnapshotMetadata,
 ) -> Result<VerificationDetails> {
     plan_apply_snapshot(target, source, snapshot)?;
+    ensure_no_reparse_points_before_materialization(target)?;
     ensure_snapshot_materialization_supported(source, snapshot, &current_platform_key())?;
     fetch_snapshot_refs(target, source, snapshot)?;
 
@@ -273,6 +275,22 @@ fn ensure_snapshot_materialization_supported(
     Err(DevRelayError::UnsupportedRepositoryState(format!(
         "target platform {target_platform_key} does not support symlink materialization for: {}",
         symlink_paths.join(", ")
+    )))
+}
+
+fn ensure_no_reparse_points_before_materialization(target: &GitRepo) -> Result<()> {
+    let mut points = reparse_points_in_workspace(target.path())?;
+    if points.is_empty() {
+        return Ok(());
+    }
+    points.sort();
+    let paths = points
+        .iter()
+        .map(|path| path.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(DevRelayError::UnsupportedRepositoryState(format!(
+        "target workspace contains Windows reparse points that DevRelay will not traverse: {paths}"
     )))
 }
 

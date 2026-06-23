@@ -1641,9 +1641,9 @@ Conventions:
 
 ### M11.6 Windows Reparse Points
 
-- [ ] Detect reparse points in workspace.
-- [ ] Prevent reparse point traversal during scan.
-- [ ] Prevent reparse point traversal during materialization.
+- [x] Detect reparse points in workspace.
+- [x] Prevent reparse point traversal during scan.
+- [x] Prevent reparse point traversal during materialization.
 - [ ] Add Windows-specific tests where possible.
 
 ### M11.7 WSL/Native Separation

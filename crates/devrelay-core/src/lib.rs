@@ -40,6 +40,7 @@ mod config;
 mod discovery;
 mod error;
 mod events;
+mod fs_safety;
 mod git;
 mod git_doctor;
 mod handoff;

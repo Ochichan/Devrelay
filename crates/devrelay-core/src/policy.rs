@@ -6,6 +6,7 @@
 //! are excluded to keep local handoffs intentional and reviewable.
 
 use crate::error::Result;
+use crate::fs_safety::{is_traversal_boundary, is_windows_reparse_point};
 use crate::manifest::{Manifest, UntrackedPolicy};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ pub mod classification_reason {
     pub const PRIVATE_KEY_FILENAME: &str = "private-key-filename";
     pub const PRIVATE_KEY_CONTENT: &str = "private-key-content";
     pub const HIGH_ENTROPY_PLACEHOLDER: &str = "high-entropy-placeholder";
+    pub const WINDOWS_REPARSE_POINT: &str = "windows-reparse-point";
     pub const SYMLINK_TARGET_OUTSIDE_WORKSPACE: &str = "symlink-target-outside-workspace";
     pub const MANIFEST_OR_GENERATED_EXCLUDE: &str = "manifest-or-generated-exclude";
     pub const LARGE_FILE_THRESHOLD: &str = "large-file-threshold";
@@ -87,6 +89,9 @@ fn classify_one(
 ) -> ClassifiedPath {
     if let Some(reason) = secret_path_reason(path) {
         return excluded(path, reason);
+    }
+    if path_is_unsupported_windows_reparse_point(repo_root, path) {
+        return excluded(path, classification_reason::WINDOWS_REPARSE_POINT);
     }
     if symlink_target_escapes_workspace(repo_root, path) {
         return excluded(
@@ -189,7 +194,7 @@ fn path_has_private_key_header(repo_root: &Path, path: &str) -> bool {
     let Ok(metadata) = fs::symlink_metadata(&full) else {
         return false;
     };
-    if metadata.file_type().is_symlink() {
+    if is_traversal_boundary(&metadata) {
         return false;
     }
     let Ok(mut file) = File::open(full) else {
@@ -224,10 +229,18 @@ fn exceeds_threshold(repo_root: &Path, path: &str, threshold_bytes: u64) -> bool
     let Ok(metadata) = fs::symlink_metadata(full) else {
         return false;
     };
-    if metadata.file_type().is_symlink() {
+    if is_traversal_boundary(&metadata) {
         return false;
     }
     metadata.is_file() && metadata.len() > threshold_bytes
+}
+
+fn path_is_unsupported_windows_reparse_point(repo_root: &Path, path: &str) -> bool {
+    let full = repo_root.join(PathBuf::from(path));
+    let Ok(metadata) = fs::symlink_metadata(&full) else {
+        return false;
+    };
+    is_windows_reparse_point(&metadata) && !metadata.file_type().is_symlink()
 }
 
 fn symlink_target_escapes_workspace(repo_root: &Path, path: &str) -> bool {
