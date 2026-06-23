@@ -1209,6 +1209,53 @@ large_file_threshold_mib = 1
     }
 
     #[test]
+    fn apply_snapshot_preserves_target_sparse_checkout_policy() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        fs::create_dir_all(source_path.join("src")).unwrap();
+        fs::create_dir_all(source_path.join("docs")).unwrap();
+        fs::write(source_path.join("src/main.rs"), "fn main() {}\n").unwrap();
+        fs::write(source_path.join("docs/readme.md"), "# Docs\n").unwrap();
+        source.run(&["add", "."]).unwrap();
+        source.run(&["commit", "-m", "base"]).unwrap();
+        fs::write(
+            source_path.join("src/main.rs"),
+            "fn main() { println!(\"handoff\"); }\n",
+        )
+        .unwrap();
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+        clone_repo(&source_path, &target_path);
+        let target = GitRepo::new(&target_path);
+        target.run(&["sparse-checkout", "init", "--cone"]).unwrap();
+        target.run(&["sparse-checkout", "set", "src"]).unwrap();
+        let sparse_file = target.git_dir().unwrap().join("info/sparse-checkout");
+        let sparse_before = fs::read_to_string(&sparse_file).unwrap();
+
+        apply_snapshot(&target, &source, &snapshot).unwrap();
+
+        assert_eq!(fs::read_to_string(&sparse_file).unwrap(), sparse_before);
+        assert_eq!(
+            target
+                .run(&["config", "--bool", "core.sparseCheckout"])
+                .unwrap(),
+            "true"
+        );
+        assert_eq!(
+            target
+                .run(&["config", "--bool", "core.sparseCheckoutCone"])
+                .unwrap(),
+            "true"
+        );
+        assert_eq!(
+            fs::read_to_string(target_path.join("src/main.rs")).unwrap(),
+            "fn main() { println!(\"handoff\"); }\n"
+        );
+        assert!(!target_path.join("docs/readme.md").exists());
+    }
+
+    #[test]
     fn apply_fault_injection_preserves_source_and_snapshot_refs() {
         for (fault, label) in [
             (
