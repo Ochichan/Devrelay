@@ -1705,7 +1705,7 @@ Conventions:
 
 - [x] Detect sparse checkout.
 - [x] Capture sparse definition as workspace preference.
-- [ ] Distinguish logical snapshot from sparse view.
+- [x] Distinguish logical snapshot from sparse view.
 - [ ] Fetch missing blobs on demand.
 - [x] Avoid overwriting target sparse policy.
 - [x] Add sparse checkout tests.

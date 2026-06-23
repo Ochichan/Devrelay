@@ -1435,6 +1435,49 @@ large_file_threshold_mib = 1
     }
 
     #[test]
+    fn sparse_source_snapshot_preserves_logical_tree_not_only_sparse_view() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        fs::create_dir_all(source_path.join("src")).unwrap();
+        fs::create_dir_all(source_path.join("docs")).unwrap();
+        fs::write(source_path.join("src/main.rs"), "fn main() {}\n").unwrap();
+        fs::write(source_path.join("docs/readme.md"), "# Docs\n").unwrap();
+        source.run(&["add", "."]).unwrap();
+        source.run(&["commit", "-m", "base"]).unwrap();
+        source.run(&["sparse-checkout", "init", "--cone"]).unwrap();
+        source.run(&["sparse-checkout", "set", "src"]).unwrap();
+        assert!(!source_path.join("docs/readme.md").exists());
+        fs::write(
+            source_path.join("src/main.rs"),
+            "fn main() { println!(\"sparse\"); }\n",
+        )
+        .unwrap();
+
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+        let logical_paths = source
+            .run(&["ls-tree", "-r", "--name-only", &snapshot.work_tree_oid])
+            .unwrap();
+
+        assert!(logical_paths.contains("src/main.rs"));
+        assert!(logical_paths.contains("docs/readme.md"));
+
+        clone_repo(&source_path, &target_path);
+        let target = GitRepo::new(&target_path);
+        apply_snapshot(&target, &source, &snapshot).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(target_path.join("src/main.rs")).unwrap(),
+            "fn main() { println!(\"sparse\"); }\n"
+        );
+        assert_eq!(
+            fs::read_to_string(target_path.join("docs/readme.md")).unwrap(),
+            "# Docs\n"
+        );
+    }
+
+    #[test]
     fn apply_fault_injection_preserves_source_and_snapshot_refs() {
         for (fault, label) in [
             (
