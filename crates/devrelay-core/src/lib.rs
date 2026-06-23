@@ -57,6 +57,7 @@ mod snapshot;
 mod snapshot_schema;
 mod snapshot_store;
 mod storage;
+mod transport_security;
 
 pub use audit::{
     AUDIT_SCHEMA_VERSION, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
@@ -141,4 +142,8 @@ pub use snapshot_store::{SnapshotStore, StoredSnapshot};
 pub use storage::{
     CanonicalPublishRequest, CanonicalPublishResult, InactiveForkPublishRequest,
     InactiveForkPublishResult, MetadataDb, PairingStartRequest,
+};
+pub use transport_security::{
+    CONTROL_ALPN_PROTOCOL, RustlsIdentity, ValidatedDeviceCertificate, build_rustls_client_config,
+    build_rustls_server_config, validate_device_certificate,
 };

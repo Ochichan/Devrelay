@@ -805,21 +805,21 @@ Conventions:
 
 ### M4.4 mTLS Transport
 
-- [ ] Add rustls server config.
-- [ ] Add rustls client config.
+- [x] Add rustls server config.
+- [x] Add rustls client config.
 - [ ] Require TLS for control channel.
-- [ ] Validate device certificate.
-- [ ] Pin fabric root.
-- [ ] Check revocation denylist.
+- [x] Validate device certificate.
+- [x] Pin fabric root.
+- [x] Check revocation denylist.
 - [ ] Add protocol version negotiation.
 - [ ] Add request timestamp.
 - [ ] Add replay nonce.
 - [ ] Add max clock skew policy.
 - [ ] Add connection timeout.
 - [ ] Add request timeout.
-- [ ] Add expired cert test.
-- [ ] Add revoked cert test.
-- [ ] Add wrong fabric test.
+- [x] Add expired cert test.
+- [x] Add revoked cert test.
+- [x] Add wrong fabric test.
 
 ### M4.5 Control API
 
