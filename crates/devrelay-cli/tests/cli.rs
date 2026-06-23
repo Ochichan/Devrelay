@@ -163,6 +163,68 @@ fn agent_install_status_and_uninstall_round_trip() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn diagnostics_export_uses_agent_and_redacts_bundle_by_default() {
+    let mut running = RunningCliAgent::start("devrelay-cli-diagnostics-test");
+    let out = running.root.join("diagnostics").join("bundle.json");
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &running.root)
+        .args([
+            "--agent-socket",
+            running.socket.to_str().unwrap(),
+            "diagnostics",
+            "export",
+            "--out",
+            out.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let exported: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(exported["path"], out.to_str().unwrap());
+    assert_eq!(exported["include_sensitive_paths"], false);
+    assert_eq!(exported["source_code_included"], false);
+    assert_eq!(exported["snapshot_objects_included"], false);
+
+    let raw_bundle = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        !raw_bundle.contains(running.root.to_str().unwrap()),
+        "bundle should redact DEVRELAY_HOME paths by default"
+    );
+    let bundle: serde_json::Value = serde_json::from_str(&raw_bundle).unwrap();
+    assert_eq!(bundle["capabilities"]["structured_logs"], true);
+    assert!(
+        !bundle["recent_structured_logs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        bundle["state_machine_records"]["leases"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        bundle["git_command_exit_codes"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(bundle["source_code_included"], false);
+    assert_eq!(bundle["snapshot_objects_included"], false);
+
+    running.stop();
+}
+
 fn write_manifest(root: &Path, project_id: &str, name: &str) {
     std::fs::write(
         root.join("devrelay.toml"),

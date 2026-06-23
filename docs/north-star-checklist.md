@@ -586,17 +586,17 @@ Conventions:
 
 ### M2.8 Diagnostics
 
-- [ ] Add diagnostic bundle command.
-- [ ] Include version/capability.
-- [ ] Include redacted config.
-- [ ] Include recent structured logs.
-- [ ] Include state machine records placeholder.
-- [ ] Include Git command exit codes.
-- [ ] Include timing data.
-- [ ] Exclude source code by default.
-- [ ] Exclude snapshot objects by default.
-- [ ] Add `--include-sensitive-paths` explicit option.
-- [ ] Add diagnostic redaction tests.
+- [x] Add diagnostic bundle command.
+- [x] Include version/capability.
+- [x] Include redacted config.
+- [x] Include recent structured logs.
+- [x] Include state machine records placeholder.
+- [x] Include Git command exit codes.
+- [x] Include timing data.
+- [x] Exclude source code by default.
+- [x] Exclude snapshot objects by default.
+- [x] Add `--include-sensitive-paths` explicit option.
+- [x] Add diagnostic redaction tests.
 
 ### M2 Exit Gate
 

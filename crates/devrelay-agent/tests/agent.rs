@@ -741,6 +741,32 @@ fn foreground_serves_diagnostics_export_rpc() {
     assert_eq!(exported["result"]["snapshot_objects_included"], false);
     let bundle: serde_json::Value = serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
     assert_eq!(bundle["health"]["status"], "ok");
+    assert!(bundle["capabilities"]["structured_logs"].as_bool().unwrap());
+    assert!(bundle["capabilities"]["event_stream"].as_bool().unwrap());
+    assert!(bundle["timing"]["duration_millis"].as_u64().is_some());
+    assert!(
+        !bundle["recent_structured_logs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        bundle["state_machine_records"]["sessions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        bundle["git_command_exit_codes"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let raw_bundle = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        !raw_bundle.contains(running.root.to_str().unwrap()),
+        "diagnostics should redact DEVRELAY_HOME paths by default"
+    );
     assert_eq!(bundle["source_code_included"], false);
     assert_eq!(bundle["snapshot_objects_included"], false);
     assert!(

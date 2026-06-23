@@ -10,8 +10,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use devrelay_core::AgentRpcClient;
 use devrelay_core::{
     ApplySnapshotParams, ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult,
-    DevRelayError, DevRelayHome, ErrorInfo, GitRepo, LocalConfig, METHOD_APPLY_SNAPSHOT,
-    METHOD_CHECKPOINT_CREATE, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
+    DevRelayError, DevRelayHome, DiagnosticsExportParams, DiagnosticsExportResult, ErrorInfo,
+    GitRepo, LocalConfig, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
+    METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
     METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
     METHOD_STATUS_GET, Manifest, PathDecision, PatternConfig, PortablePathsPolicy,
     ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
@@ -55,6 +56,10 @@ enum Command {
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
+    },
+    Diagnostics {
+        #[command(subcommand)]
+        command: DiagnosticsCommand,
     },
     Continue {
         #[arg(long)]
@@ -155,6 +160,18 @@ enum AgentCommand {
     Status {
         #[arg(long)]
         service_dir: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DiagnosticsCommand {
+    Export {
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        include_sensitive_paths: bool,
         #[arg(long)]
         json: bool,
     },
@@ -477,6 +494,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         },
+        Command::Diagnostics { command } => handle_diagnostics_command(command, &agent_options)?,
         Command::Manifest { command } => match command {
             ManifestCommand::Check { path, json } => {
                 let manifest = Manifest::load(&path)
@@ -724,6 +742,54 @@ fn handle_agent_command(command: AgentCommand) -> anyhow::Result<()> {
                 );
                 println!("  platform: {}", template.kind.label());
                 println!("  service: {}", template.service_path.display());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_diagnostics_command(
+    command: DiagnosticsCommand,
+    agent_options: &AgentOptions,
+) -> anyhow::Result<()> {
+    match command {
+        DiagnosticsCommand::Export {
+            out,
+            include_sensitive_paths,
+            json,
+        } => {
+            if agent_options.direct {
+                return Err(DevRelayError::Ipc(
+                    "diagnostics export is provided by the local DevRelay agent; remove --direct"
+                        .to_string(),
+                )
+                .into());
+            }
+            let result: DiagnosticsExportResult = call_agent(
+                agent_options,
+                METHOD_DIAGNOSTICS_EXPORT,
+                DiagnosticsExportParams {
+                    out,
+                    include_sensitive_paths,
+                },
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("diagnostics exported: {}", result.path.display());
+                println!(
+                    "  sensitive paths: {}",
+                    if result.include_sensitive_paths {
+                        "included"
+                    } else {
+                        "redacted"
+                    }
+                );
+                println!("  source code included: {}", result.source_code_included);
+                println!(
+                    "  snapshot objects included: {}",
+                    result.snapshot_objects_included
+                );
             }
         }
     }

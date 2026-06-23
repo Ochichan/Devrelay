@@ -17,7 +17,7 @@ use devrelay_core::{
     apply_snapshot, classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
 };
 use devrelay_core::{
-    DevRelayHome, LocalConfig, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
+    DevRelayHome, LocalConfig, LogRedactor, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
     METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE,
     METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
     METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE,
@@ -965,33 +965,67 @@ fn handle_diagnostics_export(
             .diagnostics_dir()
             .join(format!("diagnostics-{}.json", unix_seconds()))
     });
-    let config = match state.config.lock() {
+    let started_at_unix_millis = unix_millis();
+    let (config, redactor) = match state.config.lock() {
         Ok(config) => {
-            if params.include_sensitive_paths {
-                match serde_json::to_value(&*config) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
-                    }
-                }
+            let redactor = if params.include_sensitive_paths {
+                LogRedactor::new()
             } else {
-                match serde_json::to_value(config.redacted_for_diagnostics()) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
-                    }
+                LogRedactor::for_diagnostics(diagnostic_local_paths(&state.home, &config))
+            };
+            let config = if params.include_sensitive_paths {
+                serde_json::to_value(&*config)
+            } else {
+                serde_json::to_value(config.redacted_for_diagnostics())
+            };
+            match config {
+                Ok(value) => (value, redactor),
+                Err(err) => {
+                    return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
                 }
             }
         }
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
+    let recent_logs = match recent_structured_logs(&state.home, &redactor, 50) {
+        Ok(logs) => logs,
+        Err(err) => vec![format!("failed to read recent logs: {err}")],
+    };
+    let health = match serde_json::to_value(state.health()) {
+        Ok(health) => {
+            if params.include_sensitive_paths {
+                health
+            } else {
+                redact_json_value(health, &redactor)
+            }
+        }
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let finished_at_unix_millis = unix_millis();
     let bundle = serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "protocol_version": RPC_PROTOCOL_VERSION,
+        "capabilities": {
+            "methods": AgentState::supported_methods(),
+            "event_stream": true,
+            "structured_logs": true,
+        },
         "generated_at_unix_seconds": unix_seconds(),
-        "health": state.health(),
+        "timing": {
+            "started_at_unix_millis": started_at_unix_millis,
+            "finished_at_unix_millis": finished_at_unix_millis,
+            "duration_millis": finished_at_unix_millis.saturating_sub(started_at_unix_millis),
+        },
+        "health": health,
         "config": config,
         "methods": AgentState::supported_methods(),
+        "recent_structured_logs": recent_logs,
+        "state_machine_records": {
+            "sessions": [],
+            "leases": [],
+            "handoffs": [],
+        },
+        "git_command_exit_codes": [],
         "include_sensitive_paths": params.include_sensitive_paths,
         "source_code_included": false,
         "snapshot_objects_included": false,
@@ -1019,6 +1053,63 @@ fn handle_diagnostics_export(
     match serde_json::to_value(result) {
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn diagnostic_local_paths(home: &DevRelayHome, config: &LocalConfig) -> Vec<PathBuf> {
+    let mut paths = vec![home.root().to_path_buf(), home.agent_socket_path()];
+    for project in config.project_registry.projects.values() {
+        paths.push(project.local_path.clone());
+        if let Some(manifest_path) = &project.manifest_path {
+            paths.push(manifest_path.clone());
+        }
+        for workspace in project.workspaces.values() {
+            paths.push(workspace.local_path.clone());
+        }
+    }
+    paths
+}
+
+#[cfg(unix)]
+fn recent_structured_logs(
+    home: &DevRelayHome,
+    redactor: &LogRedactor,
+    max_lines: usize,
+) -> anyhow::Result<Vec<String>> {
+    let path = home.log_dir().join("agent.log");
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err.into()),
+    };
+    let mut lines = raw
+        .lines()
+        .rev()
+        .take(max_lines)
+        .map(|line| redactor.redact_text(line))
+        .collect::<Vec<_>>();
+    lines.reverse();
+    Ok(lines)
+}
+
+#[cfg(unix)]
+fn redact_json_value(value: serde_json::Value, redactor: &LogRedactor) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(value) => serde_json::Value::String(redactor.redact_text(&value)),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .into_iter()
+                .map(|value| redact_json_value(value, redactor))
+                .collect(),
+        ),
+        serde_json::Value::Object(values) => serde_json::Value::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| (key, redact_json_value(value, redactor)))
+                .collect(),
+        ),
+        value => value,
     }
 }
 
@@ -1493,6 +1584,16 @@ fn unix_seconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(unix)]
+fn unix_millis() -> u64 {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX));
+    millis as u64
 }
 
 fn install_shutdown_handler() -> anyhow::Result<Arc<AtomicBool>> {
