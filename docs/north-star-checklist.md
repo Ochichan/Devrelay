@@ -600,12 +600,12 @@ Conventions:
 
 ### M2 Exit Gate
 
-- [ ] CLI can operate entirely through the agent.
-- [ ] Agent restart preserves project and snapshot state.
-- [ ] IPC access is scoped to the local user.
-- [ ] Event stream reconnect works.
-- [ ] Diagnostic bundle excludes source code by default.
-- [ ] Agent tests pass in CI.
+- [x] CLI can operate entirely through the agent.
+- [x] Agent restart preserves project and snapshot state.
+- [x] IPC access is scoped to the local user.
+- [x] Event stream reconnect works.
+- [x] Diagnostic bundle excludes source code by default.
+- [x] Agent tests pass in CI.
 
 ## M3. Anchor Metadata And Single-Writer Lease
 

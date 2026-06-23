@@ -394,6 +394,84 @@ fn foreground_serves_checkpoint_create_and_snapshots_list_rpc() {
 
 #[cfg(unix)]
 #[test]
+fn foreground_restart_preserves_project_and_snapshot_state() {
+    use devrelay_core::{IpcLimits, UnixIpcConnection};
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-restart-test");
+    let root = running.root.clone();
+    let repo = running.root.join("restart-project");
+    create_manifest_repo(&repo, "12121212", "Restart Project");
+
+    let added = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "restart-project-add",
+            "method": "projects.add",
+            "params": {
+                "path": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+    assert_eq!(added["result"]["project"]["project_id"], "12121212");
+
+    std::fs::write(repo.join("README.md"), "base\nrestart\n").unwrap();
+    let checkpoint = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "restart-checkpoint",
+            "method": "checkpoint.create",
+            "params": {
+                "repo": repo,
+                "manifest": repo.join("devrelay.toml"),
+                "label": "before restart"
+            }
+        }),
+    );
+    let snapshot_id = checkpoint["result"]["checkpoint"]["snapshot_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    running.stop_process();
+    let mut restarted = RunningAgent::start_existing(root);
+
+    let shown = rpc_call(
+        &mut UnixIpcConnection::connect(&restarted.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "restart-project-show",
+            "method": "projects.show",
+            "params": { "id_or_name": "Restart Project" }
+        }),
+    );
+    assert_eq!(shown["result"]["project"]["project_id"], "12121212");
+
+    let snapshots = rpc_call(
+        &mut UnixIpcConnection::connect(&restarted.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "restart-snapshots",
+            "method": "snapshots.list",
+            "params": { "project": "12121212" }
+        }),
+    );
+    assert!(
+        snapshots["result"]["snapshots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|snapshot| snapshot["snapshot_id"] == snapshot_id)
+    );
+
+    restarted.stop();
+}
+
+#[cfg(unix)]
+#[test]
 fn foreground_streams_events_and_replays_after_reconnect() {
     use devrelay_core::{
         EventSequence, EventStreamMessage, EventType, IpcConnection, IpcLimits, UnixIpcConnection,
@@ -864,15 +942,26 @@ struct RunningAgent {
 #[cfg(unix)]
 impl RunningAgent {
     fn start(name: &str) -> Self {
+        let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        Self::start_at(root, true)
+    }
+
+    fn start_existing(root: std::path::PathBuf) -> Self {
+        Self::start_at(root, false)
+    }
+
+    fn start_at(root: std::path::PathBuf, reset: bool) -> Self {
         use std::os::unix::fs::FileTypeExt;
         use std::process::Stdio;
         use std::time::{Duration, Instant};
 
-        let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
         let config = root.join("config.toml");
         let socket = root.join("agent.sock");
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir(&root).unwrap();
+        if reset {
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        std::fs::create_dir_all(&root).unwrap();
+        let _ = std::fs::remove_file(&socket);
 
         let mut child = agent()
             .env("DEVRELAY_HOME", &root)
@@ -910,9 +999,13 @@ impl RunningAgent {
         );
     }
 
-    fn stop(&mut self) {
+    fn stop_process(&mut self) {
         self.child.kill().ok();
         let _ = self.child.wait();
+    }
+
+    fn stop(&mut self) {
+        self.stop_process();
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
