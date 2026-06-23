@@ -7,6 +7,10 @@
 
 use crate::error::{DevRelayError, Result};
 use crate::fs_safety::reparse_points_in_workspace;
+use crate::path_doctor::{
+    PathEntry, PathPortabilityIssue, PathPortabilityIssueCode, PathPortabilityPathSource,
+    analyze_path_entries,
+};
 use crate::platform::{current_platform_key, platform_capabilities_for_key};
 use crate::policy::classify_untracked_paths;
 use crate::snapshot_schema::{SNAPSHOT_ID_PREFIX, SNAPSHOT_SCHEMA_VERSION, calculate_state_hash};
@@ -137,8 +141,10 @@ pub fn apply_snapshot(
     snapshot: &SnapshotMetadata,
 ) -> Result<VerificationDetails> {
     plan_apply_snapshot(target, source, snapshot)?;
+    let target_platform_key = current_platform_key();
     ensure_no_reparse_points_before_materialization(target)?;
-    ensure_snapshot_materialization_supported(source, snapshot, &current_platform_key())?;
+    ensure_snapshot_paths_supported(source, snapshot, &target_platform_key)?;
+    ensure_snapshot_materialization_supported(source, snapshot, &target_platform_key)?;
     fetch_snapshot_refs(target, source, snapshot)?;
 
     if let Some(branch) = &snapshot.branch {
@@ -278,6 +284,74 @@ fn ensure_snapshot_materialization_supported(
     )))
 }
 
+fn ensure_snapshot_paths_supported(
+    repo: &GitRepo,
+    snapshot: &SnapshotMetadata,
+    target_platform_key: &str,
+) -> Result<()> {
+    let target_capabilities = platform_capabilities_for_key(target_platform_key);
+    let mut entries = path_entries_in_tree(repo, &snapshot.index_tree_oid)?;
+    entries.extend(path_entries_in_tree(repo, &snapshot.work_tree_oid)?);
+    let mut issues = analyze_path_entries(&entries, &target_capabilities)
+        .into_iter()
+        .filter(|issue| snapshot_path_issue_blocks_target(issue, target_platform_key))
+        .collect::<Vec<_>>();
+
+    if issues.is_empty() {
+        return Ok(());
+    }
+
+    issues.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(issue_code_label(left.code).cmp(issue_code_label(right.code)))
+    });
+    issues.dedup_by(|left, right| left.code == right.code && left.path == right.path);
+    let summary = issues
+        .iter()
+        .map(|issue| format!("{} ({})", issue.path, issue_code_label(issue.code)))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Err(DevRelayError::UnsupportedRepositoryState(format!(
+        "target platform {target_platform_key} cannot materialize unsafe snapshot paths: {summary}"
+    )))
+}
+
+fn snapshot_path_issue_blocks_target(
+    issue: &PathPortabilityIssue,
+    target_platform_key: &str,
+) -> bool {
+    let target_capabilities = platform_capabilities_for_key(target_platform_key);
+    match issue.code {
+        PathPortabilityIssueCode::CaseFoldCollision
+        | PathPortabilityIssueCode::UnicodeNormalizationCollision => {
+            !target_capabilities.case_sensitive_paths
+        }
+        PathPortabilityIssueCode::WindowsReservedName
+        | PathPortabilityIssueCode::WindowsTrailingDotOrSpace
+        | PathPortabilityIssueCode::WindowsInvalidCharacter
+        | PathPortabilityIssueCode::PathLengthBudget => {
+            target_platform_key.starts_with("windows-native-")
+        }
+        PathPortabilityIssueCode::SymlinkUnsupportedOnTarget => false,
+    }
+}
+
+fn issue_code_label(code: PathPortabilityIssueCode) -> &'static str {
+    match code {
+        PathPortabilityIssueCode::CaseFoldCollision => "case-fold-collision",
+        PathPortabilityIssueCode::UnicodeNormalizationCollision => {
+            "unicode-normalization-collision"
+        }
+        PathPortabilityIssueCode::WindowsReservedName => "windows-reserved-name",
+        PathPortabilityIssueCode::WindowsTrailingDotOrSpace => "windows-trailing-dot-or-space",
+        PathPortabilityIssueCode::WindowsInvalidCharacter => "windows-invalid-character",
+        PathPortabilityIssueCode::PathLengthBudget => "path-length-budget",
+        PathPortabilityIssueCode::SymlinkUnsupportedOnTarget => "symlink-unsupported-on-target",
+    }
+}
+
 fn ensure_no_reparse_points_before_materialization(target: &GitRepo) -> Result<()> {
     let mut points = reparse_points_in_workspace(target.path())?;
     if points.is_empty() {
@@ -292,6 +366,25 @@ fn ensure_no_reparse_points_before_materialization(target: &GitRepo) -> Result<(
     Err(DevRelayError::UnsupportedRepositoryState(format!(
         "target workspace contains Windows reparse points that DevRelay will not traverse: {paths}"
     )))
+}
+
+fn path_entries_in_tree(repo: &GitRepo, treeish: &str) -> Result<Vec<PathEntry>> {
+    let raw = repo.run(&["ls-tree", "-r", "-z", treeish])?;
+    let mut entries = Vec::new();
+    for record in raw.split('\0').filter(|record| !record.is_empty()) {
+        let Some((metadata, path)) = record.split_once('\t') else {
+            return Err(DevRelayError::Config(format!(
+                "unexpected git ls-tree record: {record:?}"
+            )));
+        };
+        let mode = metadata.split_whitespace().next().unwrap_or_default();
+        entries.push(PathEntry {
+            path: path.replace('\\', "/"),
+            source: PathPortabilityPathSource::Tracked,
+            symlink: mode == "120000",
+        });
+    }
+    Ok(entries)
 }
 
 fn symlink_paths_in_tree(repo: &GitRepo, treeish: &str) -> Result<Vec<String>> {
@@ -760,6 +853,41 @@ portable_paths = "strict"
 
         assert!(matches!(err, DevRelayError::Verification(_)));
         assert_eq!(err.code(), "DR-APPLY-VERIFICATION-MISMATCH");
+    }
+
+    #[test]
+    fn blocks_windows_unsafe_snapshot_paths_before_materialization() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("CON.txt"), "reserved\n").unwrap();
+        source.run(&["add", "CON.txt"]).unwrap();
+        fs::write(source_path.join("scratch?.txt"), "accepted untracked\n").unwrap();
+
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+        let err = ensure_snapshot_paths_supported(&source, &snapshot, "windows-native-x86_64")
+            .unwrap_err();
+
+        assert!(matches!(err, DevRelayError::UnsupportedRepositoryState(_)));
+        assert!(err.to_string().contains("CON.txt"));
+        assert!(err.to_string().contains("windows-reserved-name"));
+        assert!(err.to_string().contains("scratch?.txt"));
+        assert!(err.to_string().contains("windows-invalid-character"));
+    }
+
+    #[test]
+    fn allows_windows_specific_path_names_on_non_windows_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("CON.txt"), "reserved on windows only\n").unwrap();
+        source.run(&["add", "CON.txt"]).unwrap();
+
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+
+        ensure_snapshot_paths_supported(&source, &snapshot, "linux-gnu-x86_64").unwrap();
     }
 
     #[cfg(unix)]

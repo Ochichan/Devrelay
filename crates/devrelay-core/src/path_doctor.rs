@@ -51,10 +51,10 @@ pub enum PathPortabilityPathSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct PathEntry {
-    path: String,
-    source: PathPortabilityPathSource,
-    symlink: bool,
+pub(crate) struct PathEntry {
+    pub(crate) path: String,
+    pub(crate) source: PathPortabilityPathSource,
+    pub(crate) symlink: bool,
 }
 
 pub fn run_path_portability_doctor(
@@ -122,7 +122,7 @@ fn accepted_untracked_path_entries(repo: &GitRepo, manifest: &Manifest) -> Resul
         .collect())
 }
 
-fn analyze_path_entries(
+pub(crate) fn analyze_path_entries(
     entries: &[PathEntry],
     target_capabilities: &PlatformCapabilities,
 ) -> Vec<PathPortabilityIssue> {

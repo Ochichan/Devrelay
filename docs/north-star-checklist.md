@@ -1657,10 +1657,10 @@ Conventions:
 
 ### M11 Exit Gate
 
-- [ ] Unsafe paths block before target apply.
-- [ ] Windows native and WSL are separate devices.
+- [x] Unsafe paths block before target apply.
+- [x] Windows native and WSL are separate devices.
 - [ ] Symlink/reparse traversal tests pass.
-- [ ] Line-ending verification uses Git semantics.
+- [x] Line-ending verification uses Git semantics.
 
 ## M12. Advanced Git States
 
