@@ -6,10 +6,11 @@
 
 use crate::{
     DEVRELAY_SNAPSHOT_REF_NAMESPACE, DevRelayError, DevRelayHome, GitDataPlaneAuthorization,
-    GitDataPlaneAuthorizationRequest, GitDataPlaneOperation, GitDataPlanePolicy,
-    GitDataPlaneRefSpec, GitRepo, GitRepositorySize, ProjectRegistryIndex, Result,
-    SnapshotMetadata, SnapshotStore, StoredSnapshot, authorize_git_data_plane_project,
-    ensure_git_object_available, inspect_git_repository_size, verify_git_repository_integrity,
+    GitDataPlaneAuthorizationRequest, GitDataPlaneImplementationStrategy, GitDataPlaneOperation,
+    GitDataPlanePolicy, GitDataPlaneRefSpec, GitDataPlaneServePlan, GitRepo, GitRepositorySize,
+    ProjectRegistryIndex, Result, SnapshotMetadata, SnapshotStore, StoredSnapshot,
+    authorize_git_data_plane_project, ensure_git_object_available, inspect_git_repository_size,
+    verify_git_repository_integrity,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -166,6 +167,35 @@ impl AnchorSnapshotRepo {
             self.authorize_device(registry, device_id, GitDataPlaneOperation::FetchSnapshot)?;
         self.export_snapshot_to_repo(target, metadata)?;
         Ok(authorization)
+    }
+
+    pub fn serve_snapshot_bare_repo_authorized(
+        &self,
+        metadata: &SnapshotMetadata,
+        registry: &ProjectRegistryIndex,
+        device_id: &str,
+    ) -> Result<GitDataPlaneServePlan> {
+        let authorization =
+            self.authorize_device(registry, device_id, GitDataPlaneOperation::FetchSnapshot)?;
+        self.validate_snapshot_metadata(metadata)?;
+        self.ensure_snapshot_objects(metadata)?;
+        Ok(GitDataPlaneServePlan {
+            strategy: GitDataPlaneImplementationStrategy::LocalBareRepo,
+            authorization,
+            project_id: self.project_id.clone(),
+            repo_path: self.repo_path.clone(),
+            allowed_ref_namespace: self.policy.allowed_ref_namespace.clone(),
+            refspecs: vec![
+                GitDataPlaneRefSpec {
+                    source: metadata.index_ref(),
+                    destination: metadata.index_ref(),
+                },
+                GitDataPlaneRefSpec {
+                    source: metadata.work_ref(),
+                    destination: metadata.work_ref(),
+                },
+            ],
+        })
     }
 
     pub fn verify_snapshot_available(&self, metadata: &SnapshotMetadata) -> Result<()> {
@@ -402,8 +432,8 @@ fn ensure_bare_repo(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{
-        Manifest, ProjectRegistryEntry, ProjectRegistryIndex, SnapshotStore,
-        WorkspaceRegistryEntry, WorkspaceState,
+        DEVRELAY_REF_NAMESPACE, Manifest, ProjectRegistryEntry, ProjectRegistryIndex,
+        SnapshotStore, WorkspaceRegistryEntry, WorkspaceState,
     };
     use std::collections::BTreeMap;
     use std::fs;
@@ -600,6 +630,59 @@ portable_paths = "strict"
             target
                 .run(&["rev-parse", "--verify", &stored.metadata.work_ref()])
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn anchor_repo_serves_authorized_project_snapshot_bare_repo_plan() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        let manifest = manifest();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id).unwrap();
+
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let stored = store.checkpoint(&source, &manifest, false, None).unwrap();
+        let anchor = AnchorSnapshotRepo::open(&home, &manifest.project_id).unwrap();
+        anchor
+            .import_snapshot_from_store(&store, &stored.snapshot_id)
+            .unwrap();
+        let registry = authorized_registry(&manifest.project_id);
+
+        let rejected = anchor
+            .serve_snapshot_bare_repo_authorized(&stored.metadata, &registry, "device-b")
+            .unwrap_err();
+        assert!(rejected.to_string().contains("not authorized"));
+
+        let plan = anchor
+            .serve_snapshot_bare_repo_authorized(&stored.metadata, &registry, "device-a")
+            .unwrap();
+
+        assert_eq!(
+            plan.strategy,
+            GitDataPlaneImplementationStrategy::LocalBareRepo
+        );
+        assert_eq!(plan.project_id, manifest.project_id);
+        assert_eq!(
+            plan.authorization.operation,
+            GitDataPlaneOperation::FetchSnapshot
+        );
+        assert_eq!(plan.authorization.workspace_ids, vec!["ws-authorized"]);
+        assert_eq!(plan.repo_path, anchor.repo_path());
+        assert_eq!(plan.allowed_ref_namespace, DEVRELAY_REF_NAMESPACE);
+        assert_eq!(
+            plan.refspecs,
+            vec![
+                GitDataPlaneRefSpec {
+                    source: stored.metadata.index_ref(),
+                    destination: stored.metadata.index_ref(),
+                },
+                GitDataPlaneRefSpec {
+                    source: stored.metadata.work_ref(),
+                    destination: stored.metadata.work_ref(),
+                },
+            ]
         );
     }
 

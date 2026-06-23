@@ -5,6 +5,7 @@
 
 use crate::{DevRelayError, GitRepo, ProjectRegistryIndex, Result, WorkspaceState};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 pub const DEVRELAY_REF_NAMESPACE: &str = "refs/devrelay/";
 pub const DEVRELAY_SNAPSHOT_REF_NAMESPACE: &str = "refs/devrelay/snapshots/";
@@ -50,6 +51,21 @@ impl GitDataPlaneOperation {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GitDataPlaneImplementationStrategy {
+    #[default]
+    LocalBareRepo,
+}
+
+impl GitDataPlaneImplementationStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalBareRepo => "local-bare-repo",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GitDataPlaneAuthorizationRequest<'a> {
     pub project_id: &'a str,
@@ -63,6 +79,16 @@ pub struct GitDataPlaneAuthorization {
     pub device_id: String,
     pub operation: GitDataPlaneOperation,
     pub workspace_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitDataPlaneServePlan {
+    pub strategy: GitDataPlaneImplementationStrategy,
+    pub authorization: GitDataPlaneAuthorization,
+    pub project_id: String,
+    pub repo_path: PathBuf,
+    pub allowed_ref_namespace: String,
+    pub refspecs: Vec<GitDataPlaneRefSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -420,6 +446,14 @@ mod tests {
         )
         .unwrap_err();
         assert!(stale_device.to_string().contains("not authorized"));
+    }
+
+    #[test]
+    fn data_plane_first_implementation_strategy_is_local_bare_repo() {
+        let strategy = GitDataPlaneImplementationStrategy::default();
+
+        assert_eq!(strategy, GitDataPlaneImplementationStrategy::LocalBareRepo);
+        assert_eq!(strategy.as_str(), "local-bare-repo");
     }
 
     #[test]

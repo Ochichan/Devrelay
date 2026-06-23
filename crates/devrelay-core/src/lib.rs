@@ -106,10 +106,10 @@ pub use crash_journal::{
 };
 pub use data_plane::{
     DEVRELAY_REF_NAMESPACE, DEVRELAY_SNAPSHOT_REF_NAMESPACE, GitDataPlaneAuthorization,
-    GitDataPlaneAuthorizationRequest, GitDataPlaneOperation, GitDataPlanePolicy,
-    GitDataPlaneRefSpec, GitObjectInspection, GitRepositorySize, authorize_git_data_plane_project,
-    ensure_git_object_available, inspect_git_object, inspect_git_repository_size,
-    verify_git_repository_integrity,
+    GitDataPlaneAuthorizationRequest, GitDataPlaneImplementationStrategy, GitDataPlaneOperation,
+    GitDataPlanePolicy, GitDataPlaneRefSpec, GitDataPlaneServePlan, GitObjectInspection,
+    GitRepositorySize, authorize_git_data_plane_project, ensure_git_object_available,
+    inspect_git_object, inspect_git_repository_size, verify_git_repository_integrity,
 };
 pub use debounce::{
     AdaptiveDebouncer, BackgroundDebouncePolicy, DebounceDrain, DebounceFlushReason,

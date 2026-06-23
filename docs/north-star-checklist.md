@@ -872,9 +872,9 @@ Conventions:
 
 ### M5.1 Git Object Data Plane
 
-- [ ] Choose first implementation strategy.
+- [x] Choose first implementation strategy.
 - [x] Define allowed ref namespace.
-- [ ] Serve project snapshot bare repo.
+- [x] Serve project snapshot bare repo.
 - [x] Restrict fetch to `refs/devrelay/*`.
 - [x] Restrict push to permitted snapshot refs.
 - [x] Enforce project authorization.
