@@ -29,10 +29,26 @@ pub struct StoredSnapshot {
     pub created_at_unix_seconds: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotStoreFaultPoint {
+    AfterSnapshotObjectImport,
+    AfterSourceIndexRefDelete,
+}
+
+impl SnapshotStoreFaultPoint {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AfterSnapshotObjectImport => "after-snapshot-object-import",
+            Self::AfterSourceIndexRefDelete => "after-source-index-ref-delete",
+        }
+    }
+}
+
 pub struct SnapshotStore {
     project_id: String,
     snapshot_repo_path: PathBuf,
     db: MetadataDb,
+    fault: Option<SnapshotStoreFaultPoint>,
 }
 
 impl SnapshotStore {
@@ -45,7 +61,17 @@ impl SnapshotStore {
             project_id: project_id.to_string(),
             snapshot_repo_path,
             db,
+            fault: None,
         })
+    }
+
+    pub fn with_fault_injection(mut self, fault: SnapshotStoreFaultPoint) -> Self {
+        self.fault = Some(fault);
+        self
+    }
+
+    pub fn set_fault_injection(&mut self, fault: Option<SnapshotStoreFaultPoint>) {
+        self.fault = fault;
     }
 
     pub fn snapshot_repo_path(&self) -> &Path {
@@ -78,12 +104,13 @@ impl SnapshotStore {
         }
         metadata.validate()?;
         self.import_snapshot_refs(source, &metadata)?;
+        self.inject_fault(SnapshotStoreFaultPoint::AfterSnapshotObjectImport)?;
         if metadata.parent_snapshot_id.is_none() {
             metadata.parent_snapshot_id = self.latest_snapshot_id()?;
         }
 
         let stored = self.insert_snapshot(metadata, pinned, label)?;
-        remove_source_snapshot_refs(source, &stored.metadata)?;
+        remove_source_snapshot_refs(source, &stored.metadata, self.fault)?;
         Ok(stored)
     }
 
@@ -275,6 +302,13 @@ LIMIT 1
     fn snapshot_repo(&self) -> GitRepo {
         GitRepo::new(&self.snapshot_repo_path)
     }
+
+    fn inject_fault(&self, fault: SnapshotStoreFaultPoint) -> Result<()> {
+        if self.fault == Some(fault) {
+            return Err(injected_fault(fault));
+        }
+        Ok(())
+    }
 }
 
 fn stored_snapshot_from_row(row: &Row<'_>) -> rusqlite::Result<StoredSnapshot> {
@@ -321,10 +355,23 @@ fn ensure_bare_repo(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn remove_source_snapshot_refs(source: &GitRepo, metadata: &SnapshotMetadata) -> Result<()> {
+fn remove_source_snapshot_refs(
+    source: &GitRepo,
+    metadata: &SnapshotMetadata,
+    fault: Option<SnapshotStoreFaultPoint>,
+) -> Result<()> {
     source.run(&["update-ref", "-d", &metadata.index_ref()])?;
+    if fault == Some(SnapshotStoreFaultPoint::AfterSourceIndexRefDelete) {
+        return Err(injected_fault(
+            SnapshotStoreFaultPoint::AfterSourceIndexRefDelete,
+        ));
+    }
     source.run(&["update-ref", "-d", &metadata.work_ref()])?;
     Ok(())
+}
+
+fn injected_fault(fault: SnapshotStoreFaultPoint) -> DevRelayError {
+    DevRelayError::Config(format!("injected fault at {}", fault.as_str()))
 }
 
 #[cfg(test)]
@@ -419,5 +466,95 @@ portable_paths = "strict"
             .unwrap();
         assert_eq!(exported.snapshot_id, second.snapshot_id);
         assert!(export_path.exists());
+    }
+
+    #[test]
+    fn fault_after_snapshot_object_import_does_not_publish_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        let manifest = manifest();
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id)
+            .unwrap()
+            .with_fault_injection(SnapshotStoreFaultPoint::AfterSnapshotObjectImport);
+
+        let err = store
+            .checkpoint(&source, &manifest, true, Some("fault".to_string()))
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("injected fault at after-snapshot-object-import")
+        );
+        assert!(store.list_snapshots().unwrap().is_empty());
+        assert_eq!(
+            fs::read_to_string(source_path.join("tracked.txt")).unwrap(),
+            "changed\n"
+        );
+        let imported_refs = store
+            .snapshot_repo()
+            .run(&[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/devrelay/snapshots",
+            ])
+            .unwrap();
+        assert!(
+            imported_refs.contains("refs/devrelay/snapshots/"),
+            "expected imported object refs to remain recoverable"
+        );
+    }
+
+    #[test]
+    fn fault_during_source_ref_cleanup_preserves_snapshot_and_worktree() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        let manifest = manifest();
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id)
+            .unwrap()
+            .with_fault_injection(SnapshotStoreFaultPoint::AfterSourceIndexRefDelete);
+
+        let err = store
+            .checkpoint(&source, &manifest, true, Some("fault".to_string()))
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("injected fault at after-source-index-ref-delete")
+        );
+        let snapshots = store.list_snapshots().unwrap();
+        assert_eq!(snapshots.len(), 1);
+        let snapshot = &snapshots[0];
+        assert_eq!(
+            fs::read_to_string(source_path.join("tracked.txt")).unwrap(),
+            "changed\n"
+        );
+        assert!(
+            store
+                .snapshot_repo()
+                .run(&["rev-parse", "--verify", &snapshot.metadata.index_ref()])
+                .is_ok()
+        );
+        assert!(
+            store
+                .snapshot_repo()
+                .run(&["rev-parse", "--verify", &snapshot.metadata.work_ref()])
+                .is_ok()
+        );
+        assert!(
+            source
+                .run(&["rev-parse", "--verify", &snapshot.metadata.index_ref()])
+                .is_err()
+        );
+        assert!(
+            source
+                .run(&["rev-parse", "--verify", &snapshot.metadata.work_ref()])
+                .is_ok()
+        );
     }
 }

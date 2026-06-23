@@ -1816,8 +1816,8 @@ Conventions:
 
 ### M13.8 Fault Injection
 
-- [ ] Inject crash during snapshot object write.
-- [ ] Inject crash during ref update.
+- [x] Inject crash during snapshot object write.
+- [x] Inject crash during ref update.
 - [ ] Inject network cut during publish.
 - [ ] Inject crash during metadata transaction.
 - [ ] Inject crash during target fetch.
@@ -1828,7 +1828,7 @@ Conventions:
 - [ ] Inject crash during lease commit.
 - [ ] Inject disk-full during CAS upload.
 - [ ] Inject disk-full during target apply.
-- [ ] Add zero-data-loss assertions.
+- [x] Add zero-data-loss assertions.
 
 ### M13 Exit Gate
 
