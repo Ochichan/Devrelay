@@ -51,6 +51,7 @@ mod lease;
 mod line_ending_doctor;
 mod logging;
 pub mod manifest;
+mod operation_capsule;
 mod pairing;
 mod path_doctor;
 mod platform;
@@ -118,6 +119,10 @@ pub use manifest::{
     DirtyTargetPolicy, EnvironmentConfig, EnvironmentKind, EnvironmentProfile, HandoffConfig,
     Manifest, PatternConfig, PortablePathsPolicy, RestoreTerminals, SecretConfig, SecretMode,
     SyncConfig, SyncMode, TaskCacheMode, TaskConfig, TaskSandbox, UntrackedPolicy, WorkspaceConfig,
+};
+pub use operation_capsule::{
+    GitOperationKind, GitOperationMetadata, IndexStageEntry, OperationCapsule, UnmergedIndexEntry,
+    capture_operation_capsule,
 };
 pub use pairing::{
     PAIRING_ID_PREFIX, PairingEphemeralKey, PairingSession, PairingState,

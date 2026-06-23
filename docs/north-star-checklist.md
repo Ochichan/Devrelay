@@ -1669,10 +1669,10 @@ Conventions:
 - [x] Detect merge conflict state.
 - [x] Detect cherry-pick conflict state.
 - [x] Detect revert conflict state.
-- [ ] Capture index stage 1 entries.
-- [ ] Capture index stage 2 entries.
-- [ ] Capture index stage 3 entries.
-- [ ] Capture operation metadata.
+- [x] Capture index stage 1 entries.
+- [x] Capture index stage 2 entries.
+- [x] Capture index stage 3 entries.
+- [x] Capture operation metadata.
 - [ ] Store operation capsule.
 - [ ] Apply unmerged index to target.
 - [ ] Restore conflict markers.
