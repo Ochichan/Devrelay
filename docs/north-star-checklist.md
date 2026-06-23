@@ -624,20 +624,20 @@ Conventions:
 
 ### M3.2 Metadata Schema
 
-- [ ] Add `devices` table.
-- [ ] Add `projects` table compatibility with local registry.
-- [ ] Add `workspaces` table with device ID.
-- [ ] Add `sessions` table.
-- [ ] Add `snapshots` table with sequence number.
-- [ ] Add `leases` table.
-- [ ] Add `handoffs` table.
-- [ ] Add `task_runs` placeholder table.
-- [ ] Add foreign keys where appropriate.
-- [ ] Add indexes for lease lookup.
-- [ ] Add indexes for latest snapshot lookup.
-- [ ] Add indexes for handoff lookup.
-- [ ] Add schema migration tests.
-- [ ] Add WAL mode test.
+- [x] Add `devices` table.
+- [x] Add `projects` table compatibility with local registry.
+- [x] Add `workspaces` table with device ID.
+- [x] Add `sessions` table.
+- [x] Add `snapshots` table with sequence number.
+- [x] Add `leases` table.
+- [x] Add `handoffs` table.
+- [x] Add `task_runs` placeholder table.
+- [x] Add foreign keys where appropriate.
+- [x] Add indexes for lease lookup.
+- [x] Add indexes for latest snapshot lookup.
+- [x] Add indexes for handoff lookup.
+- [x] Add schema migration tests.
+- [x] Add WAL mode test.
 
 ### M3.3 Device Identity Placeholder
 

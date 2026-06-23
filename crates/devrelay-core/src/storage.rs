@@ -16,10 +16,11 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial_metadata",
-    sql: r#"
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial_metadata",
+        sql: r#"
 CREATE TABLE projects (
     project_id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
@@ -98,7 +99,68 @@ CREATE INDEX idx_workspaces_project_path ON workspaces(project_id, local_path);
 CREATE INDEX idx_snapshots_project_timeline
     ON snapshots(project_id, session_id, sequence_number, created_at_unix_seconds);
 "#,
-}];
+    },
+    Migration {
+        version: 2,
+        name: "anchor_metadata_schema",
+        sql: r#"
+CREATE TABLE devices (
+    device_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    platform_key TEXT NOT NULL,
+    architecture TEXT NOT NULL,
+    capabilities_json TEXT NOT NULL DEFAULT '{}',
+    paired_at_unix_seconds INTEGER,
+    last_seen_unix_seconds INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+ALTER TABLE projects ADD COLUMN local_path TEXT;
+ALTER TABLE projects ADD COLUMN remote_url_fingerprint TEXT;
+ALTER TABLE projects ADD COLUMN root_commit_fingerprint TEXT;
+
+ALTER TABLE leases ADD COLUMN session_id TEXT;
+ALTER TABLE leases ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE leases ADD COLUMN holder_device_id TEXT;
+ALTER TABLE leases ADD COLUMN latest_snapshot_id TEXT;
+ALTER TABLE leases ADD COLUMN handoff_id TEXT;
+
+ALTER TABLE handoffs ADD COLUMN expected_epoch INTEGER;
+ALTER TABLE handoffs ADD COLUMN source_device_id TEXT;
+ALTER TABLE handoffs ADD COLUMN target_device_id TEXT;
+ALTER TABLE handoffs ADD COLUMN expires_at_unix_seconds INTEGER;
+
+CREATE TABLE task_runs (
+    task_run_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    session_id TEXT,
+    state TEXT NOT NULL,
+    command TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at_unix_seconds INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at_unix_seconds INTEGER NOT NULL DEFAULT (unixepoch()),
+    FOREIGN KEY(project_id) REFERENCES projects(project_id),
+    FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+);
+
+CREATE INDEX idx_workspaces_device_project
+    ON workspaces(device_id, project_id);
+CREATE INDEX idx_leases_project_state
+    ON leases(project_id, state);
+CREATE INDEX idx_leases_holder_device
+    ON leases(project_id, holder_device_id, state);
+CREATE INDEX idx_leases_session
+    ON leases(project_id, session_id);
+CREATE INDEX idx_snapshots_project_latest
+    ON snapshots(project_id, sequence_number DESC);
+CREATE INDEX idx_handoffs_project_state
+    ON handoffs(project_id, state);
+CREATE INDEX idx_handoffs_source_device_state
+    ON handoffs(source_device_id, state);
+CREATE INDEX idx_handoffs_target_device_state
+    ON handoffs(target_device_id, state);
+"#,
+    },
+];
 
 pub struct MetadataDb {
     conn: Connection,
@@ -188,6 +250,36 @@ mod tests {
             .unwrap()
     }
 
+    fn column_exists(db: &MetadataDb, table: &str, column: &str) -> bool {
+        let mut statement = db
+            .connection()
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap();
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap();
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+            .iter()
+            .any(|name| name == column)
+    }
+
+    fn foreign_key_exists(db: &MetadataDb, table: &str, from: &str, target: &str) -> bool {
+        let mut statement = db
+            .connection()
+            .prepare(&format!("PRAGMA foreign_key_list({table})"))
+            .unwrap();
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(2)?, row.get::<_, String>(3)?))
+            })
+            .unwrap();
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+            .iter()
+            .any(|(target_table, from_column)| target_table == target && from_column == from)
+    }
+
     #[test]
     fn migrates_empty_database() {
         let temp = tempfile::tempdir().unwrap();
@@ -203,11 +295,140 @@ mod tests {
             "snapshots",
             "leases",
             "handoffs",
+            "devices",
+            "task_runs",
         ] {
             assert!(table_exists(&db, table), "{table} should exist");
         }
         assert!(index_exists(&db, "idx_projects_display_name"));
         assert!(index_exists(&db, "idx_snapshots_project_timeline"));
+        assert!(index_exists(&db, "idx_snapshots_project_latest"));
+        assert!(index_exists(&db, "idx_leases_project_state"));
+        assert!(index_exists(&db, "idx_leases_holder_device"));
+        assert!(index_exists(&db, "idx_leases_session"));
+        assert!(index_exists(&db, "idx_handoffs_project_state"));
+        assert!(index_exists(&db, "idx_handoffs_source_device_state"));
+        assert!(index_exists(&db, "idx_handoffs_target_device_state"));
+
+        let journal_mode: String = db
+            .connection()
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+    }
+
+    #[test]
+    fn schema_matches_anchor_metadata_contract() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let db = MetadataDb::open(&path).unwrap();
+
+        for column in [
+            "device_id",
+            "display_name",
+            "platform_key",
+            "architecture",
+            "capabilities_json",
+            "paired_at_unix_seconds",
+            "last_seen_unix_seconds",
+        ] {
+            assert!(column_exists(&db, "devices", column), "{column}");
+        }
+        for column in [
+            "project_id",
+            "display_name",
+            "local_path",
+            "manifest_path",
+            "remote_url_fingerprint",
+            "root_commit_fingerprint",
+        ] {
+            assert!(column_exists(&db, "projects", column), "{column}");
+        }
+        assert!(column_exists(&db, "workspaces", "device_id"));
+        assert!(column_exists(&db, "sessions", "session_id"));
+        assert!(column_exists(&db, "snapshots", "sequence_number"));
+        for column in [
+            "epoch",
+            "holder_device_id",
+            "latest_snapshot_id",
+            "handoff_id",
+        ] {
+            assert!(column_exists(&db, "leases", column), "{column}");
+        }
+        for column in [
+            "expected_epoch",
+            "source_device_id",
+            "target_device_id",
+            "expires_at_unix_seconds",
+        ] {
+            assert!(column_exists(&db, "handoffs", column), "{column}");
+        }
+        assert!(column_exists(&db, "task_runs", "task_run_id"));
+        assert!(column_exists(&db, "task_runs", "metadata_json"));
+    }
+
+    #[test]
+    fn metadata_tables_have_foreign_keys() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let db = MetadataDb::open(&path).unwrap();
+
+        assert!(foreign_key_exists(
+            &db,
+            "workspaces",
+            "project_id",
+            "projects"
+        ));
+        assert!(foreign_key_exists(
+            &db,
+            "sessions",
+            "project_id",
+            "projects"
+        ));
+        assert!(foreign_key_exists(
+            &db,
+            "sessions",
+            "active_workspace_id",
+            "workspaces"
+        ));
+        assert!(foreign_key_exists(
+            &db,
+            "snapshots",
+            "project_id",
+            "projects"
+        ));
+        assert!(foreign_key_exists(
+            &db,
+            "snapshots",
+            "session_id",
+            "sessions"
+        ));
+        assert!(foreign_key_exists(&db, "leases", "project_id", "projects"));
+        assert!(foreign_key_exists(
+            &db,
+            "handoffs",
+            "source_workspace_id",
+            "workspaces"
+        ));
+        assert!(foreign_key_exists(
+            &db,
+            "task_runs",
+            "project_id",
+            "projects"
+        ));
+        assert!(foreign_key_exists(
+            &db,
+            "task_runs",
+            "session_id",
+            "sessions"
+        ));
+    }
+
+    #[test]
+    fn opens_database_in_wal_mode() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let db = MetadataDb::open(&path).unwrap();
 
         let journal_mode: String = db
             .connection()
@@ -231,7 +452,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
     }
 
     #[test]
