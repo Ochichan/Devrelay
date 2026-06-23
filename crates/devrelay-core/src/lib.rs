@@ -123,8 +123,13 @@ pub use discovery::{
     truncated_fabric_hint,
 };
 pub use environment::{
-    EnvironmentProfileSelection, EnvironmentSelectionContext, environment_profile_command_scope,
-    profile_targets_platform, select_environment_profile,
+    EnvironmentCommand, EnvironmentCommandOutput, EnvironmentCommandRunner,
+    EnvironmentProfileSelection, EnvironmentSelectionContext, NixAdapterReport, NixCacheWarmth,
+    NixDevelopHealthcheck, NixFlakeFiles, NixHealthState, NixPlaceholderPlan,
+    SystemEnvironmentCommandRunner, compute_nix_flake_fingerprint, detect_nix_availability,
+    detect_nix_flake_files, environment_profile_command_scope, estimate_nix_cache_warmth,
+    inspect_nix_environment, nix_lan_binary_cache_plan, nix_store_prefetch_plan,
+    profile_targets_platform, run_nix_develop_healthcheck, select_environment_profile,
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{

@@ -4,8 +4,11 @@
 //! that a runner should hydrate after checking platform targets, adapter
 //! availability, and bootstrap trust state.
 
-use crate::{EnvironmentKind, Manifest, current_platform_key};
+use crate::{DevRelayError, EnvironmentKind, Manifest, Result, current_platform_key};
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentSelectionContext {
@@ -129,6 +132,296 @@ pub fn profile_targets_platform(targets: &[String], platform_key: &str) -> bool 
         .any(|target| target_matches_platform_key(target, platform_key))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentCommand {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+impl EnvironmentCommand {
+    pub fn new(
+        program: impl Into<String>,
+        args: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            program: program.into(),
+            args: args.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentCommandOutput {
+    pub status_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl EnvironmentCommandOutput {
+    pub fn success(stdout: impl Into<String>) -> Self {
+        Self {
+            status_code: Some(0),
+            stdout: stdout.into(),
+            stderr: String::new(),
+        }
+    }
+
+    pub fn failure(status_code: i32, stderr: impl Into<String>) -> Self {
+        Self {
+            status_code: Some(status_code),
+            stdout: String::new(),
+            stderr: stderr.into(),
+        }
+    }
+
+    pub fn succeeded(&self) -> bool {
+        self.status_code == Some(0)
+    }
+}
+
+pub trait EnvironmentCommandRunner {
+    fn run(&self, cwd: &Path, command: &EnvironmentCommand) -> Result<EnvironmentCommandOutput>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemEnvironmentCommandRunner;
+
+impl EnvironmentCommandRunner for SystemEnvironmentCommandRunner {
+    fn run(&self, cwd: &Path, command: &EnvironmentCommand) -> Result<EnvironmentCommandOutput> {
+        let output = Command::new(&command.program)
+            .args(&command.args)
+            .current_dir(cwd)
+            .output()?;
+        Ok(EnvironmentCommandOutput {
+            status_code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NixFlakeFiles {
+    pub files: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NixHealthState {
+    Unavailable,
+    NoFlake,
+    ShellReady,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NixDevelopHealthcheck {
+    pub state: NixHealthState,
+    pub command: Vec<String>,
+    pub shell_ready: bool,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub failure_logs: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NixPlaceholderPlan {
+    pub enabled: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NixCacheWarmth {
+    pub platform_key: String,
+    pub score: u8,
+    pub explanation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NixAdapterReport {
+    pub nix_available: bool,
+    pub flake_files: NixFlakeFiles,
+    pub flake_fingerprint: Option<String>,
+    pub healthcheck: NixDevelopHealthcheck,
+    pub store_prefetch: NixPlaceholderPlan,
+    pub lan_binary_cache: NixPlaceholderPlan,
+    pub cache_warmth: NixCacheWarmth,
+}
+
+pub fn inspect_nix_environment(
+    root: &Path,
+    healthcheck: &[String],
+    platform_key: &str,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<NixAdapterReport> {
+    let nix_available = detect_nix_availability(root, runner)?;
+    let flake_files = detect_nix_flake_files(root);
+    let flake_fingerprint = compute_nix_flake_fingerprint(root)?;
+    let healthcheck = run_nix_develop_healthcheck(root, healthcheck, nix_available, runner)?;
+    let cache_warmth =
+        estimate_nix_cache_warmth(platform_key, nix_available, flake_fingerprint.as_deref());
+    Ok(NixAdapterReport {
+        nix_available,
+        flake_files,
+        flake_fingerprint,
+        healthcheck,
+        store_prefetch: nix_store_prefetch_plan(),
+        lan_binary_cache: nix_lan_binary_cache_plan(),
+        cache_warmth,
+    })
+}
+
+pub fn detect_nix_availability(
+    root: &Path,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<bool> {
+    match runner.run(root, &EnvironmentCommand::new("nix", ["--version"])) {
+        Ok(output) => Ok(output.succeeded()),
+        Err(DevRelayError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
+pub fn detect_nix_flake_files(root: &Path) -> NixFlakeFiles {
+    let files = ["flake.nix", "flake.lock"]
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|relative| root.join(relative).is_file())
+        .collect();
+    NixFlakeFiles { files }
+}
+
+pub fn compute_nix_flake_fingerprint(root: &Path) -> Result<Option<String>> {
+    let flake_files = detect_nix_flake_files(root);
+    if flake_files.files.is_empty() {
+        return Ok(None);
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"devrelay.nix-flake.v1\0");
+    for relative in &flake_files.files {
+        let bytes = fs::read(root.join(relative))?;
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update(&[0]);
+        hasher.update(bytes.len().to_string().as_bytes());
+        hasher.update(&[0]);
+        hasher.update(&bytes);
+        hasher.update(&[0]);
+    }
+    Ok(Some(hasher.finalize().to_hex().to_string()))
+}
+
+pub fn run_nix_develop_healthcheck(
+    root: &Path,
+    healthcheck: &[String],
+    nix_available: bool,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<NixDevelopHealthcheck> {
+    let command = nix_develop_command(healthcheck);
+    if !nix_available {
+        return Ok(NixDevelopHealthcheck {
+            state: NixHealthState::Unavailable,
+            command,
+            shell_ready: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: "nix command is not available".to_string(),
+            failure_logs: "nix command is not available".to_string(),
+        });
+    }
+    if !root.join("flake.nix").is_file() {
+        return Ok(NixDevelopHealthcheck {
+            state: NixHealthState::NoFlake,
+            command,
+            shell_ready: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: "flake.nix was not found".to_string(),
+            failure_logs: "flake.nix was not found".to_string(),
+        });
+    }
+
+    let output = runner.run(root, &EnvironmentCommand::new("nix", command.clone()))?;
+    let shell_ready = output.succeeded();
+    Ok(NixDevelopHealthcheck {
+        state: if shell_ready {
+            NixHealthState::ShellReady
+        } else {
+            NixHealthState::Failed
+        },
+        command,
+        shell_ready,
+        exit_code: output.status_code,
+        failure_logs: if shell_ready {
+            String::new()
+        } else {
+            join_logs(&output.stdout, &output.stderr)
+        },
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
+pub fn nix_store_prefetch_plan() -> NixPlaceholderPlan {
+    NixPlaceholderPlan {
+        enabled: false,
+        reason: "store path prefetch is reserved for a future Nix store transfer implementation"
+            .to_string(),
+    }
+}
+
+pub fn nix_lan_binary_cache_plan() -> NixPlaceholderPlan {
+    NixPlaceholderPlan {
+        enabled: false,
+        reason: "LAN binary cache configuration is reserved for anchor-backed cache distribution"
+            .to_string(),
+    }
+}
+
+pub fn estimate_nix_cache_warmth(
+    platform_key: &str,
+    nix_available: bool,
+    flake_fingerprint: Option<&str>,
+) -> NixCacheWarmth {
+    let (score, explanation) = if !nix_available {
+        (0, "nix is unavailable on this platform".to_string())
+    } else if flake_fingerprint.is_some() {
+        (
+            50,
+            format!(
+                "{platform_key} has nix and a fingerprinted flake, but no store-path probe yet"
+            ),
+        )
+    } else {
+        (
+            10,
+            format!("{platform_key} has nix, but no flake fingerprint is available"),
+        )
+    };
+    NixCacheWarmth {
+        platform_key: platform_key.to_string(),
+        score,
+        explanation,
+    }
+}
+
+fn nix_develop_command(healthcheck: &[String]) -> Vec<String> {
+    let mut command = vec!["develop".to_string(), "--command".to_string()];
+    if healthcheck.is_empty() {
+        command.push("true".to_string());
+    } else {
+        command.extend(healthcheck.iter().cloned());
+    }
+    command
+}
+
+fn join_logs(stdout: &str, stderr: &str) -> String {
+    [stdout.trim(), stderr.trim()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn kind_available(kind: EnvironmentKind, available_kinds: &BTreeSet<EnvironmentKind>) -> bool {
     kind == EnvironmentKind::Manual || available_kinds.contains(&kind)
 }
@@ -163,6 +456,8 @@ mod tests {
     use super::*;
     use crate::{EnvironmentConfig, EnvironmentProfile, UntrackedPolicy};
     use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::{Path, PathBuf};
 
     fn manifest_with_profiles(
         profiles: impl IntoIterator<Item = (&'static str, EnvironmentKind, Vec<&'static str>)>,
@@ -331,5 +626,156 @@ portable_paths = "strict"
             .profile_name,
             None
         );
+    }
+
+    #[derive(Default)]
+    struct FakeRunner {
+        outputs: BTreeMap<Vec<String>, EnvironmentCommandOutput>,
+    }
+
+    impl FakeRunner {
+        fn with_output(
+            mut self,
+            program: &str,
+            args: &[&str],
+            output: EnvironmentCommandOutput,
+        ) -> Self {
+            let mut key = vec![program.to_string()];
+            key.extend(args.iter().map(|arg| (*arg).to_string()));
+            self.outputs.insert(key, output);
+            self
+        }
+    }
+
+    impl EnvironmentCommandRunner for FakeRunner {
+        fn run(
+            &self,
+            _cwd: &Path,
+            command: &EnvironmentCommand,
+        ) -> Result<EnvironmentCommandOutput> {
+            let mut key = vec![command.program.clone()];
+            key.extend(command.args.iter().cloned());
+            Ok(self
+                .outputs
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| EnvironmentCommandOutput::failure(127, "command not found")))
+        }
+    }
+
+    #[test]
+    fn detects_flake_files_and_computes_stable_fingerprint() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("flake.nix"), "{ outputs = _: {}; }\n").unwrap();
+        fs::write(temp.path().join("flake.lock"), "{}\n").unwrap();
+
+        let files = detect_nix_flake_files(temp.path());
+        assert_eq!(
+            files.files,
+            vec![PathBuf::from("flake.nix"), PathBuf::from("flake.lock")]
+        );
+        let first = compute_nix_flake_fingerprint(temp.path()).unwrap().unwrap();
+        let second = compute_nix_flake_fingerprint(temp.path()).unwrap().unwrap();
+        assert_eq!(first, second);
+
+        fs::write(temp.path().join("flake.lock"), "{\"version\":1}\n").unwrap();
+        let changed = compute_nix_flake_fingerprint(temp.path()).unwrap().unwrap();
+        assert_ne!(first, changed);
+    }
+
+    #[test]
+    fn nix_adapter_reports_shell_ready_with_mocked_healthcheck() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("flake.nix"), "{ outputs = _: {}; }\n").unwrap();
+        let runner = FakeRunner::default()
+            .with_output(
+                "nix",
+                &["--version"],
+                EnvironmentCommandOutput::success("nix 2.21\n"),
+            )
+            .with_output(
+                "nix",
+                &["develop", "--command", "cargo", "check"],
+                EnvironmentCommandOutput::success("checked\n"),
+            );
+
+        let report = inspect_nix_environment(
+            temp.path(),
+            &["cargo".to_string(), "check".to_string()],
+            "darwin-arm64",
+            &runner,
+        )
+        .unwrap();
+
+        assert!(report.nix_available);
+        assert!(report.flake_fingerprint.is_some());
+        assert_eq!(report.healthcheck.state, NixHealthState::ShellReady);
+        assert!(report.healthcheck.shell_ready);
+        assert!(!report.store_prefetch.enabled);
+        assert!(!report.lan_binary_cache.enabled);
+        assert_eq!(report.cache_warmth.platform_key, "darwin-arm64");
+        assert_eq!(report.cache_warmth.score, 50);
+    }
+
+    #[test]
+    fn nix_adapter_captures_failure_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("flake.nix"), "{ outputs = _: {}; }\n").unwrap();
+        let runner = FakeRunner::default()
+            .with_output(
+                "nix",
+                &["--version"],
+                EnvironmentCommandOutput::success("nix 2.21\n"),
+            )
+            .with_output(
+                "nix",
+                &["develop", "--command", "cargo", "test"],
+                EnvironmentCommandOutput {
+                    status_code: Some(1),
+                    stdout: "building\n".to_string(),
+                    stderr: "tests failed\n".to_string(),
+                },
+            );
+
+        let report = inspect_nix_environment(
+            temp.path(),
+            &["cargo".to_string(), "test".to_string()],
+            "darwin-arm64",
+            &runner,
+        )
+        .unwrap();
+
+        assert_eq!(report.healthcheck.state, NixHealthState::Failed);
+        assert!(!report.healthcheck.shell_ready);
+        assert!(report.healthcheck.failure_logs.contains("building"));
+        assert!(report.healthcheck.failure_logs.contains("tests failed"));
+    }
+
+    #[test]
+    fn nix_adapter_reports_unavailable_and_missing_flake_states() {
+        let temp = tempfile::tempdir().unwrap();
+        let unavailable = inspect_nix_environment(
+            temp.path(),
+            &["true".to_string()],
+            "darwin-arm64",
+            &FakeRunner::default(),
+        )
+        .unwrap();
+        assert!(!unavailable.nix_available);
+        assert_eq!(unavailable.healthcheck.state, NixHealthState::Unavailable);
+        assert_eq!(unavailable.cache_warmth.score, 0);
+
+        let runner = FakeRunner::default().with_output(
+            "nix",
+            &["--version"],
+            EnvironmentCommandOutput::success("nix 2.21\n"),
+        );
+        let no_flake = inspect_nix_environment(temp.path(), &[], "darwin-arm64", &runner).unwrap();
+        assert!(no_flake.nix_available);
+        assert_eq!(
+            no_flake.healthcheck.command,
+            vec!["develop", "--command", "true"]
+        );
+        assert_eq!(no_flake.healthcheck.state, NixHealthState::NoFlake);
     }
 }

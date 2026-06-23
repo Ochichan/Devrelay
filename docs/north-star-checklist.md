@@ -1353,16 +1353,16 @@ Conventions:
 
 ### M9.3 Nix Adapter
 
-- [ ] Detect `nix` availability.
-- [ ] Detect flake files.
-- [ ] Compute flake fingerprint.
-- [ ] Run `nix develop` health check flow.
-- [ ] Capture shell-ready state.
-- [ ] Capture failure logs.
-- [ ] Add store path prefetch placeholder.
-- [ ] Add LAN binary cache config placeholder.
-- [ ] Add platform-specific cache warmth.
-- [ ] Add Nix adapter tests with mocked commands.
+- [x] Detect `nix` availability.
+- [x] Detect flake files.
+- [x] Compute flake fingerprint.
+- [x] Run `nix develop` health check flow.
+- [x] Capture shell-ready state.
+- [x] Capture failure logs.
+- [x] Add store path prefetch placeholder.
+- [x] Add LAN binary cache config placeholder.
+- [x] Add platform-specific cache warmth.
+- [x] Add Nix adapter tests with mocked commands.
 
 ### M9.4 Dev Container Adapter
 
