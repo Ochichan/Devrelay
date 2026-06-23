@@ -748,11 +748,11 @@ Conventions:
 
 ### M3 Exit Gate
 
-- [ ] Stale lease publish cannot advance canonical latest.
-- [ ] Concurrent handoff attempts resolve deterministically.
-- [ ] Target dirty protection happens before lease transfer.
-- [ ] Crash between apply and lease commit is recoverable.
-- [ ] Inactive edit becomes fork, not canonical change.
+- [x] Stale lease publish cannot advance canonical latest.
+- [x] Concurrent handoff attempts resolve deterministically.
+- [x] Target dirty protection happens before lease transfer.
+- [x] Crash between apply and lease commit is recoverable.
+- [x] Inactive edit becomes fork, not canonical change.
 
 ## M4. LAN Pairing And Secure Control Plane
 

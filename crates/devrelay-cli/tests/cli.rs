@@ -2742,6 +2742,10 @@ fn continue_dirty_target_uses_backup_policy() {
     assert!(continued.status.success());
     let continued_json: serde_json::Value = serde_json::from_slice(&continued.stdout).unwrap();
     assert_eq!(continued_json["backup"]["pinned"].as_bool(), Some(true));
+    assert_eq!(
+        continued_json["workspace_states_updated"].as_bool(),
+        Some(true)
+    );
     let backup_snapshot_id = continued_json["backup"]["snapshot_id"].as_str().unwrap();
     assert_eq!(
         std::fs::read_to_string(target.join("README.md")).unwrap(),
@@ -2768,6 +2772,28 @@ fn continue_dirty_target_uses_backup_policy() {
     assert_eq!(
         std::fs::read_to_string(backup_recover.join("target-only.txt")).unwrap(),
         "dirty target\n"
+    );
+
+    let project = devrelay()
+        .args([
+            "project",
+            "show",
+            "continue-dirty-project",
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(project.status.success());
+    let project_json: serde_json::Value = serde_json::from_slice(&project.stdout).unwrap();
+    assert_eq!(
+        workspace_state_for(&project_json, &source).as_deref(),
+        Some("inactive")
+    );
+    assert_eq!(
+        workspace_state_for(&project_json, &target).as_deref(),
+        Some("active")
     );
 
     let _ = std::fs::remove_dir_all(source);
