@@ -41,6 +41,7 @@ mod events;
 mod git;
 mod home;
 mod ipc;
+mod lease;
 mod logging;
 pub mod manifest;
 mod policy;
@@ -70,6 +71,7 @@ pub use home::{AnchorLayout, DevRelayHome};
 pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
 #[cfg(unix)]
 pub use ipc::{UnixIpcConnection, UnixIpcListener};
+pub use lease::{LeaseRecord, LeaseState};
 pub use logging::{
     LogRedactor, LogRotation, StructuredLogFile, StructuredLogFormat, StructuredLogLevel,
     StructuredLogRecord,

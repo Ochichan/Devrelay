@@ -668,20 +668,20 @@ Conventions:
 
 ### M3.5 Lease State Machine
 
-- [ ] Define lease states as enum.
-- [ ] Add active state.
-- [ ] Add handoff pending state.
-- [ ] Add committing state.
-- [ ] Add inactive state.
-- [ ] Add forked state.
-- [ ] Add archived state.
-- [ ] Add epoch field.
-- [ ] Add holder device ID field.
-- [ ] Add latest snapshot ID field.
-- [ ] Add handoff ID field.
-- [ ] Add state transition validation.
-- [ ] Add illegal transition tests.
-- [ ] Add epoch monotonicity tests.
+- [x] Define lease states as enum.
+- [x] Add active state.
+- [x] Add handoff pending state.
+- [x] Add committing state.
+- [x] Add inactive state.
+- [x] Add forked state.
+- [x] Add archived state.
+- [x] Add epoch field.
+- [x] Add holder device ID field.
+- [x] Add latest snapshot ID field.
+- [x] Add handoff ID field.
+- [x] Add state transition validation.
+- [x] Add illegal transition tests.
+- [x] Add epoch monotonicity tests.
 
 ### M3.6 Canonical Publish
 
