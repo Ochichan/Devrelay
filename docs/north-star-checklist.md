@@ -538,7 +538,7 @@ Conventions:
 - [x] Route apply through agent.
 - [ ] Preserve CLI JSON output compatibility.
 - [x] Add fallback message when agent is unavailable.
-- [ ] Add integration test with spawned agent.
+- [x] Add integration test with spawned agent.
 
 ### M2.5 Event Stream
 

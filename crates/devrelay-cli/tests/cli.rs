@@ -5,6 +5,20 @@ fn devrelay() -> Command {
     Command::new(env!("CARGO_BIN_EXE_devrelay"))
 }
 
+#[cfg(unix)]
+fn devrelay_agent() -> Command {
+    let cli_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_devrelay"));
+    let agent_path = std::env::var_os("CARGO_BIN_EXE_devrelay-agent")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| cli_path.with_file_name("devrelay-agent"));
+    assert!(
+        agent_path.exists(),
+        "devrelay-agent binary not found at {}; run cargo test --workspace",
+        agent_path.display()
+    );
+    Command::new(agent_path)
+}
+
 fn git(root: &Path, args: &[&str]) {
     assert!(
         Command::new("git")
@@ -55,6 +69,76 @@ fn workspace_state_for(project: &serde_json::Value, path: &Path) -> Option<Strin
         .find(|workspace| workspace["local_path"].as_str() == canonical.to_str())
         .and_then(|workspace| workspace["state"].as_str())
         .map(str::to_string)
+}
+
+#[cfg(unix)]
+struct RunningCliAgent {
+    root: std::path::PathBuf,
+    socket: std::path::PathBuf,
+    child: std::process::Child,
+}
+
+#[cfg(unix)]
+impl RunningCliAgent {
+    fn start(name: &str) -> Self {
+        use std::os::unix::fs::FileTypeExt;
+        use std::process::Stdio;
+        use std::time::{Duration, Instant};
+
+        let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let config = root.join("config.toml");
+        let socket = root.join("agent.sock");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+
+        let mut child = devrelay_agent()
+            .env("DEVRELAY_HOME", &root)
+            .args([
+                "--foreground",
+                "--config",
+                config.to_str().unwrap(),
+                "--socket-path",
+                socket.to_str().unwrap(),
+            ])
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if let Ok(metadata) = std::fs::symlink_metadata(&socket)
+                && metadata.file_type().is_socket()
+            {
+                return Self {
+                    root,
+                    socket,
+                    child,
+                };
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        child.kill().ok();
+        let output = child.wait_with_output().unwrap();
+        panic!(
+            "agent did not bind socket {}; stderr={}",
+            socket.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn stop(&mut self) {
+        self.child.kill().ok();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RunningCliAgent {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 #[test]
@@ -263,6 +347,68 @@ fn agent_unavailable_reports_direct_fallback() {
     assert!(stderr.contains("--direct"));
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_project_commands_work_with_spawned_agent() {
+    let mut running = RunningCliAgent::start("devrelay-cli-spawned-agent-test");
+    let repo = running.root.join("spawned-agent-project");
+    std::fs::create_dir(&repo).unwrap();
+    init_git_repo(&repo);
+    write_manifest(&repo, "spawned-agent-project", "Spawned Agent Project");
+    git(&repo, &["add", "devrelay.toml"]);
+    git(&repo, &["commit", "-m", "manifest"]);
+
+    let add = devrelay()
+        .env("DEVRELAY_HOME", &running.root)
+        .args([
+            "--agent-socket",
+            running.socket.to_str().unwrap(),
+            "project",
+            "add",
+            repo.to_str().unwrap(),
+            "--manifest",
+            repo.join("devrelay.toml").to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let add_json: serde_json::Value = serde_json::from_slice(&add.stdout).unwrap();
+    assert_eq!(
+        add_json["added"]["project_id"].as_str(),
+        Some("spawned-agent-project")
+    );
+
+    let list = devrelay()
+        .env("DEVRELAY_HOME", &running.root)
+        .args([
+            "--agent-socket",
+            running.socket.to_str().unwrap(),
+            "projects",
+            "list",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let list_json: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(
+        list_json[0]["display_name"].as_str(),
+        Some("Spawned Agent Project")
+    );
+    assert!(running.root.join("config.toml").exists());
+
+    running.stop();
 }
 
 #[cfg(unix)]
