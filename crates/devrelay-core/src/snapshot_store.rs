@@ -5,9 +5,12 @@
 //! worktree only needs synthetic refs long enough for this store to import the
 //! objects.
 
+use crate::snapshot_schema::calculate_state_hash;
 use crate::{
     DevRelayError, DevRelayHome, GitRepo, Manifest, MetadataDb, PruningDecisionAction, PruningPlan,
-    Result, SnapshotMetadata, create_snapshot, write_snapshot_file,
+    Result, SUBMODULE_CHILD_SNAPSHOT_RELATIONSHIP, SnapshotChildSnapshot, SnapshotMetadata,
+    StoredSession, SubmoduleStatus, create_snapshot, dirty_submodule_child_manifest,
+    inspect_submodules, write_snapshot_file,
 };
 use rusqlite::{OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -47,6 +50,12 @@ pub enum SnapshotCheckpointResult {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotCheckpointWithChildren {
+    pub parent: StoredSnapshot,
+    pub children: Vec<StoredSnapshot>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotStoreFaultPoint {
     AfterSnapshotObjectImport,
@@ -65,6 +74,7 @@ impl SnapshotStoreFaultPoint {
 }
 
 pub struct SnapshotStore {
+    home: DevRelayHome,
     project_id: String,
     snapshot_repo_path: PathBuf,
     db: MetadataDb,
@@ -78,6 +88,7 @@ impl SnapshotStore {
         ensure_bare_repo(&snapshot_repo_path)?;
         let db = MetadataDb::open(home.metadata_db_path(project_id))?;
         Ok(Self {
+            home: home.clone(),
             project_id: project_id.to_string(),
             snapshot_repo_path,
             db,
@@ -107,6 +118,31 @@ impl SnapshotStore {
     ) -> Result<StoredSnapshot> {
         let metadata = create_snapshot(source, manifest)?;
         self.store_snapshot(source, metadata, pinned, label)
+    }
+
+    pub fn checkpoint_with_dirty_submodules(
+        &mut self,
+        source: &GitRepo,
+        manifest: &Manifest,
+        pinned: bool,
+        label: Option<String>,
+    ) -> Result<SnapshotCheckpointWithChildren> {
+        let (child_links, children) =
+            self.checkpoint_dirty_submodule_children(source, manifest, pinned)?;
+        let mut metadata = create_snapshot(source, manifest)?;
+        metadata.child_snapshots = child_links;
+        metadata.child_snapshots.sort_by(|left, right| {
+            left.path
+                .cmp(&right.path)
+                .then(left.project_id.cmp(&right.project_id))
+                .then(left.session_id.cmp(&right.session_id))
+                .then(left.snapshot_id.cmp(&right.snapshot_id))
+        });
+        metadata.state_hash = calculate_state_hash(&metadata);
+        metadata.validate()?;
+
+        let parent = self.store_snapshot(source, metadata, pinned, label)?;
+        Ok(SnapshotCheckpointWithChildren { parent, children })
     }
 
     pub fn checkpoint_if_changed(
@@ -413,6 +449,72 @@ INSERT INTO snapshots (
         GitRepo::new(&self.snapshot_repo_path)
     }
 
+    fn checkpoint_dirty_submodule_children(
+        &self,
+        source: &GitRepo,
+        manifest: &Manifest,
+        pinned: bool,
+    ) -> Result<(Vec<SnapshotChildSnapshot>, Vec<StoredSnapshot>)> {
+        let report = inspect_submodules(source)?;
+        let dirty_submodules = report
+            .submodules
+            .into_iter()
+            .filter(|state| state.status == SubmoduleStatus::Dirty)
+            .collect::<Vec<_>>();
+        let mut child_links = Vec::with_capacity(dirty_submodules.len());
+        let mut children = Vec::with_capacity(dirty_submodules.len());
+
+        for submodule in dirty_submodules {
+            let child_manifest = dirty_submodule_child_manifest(manifest, &submodule.path);
+            let child_repo = GitRepo::new(source.path().join(PathBuf::from(&submodule.path)));
+            let mut child_store = SnapshotStore::open(&self.home, &child_manifest.project_id)?;
+            let child_session = child_store.db.ensure_default_session(
+                &child_manifest.project_id,
+                &child_manifest.name,
+                None,
+            )?;
+            let child_stored = child_store.checkpoint_child_submodule_snapshot(
+                &child_repo,
+                &child_manifest,
+                &child_session,
+                &submodule.path,
+                pinned,
+            )?;
+
+            child_links.push(SnapshotChildSnapshot {
+                relationship: SUBMODULE_CHILD_SNAPSHOT_RELATIONSHIP.to_string(),
+                path: submodule.path,
+                project_id: child_stored.project_id.clone(),
+                session_id: child_session.session_id,
+                snapshot_id: child_stored.snapshot_id.clone(),
+                state_hash: child_stored.metadata.state_hash.clone(),
+            });
+            children.push(child_stored);
+        }
+
+        Ok((child_links, children))
+    }
+
+    fn checkpoint_child_submodule_snapshot(
+        &mut self,
+        source: &GitRepo,
+        manifest: &Manifest,
+        session: &StoredSession,
+        submodule_path: &str,
+        pinned: bool,
+    ) -> Result<StoredSnapshot> {
+        let mut metadata = create_snapshot(source, manifest)?;
+        metadata.session_id = Some(session.session_id.clone());
+        metadata.state_hash = calculate_state_hash(&metadata);
+        metadata.validate()?;
+        self.store_snapshot(
+            source,
+            metadata,
+            pinned,
+            Some(format!("dirty submodule {submodule_path}")),
+        )
+    }
+
     fn delete_snapshot_refs(&self, metadata: &SnapshotMetadata) -> Result<()> {
         let repo = self.snapshot_repo();
         repo.run(&["update-ref", "-d", &metadata.index_ref()])?;
@@ -625,6 +727,84 @@ portable_paths = "strict"
             .unwrap();
         assert_eq!(exported.snapshot_id, second.snapshot_id);
         assert!(export_path.exists());
+    }
+
+    #[test]
+    fn checkpoint_with_dirty_submodules_creates_child_project_session_and_topology() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let child_source_path = temp.path().join("child-source");
+        let parent_path = temp.path().join("parent");
+        let child_source = init_repo(&child_source_path);
+        fs::write(child_source_path.join("tracked.txt"), "child base\n").unwrap();
+        child_source.run(&["add", "tracked.txt"]).unwrap();
+        child_source.run(&["commit", "-m", "child base"]).unwrap();
+        let parent = init_repo(&parent_path);
+        parent
+            .run_with_env(
+                [
+                    OsString::from("submodule"),
+                    OsString::from("add"),
+                    child_source_path.as_os_str().to_os_string(),
+                    OsString::from("deps/child"),
+                ],
+                &[("GIT_ALLOW_PROTOCOL", std::ffi::OsStr::new("file"))],
+            )
+            .unwrap();
+        parent.run(&["commit", "-m", "add submodule"]).unwrap();
+        fs::write(parent_path.join("deps/child/tracked.txt"), "child dirty\n").unwrap();
+        fs::write(parent_path.join("deps/child/notes.md"), "child note\n").unwrap();
+
+        let manifest = manifest();
+        let mut store = SnapshotStore::open(&home, &manifest.project_id).unwrap();
+        let result = store
+            .checkpoint_with_dirty_submodules(&parent, &manifest, false, Some("parent".to_string()))
+            .unwrap();
+
+        assert_eq!(result.children.len(), 1);
+        let link = &result.parent.metadata.child_snapshots[0];
+        let child = &result.children[0];
+        assert_eq!(link.relationship, SUBMODULE_CHILD_SNAPSHOT_RELATIONSHIP);
+        assert_eq!(link.path, "deps/child");
+        assert_eq!(link.project_id, child.project_id);
+        assert_eq!(link.session_id, child.session_id.as_deref().unwrap());
+        assert_eq!(link.snapshot_id, child.snapshot_id);
+        assert_eq!(link.state_hash, child.metadata.state_hash);
+        assert_eq!(
+            result.parent.metadata.state_hash,
+            calculate_state_hash(&result.parent.metadata)
+        );
+
+        let stored_parent = store.get_snapshot(&result.parent.snapshot_id).unwrap();
+        assert_eq!(stored_parent.metadata.child_snapshots, vec![link.clone()]);
+
+        let child_store = SnapshotStore::open(&home, &link.project_id).unwrap();
+        let child_snapshots = child_store.list_snapshots().unwrap();
+        assert_eq!(child_snapshots.len(), 1);
+        assert_eq!(child_snapshots[0].snapshot_id, child.snapshot_id);
+        let child_sessions = child_store
+            .db
+            .list_sessions(Some(&link.project_id))
+            .unwrap();
+        assert_eq!(child_sessions.len(), 1);
+        assert_eq!(child_sessions[0].session_id, link.session_id);
+
+        let tracked = child_store
+            .snapshot_repo()
+            .run(&[
+                "show",
+                &format!("{}:tracked.txt", child.metadata.work_commit_oid),
+            ])
+            .unwrap();
+        let note = child_store
+            .snapshot_repo()
+            .run(&[
+                "show",
+                &format!("{}:notes.md", child.metadata.work_commit_oid),
+            ])
+            .unwrap();
+        assert_eq!(tracked, "child dirty");
+        assert_eq!(note, "child note");
     }
 
     #[test]

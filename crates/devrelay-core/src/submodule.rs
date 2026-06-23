@@ -1,11 +1,12 @@
 //! Git submodule inspection and clean-state restoration helpers.
 
-use crate::{DevRelayError, GitRepo, Result};
+use crate::{DevRelayError, GitRepo, Manifest, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_SUBMODULE_RECURSION_DEPTH: usize = 4;
+pub const SUBMODULE_CHILD_SNAPSHOT_RELATIONSHIP: &str = "git-submodule";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SubmoduleReport {
@@ -32,6 +33,33 @@ pub enum SubmoduleStatus {
     Missing,
     HeadMismatch,
     Dirty,
+}
+
+pub fn dirty_submodule_child_manifest(parent: &Manifest, submodule_path: &str) -> Manifest {
+    let mut child = parent.clone();
+    child.project_id = dirty_submodule_child_project_id(&parent.project_id, submodule_path);
+    child.name = dirty_submodule_child_project_name(&parent.name, submodule_path);
+    child
+}
+
+pub fn dirty_submodule_child_project_id(parent_project_id: &str, submodule_path: &str) -> String {
+    let seed = format!("{parent_project_id}\0{submodule_path}");
+    let digest = blake3::hash(seed.as_bytes()).to_hex().to_string();
+    let mut prefix = parent_project_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if prefix.is_empty() {
+        prefix.push_str("project");
+    }
+    truncate_to_bytes(&mut prefix, 40);
+    format!("{prefix}_sub_{}", &digest[..16])
 }
 
 #[derive(Debug, Default)]
@@ -209,6 +237,34 @@ fn join_repo_path(prefix: &str, path: &str) -> String {
     }
 }
 
+fn dirty_submodule_child_project_name(parent_name: &str, submodule_path: &str) -> String {
+    let full = format!("{parent_name} submodule {submodule_path}");
+    if full.len() <= 128 {
+        return full;
+    }
+
+    let digest = blake3::hash(submodule_path.as_bytes()).to_hex().to_string();
+    let suffix = format!(" submodule {}", &digest[..8]);
+    let mut prefix = parent_name.to_string();
+    truncate_to_bytes(&mut prefix, 128 - suffix.len());
+    format!("{prefix}{suffix}")
+}
+
+fn truncate_to_bytes(value: &mut String, max_bytes: usize) {
+    if value.len() <= max_bytes {
+        return;
+    }
+    let mut end = 0;
+    for (index, ch) in value.char_indices() {
+        let next = index + ch.len_utf8();
+        if next > max_bytes {
+            break;
+        }
+        end = next;
+    }
+    value.truncate(end);
+}
+
 fn inspect_submodule(
     repo: &GitRepo,
     name: String,
@@ -361,6 +417,31 @@ mod tests {
                 .iter()
                 .any(|cycle| cycle == &vec![".".to_string(), ".".to_string()])
         );
+    }
+
+    #[test]
+    fn derives_stable_child_manifest_for_dirty_submodule() {
+        let parent = crate::Manifest::parse(
+            r#"
+schema = 1
+project_id = "parent/project:id"
+name = "Parent Project"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#,
+        )
+        .unwrap();
+
+        let first = dirty_submodule_child_manifest(&parent, "deps/child");
+        let second = dirty_submodule_child_manifest(&parent, "deps/child");
+
+        assert_eq!(first.project_id, second.project_id);
+        assert!(first.project_id.starts_with("parent_project_id_sub_"));
+        assert!(first.project_id.len() >= 8);
+        assert_eq!(first.name, "Parent Project submodule deps/child");
+        assert_eq!(first.workspace.untracked, parent.workspace.untracked);
     }
 
     fn init_repo(root: &Path) -> GitRepo {

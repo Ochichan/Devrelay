@@ -261,7 +261,17 @@ fn lfs_pointers_in_tree(
 }
 
 fn parse_lfs_pointer_from_worktree(repo: &GitRepo, path: &str) -> Result<Option<ParsedLfsPointer>> {
-    let bytes = match fs::read(repo.path().join(PathBuf::from(path))) {
+    let full_path = repo.path().join(PathBuf::from(path));
+    let metadata = match fs::symlink_metadata(&full_path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+
+    let bytes = match fs::read(full_path) {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),

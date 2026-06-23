@@ -26,6 +26,8 @@ pub struct SnapshotMetadata {
     #[serde(default)]
     pub parent_snapshot_id: Option<String>,
     #[serde(default)]
+    pub child_snapshots: Vec<SnapshotChildSnapshot>,
+    #[serde(default)]
     pub source_device_id: Option<String>,
     pub branch: Option<String>,
     pub head_oid: String,
@@ -53,6 +55,16 @@ pub struct SnapshotSidecar {
     pub chunk_size_bytes: u64,
     pub root_hash: String,
     pub cas_manifest_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotChildSnapshot {
+    pub relationship: String,
+    pub path: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub snapshot_id: String,
+    pub state_hash: String,
 }
 
 impl SnapshotMetadata {
@@ -95,6 +107,44 @@ impl SnapshotMetadata {
         }
         for sidecar in &self.sidecars {
             sidecar.validate()?;
+        }
+        for child in &self.child_snapshots {
+            child.validate()?;
+        }
+        Ok(())
+    }
+}
+
+impl SnapshotChildSnapshot {
+    pub fn validate(&self) -> Result<()> {
+        for (field, value) in [
+            ("child_snapshots.relationship", self.relationship.as_str()),
+            ("child_snapshots.path", self.path.as_str()),
+            ("child_snapshots.project_id", self.project_id.as_str()),
+            ("child_snapshots.session_id", self.session_id.as_str()),
+            ("child_snapshots.snapshot_id", self.snapshot_id.as_str()),
+            ("child_snapshots.state_hash", self.state_hash.as_str()),
+        ] {
+            if value.is_empty() {
+                return Err(DevRelayError::SnapshotMetadata(format!(
+                    "{field} must not be empty"
+                )));
+            }
+        }
+        if self.path.starts_with('/')
+            || self.path.contains('\\')
+            || self.path.split('/').any(|part| part == "..")
+        {
+            return Err(DevRelayError::SnapshotMetadata(format!(
+                "child snapshot path {} must be repository-relative",
+                self.path
+            )));
+        }
+        if !is_valid_snapshot_id(&self.snapshot_id) {
+            return Err(DevRelayError::SnapshotMetadata(format!(
+                "child snapshot {} has malformed snapshot_id {}",
+                self.path, self.snapshot_id
+            )));
         }
         Ok(())
     }
@@ -172,6 +222,16 @@ pub(crate) fn calculate_state_hash(metadata: &SnapshotMetadata) -> String {
             .then(left.cas_manifest_id.cmp(&right.cas_manifest_id))
     });
 
+    let mut child_snapshots = metadata.child_snapshots.clone();
+    child_snapshots.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.relationship.cmp(&right.relationship))
+            .then(left.project_id.cmp(&right.project_id))
+            .then(left.session_id.cmp(&right.session_id))
+            .then(left.snapshot_id.cmp(&right.snapshot_id))
+    });
+
     let mut hasher = blake3::Hasher::new();
     update_hash_field(&mut hasher, "devrelay.state.v1");
     update_hash_field(&mut hasher, &metadata.project_id);
@@ -199,6 +259,15 @@ pub(crate) fn calculate_state_hash(metadata: &SnapshotMetadata) -> String {
         update_hash_field(&mut hasher, &sidecar.chunk_size_bytes.to_string());
         update_hash_field(&mut hasher, &sidecar.root_hash);
         update_hash_field(&mut hasher, &sidecar.cas_manifest_id);
+    }
+    for child in &child_snapshots {
+        update_hash_field(&mut hasher, "child-snapshot");
+        update_hash_field(&mut hasher, &child.relationship);
+        update_hash_field(&mut hasher, &child.path);
+        update_hash_field(&mut hasher, &child.project_id);
+        update_hash_field(&mut hasher, &child.session_id);
+        update_hash_field(&mut hasher, &child.snapshot_id);
+        update_hash_field(&mut hasher, &child.state_hash);
     }
     hasher.finalize().to_hex().to_string()
 }
@@ -324,6 +393,7 @@ mod tests {
         assert_eq!(metadata.schema_version, SNAPSHOT_SCHEMA_VERSION);
         assert_eq!(metadata.session_id, None);
         assert_eq!(metadata.parent_snapshot_id, None);
+        assert!(metadata.child_snapshots.is_empty());
         assert_eq!(metadata.source_device_id, None);
         assert_eq!(metadata.operation_capsule, None);
         metadata.validate().expect("fixture should validate");
@@ -339,6 +409,7 @@ mod tests {
         assert_eq!(metadata.schema_version, SNAPSHOT_SCHEMA_VERSION);
         assert_eq!(metadata.session_id, None);
         assert_eq!(metadata.parent_snapshot_id, None);
+        assert!(metadata.child_snapshots.is_empty());
         assert_eq!(metadata.source_device_id, None);
         assert_eq!(metadata.operation_capsule, None);
         metadata.validate().expect("legacy fixture should validate");
@@ -355,6 +426,7 @@ mod tests {
             "project_name",
             "session_id",
             "parent_snapshot_id",
+            "child_snapshots",
             "source_device_id",
             "branch",
             "head_oid",
@@ -461,6 +533,34 @@ mod tests {
     }
 
     #[test]
+    fn state_hash_changes_when_child_snapshot_topology_changes() {
+        let first = metadata();
+        let mut second = first.clone();
+        second
+            .child_snapshots
+            .push(sample_child_snapshot("deps/lib"));
+
+        assert_ne!(calculate_state_hash(&first), calculate_state_hash(&second));
+        second.state_hash = calculate_state_hash(&second);
+        second.validate().unwrap();
+    }
+
+    #[test]
+    fn rejects_child_snapshot_path_traversal() {
+        let mut metadata = metadata();
+        metadata.child_snapshots.push(SnapshotChildSnapshot {
+            path: "../escape".to_string(),
+            ..sample_child_snapshot("deps/lib")
+        });
+
+        let err = metadata
+            .validate()
+            .expect_err("child snapshot traversal should fail");
+
+        assert!(err.to_string().contains("repository-relative"));
+    }
+
+    #[test]
     fn operation_capsule_round_trips_and_contributes_to_state_hash() {
         let mut first = metadata();
         first.operation_capsule = Some(sample_operation_capsule("stage-one"));
@@ -513,6 +613,17 @@ mod tests {
                 contents: format!("<<<<<<< HEAD\n{stage_oid}\n=======\ntheirs\n>>>>>>> branch\n")
                     .into_bytes(),
             }],
+        }
+    }
+
+    fn sample_child_snapshot(path: &str) -> SnapshotChildSnapshot {
+        SnapshotChildSnapshot {
+            relationship: "git-submodule".to_string(),
+            path: path.to_string(),
+            project_id: "child-project".to_string(),
+            session_id: "se_0123456789abcdef01234567".to_string(),
+            snapshot_id: "s1_0123456789abcdef01234567".to_string(),
+            state_hash: "child-state-hash".to_string(),
         }
     }
 }

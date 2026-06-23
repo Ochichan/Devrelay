@@ -239,10 +239,10 @@ pub use snapshot::{
     create_snapshot_with_sidecars, create_snapshot_with_sidecars_and_lfs_upstream,
     plan_apply_snapshot, read_snapshot_file, verify_snapshot, write_snapshot_file,
 };
-pub use snapshot_schema::{SnapshotMetadata, SnapshotSidecar};
+pub use snapshot_schema::{SnapshotChildSnapshot, SnapshotMetadata, SnapshotSidecar};
 pub use snapshot_store::{
-    SnapshotCheckpointResult, SnapshotPruneResult, SnapshotStore, SnapshotStoreFaultPoint,
-    StoredSnapshot,
+    SnapshotCheckpointResult, SnapshotCheckpointWithChildren, SnapshotPruneResult, SnapshotStore,
+    SnapshotStoreFaultPoint, StoredSnapshot,
 };
 pub use snapshot_upload::{
     PendingSnapshotUpload, PendingSnapshotUploadCleanup, SnapshotDataUpload,
@@ -260,7 +260,8 @@ pub use storage::{
     PairingStartRequest,
 };
 pub use submodule::{
-    SubmoduleReport, SubmoduleState, SubmoduleStatus, inspect_submodules,
+    SUBMODULE_CHILD_SNAPSHOT_RELATIONSHIP, SubmoduleReport, SubmoduleState, SubmoduleStatus,
+    dirty_submodule_child_manifest, dirty_submodule_child_project_id, inspect_submodules,
     inspect_submodules_with_depth, restore_clean_submodule_recorded_commit,
 };
 pub use transport_security::{

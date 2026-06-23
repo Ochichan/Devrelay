@@ -1685,8 +1685,8 @@ Conventions:
 - [x] Detect clean submodule state.
 - [x] Restore clean submodule recorded commit.
 - [x] Detect dirty submodule state.
-- [ ] Create child project/session for dirty submodule.
-- [ ] Store parent-child snapshot topology.
+- [x] Create child project/session for dirty submodule.
+- [x] Store parent-child snapshot topology.
 - [x] Add recursion depth limit.
 - [x] Add cycle detection.
 - [x] Add submodule tests.

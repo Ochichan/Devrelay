@@ -173,6 +173,7 @@ fn create_snapshot_inner(
         project_name: manifest.name.clone(),
         session_id: None,
         parent_snapshot_id: None,
+        child_snapshots: Vec::new(),
         source_device_id: None,
         branch: status.branch.clone(),
         head_oid,
