@@ -304,13 +304,18 @@ fn main() -> anyhow::Result<()> {
     let home = DevRelayHome::resolve()?;
     home.create_base_dirs()?;
     let config_path = cli.config.clone().unwrap_or_else(|| home.config_file());
-    let config = load_or_create_config(&config_path)?;
+    let mut config = load_or_create_config(&config_path)?;
+    config.mark_device_seen_now();
+    config
+        .save(&config_path)
+        .with_context(|| format!("failed to save {}", config_path.display()))?;
     let role = AgentRole::from_anchor_mode(config.anchor_mode);
     if role == AgentRole::Anchor {
         home.create_anchor_dirs()?;
     }
     let database_path = metadata_database_path_for_role(&home, role);
-    let _db = MetadataDb::open(&database_path)?;
+    let db = MetadataDb::open(&database_path)?;
+    db.upsert_device_identity(&config.device_identity())?;
     let anchor_layout = (role == AgentRole::Anchor).then(|| home.anchor_layout());
     let socket_path = cli
         .socket_path
@@ -1641,7 +1646,7 @@ fn load_or_create_config(path: &PathBuf) -> anyhow::Result<LocalConfig> {
     if path.exists() {
         LocalConfig::load(path).with_context(|| format!("failed to load {}", path.display()))
     } else {
-        let config = LocalConfig::default();
+        let config = LocalConfig::new_for_local_device();
         config
             .save(path)
             .with_context(|| format!("failed to save {}", path.display()))?;

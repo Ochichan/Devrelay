@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use devrelay_core::AgentRpcClient;
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, ApplySnapshotParams, ApplySnapshotResult,
-    CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome,
+    CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome, DeviceIdentity,
     DiagnosticsExportParams, DiagnosticsExportResult, ErrorInfo, GitRepo, LocalConfig,
     METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
     METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
@@ -66,6 +66,14 @@ enum Command {
     Diagnostics {
         #[command(subcommand)]
         command: DiagnosticsCommand,
+    },
+    Device {
+        #[command(subcommand)]
+        command: DeviceCommand,
+    },
+    Devices {
+        #[command(subcommand)]
+        command: DevicesCommand,
     },
     Continue {
         #[arg(long)]
@@ -190,6 +198,23 @@ enum DiagnosticsCommand {
         out: Option<PathBuf>,
         #[arg(long)]
         include_sensitive_paths: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DeviceCommand {
+    Show {
+        id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DevicesCommand {
+    List {
         #[arg(long)]
         json: bool,
     },
@@ -496,7 +521,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     ))
                     .into());
                 }
-                let config = LocalConfig::default();
+                let config = LocalConfig::new_for_local_device();
                 config
                     .save(&path)
                     .with_context(|| format!("failed to save {}", path.display()))?;
@@ -514,6 +539,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
         },
         Command::Diagnostics { command } => handle_diagnostics_command(command, &agent_options)?,
+        Command::Device { command } => handle_device_command(command)?,
+        Command::Devices { command } => handle_devices_command(command)?,
         Command::Manifest { command } => match command {
             ManifestCommand::Check { path, json } => {
                 let manifest = Manifest::load(&path)
@@ -810,7 +837,7 @@ fn init_anchor() -> anyhow::Result<AnchorStatusOutput> {
     let mut config = if config_path.exists() {
         LocalConfig::load(&config_path)?
     } else {
-        LocalConfig::default()
+        LocalConfig::new_for_local_device()
     };
     config.anchor_mode = AnchorMode::UserSelected;
     config.save(&config_path)?;
@@ -947,6 +974,85 @@ fn handle_diagnostics_command(
     Ok(())
 }
 
+fn handle_devices_command(command: DevicesCommand) -> anyhow::Result<()> {
+    match command {
+        DevicesCommand::List { json } => {
+            let registry = open_device_registry()?;
+            let devices = registry.db.list_devices()?;
+            render_devices_list(&devices, json)
+        }
+    }
+}
+
+fn handle_device_command(command: DeviceCommand) -> anyhow::Result<()> {
+    match command {
+        DeviceCommand::Show { id, json } => {
+            let registry = open_device_registry()?;
+            let device_id = id.unwrap_or_else(|| registry.config.device_id.clone());
+            let device = registry
+                .db
+                .get_device(&device_id)?
+                .ok_or_else(|| DevRelayError::Config(format!("unknown device {device_id}")))?;
+            render_device(&device, json)
+        }
+    }
+}
+
+struct DeviceRegistry {
+    config: LocalConfig,
+    db: MetadataDb,
+}
+
+fn open_device_registry() -> anyhow::Result<DeviceRegistry> {
+    let (config_path, mut config) = load_or_default_config(None)?;
+    config.mark_device_seen_now();
+    config.save(&config_path)?;
+
+    let home = DevRelayHome::resolve()?;
+    if AgentRole::from_anchor_mode(config.anchor_mode) == AgentRole::Anchor {
+        home.create_anchor_dirs()?;
+    } else {
+        home.create_base_dirs()?;
+    }
+    let db = MetadataDb::open(device_metadata_db_path(&home, &config))?;
+    db.upsert_device_identity(&config.device_identity())?;
+    Ok(DeviceRegistry { config, db })
+}
+
+fn device_metadata_db_path(home: &DevRelayHome, config: &LocalConfig) -> PathBuf {
+    match AgentRole::from_anchor_mode(config.anchor_mode) {
+        AgentRole::LocalOnly => home.root().join("agent.sqlite"),
+        AgentRole::Anchor => home.anchor_metadata_db_path(),
+    }
+}
+
+fn render_devices_list(devices: &[DeviceIdentity], json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(devices)?);
+    } else {
+        for device in devices {
+            println!("{} ({})", device.display_name, device.device_id);
+            println!("  platform: {}", device.platform_key);
+            println!("  architecture: {}", device.architecture);
+            println!("  last seen: {}", device.last_seen_unix_seconds);
+        }
+    }
+    Ok(())
+}
+
+fn render_device(device: &DeviceIdentity, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(device)?);
+    } else {
+        println!("device: {} ({})", device.display_name, device.device_id);
+        println!("  platform: {}", device.platform_key);
+        println!("  architecture: {}", device.architecture);
+        println!("  paired: {}", device.paired_at_unix_seconds.is_some());
+        println!("  last seen: {}", device.last_seen_unix_seconds);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AgentServicePlatform {
     Macos,
@@ -1059,7 +1165,7 @@ fn load_or_default_config(path: Option<PathBuf>) -> anyhow::Result<(PathBuf, Loc
     if path.exists() {
         Ok((path.clone(), LocalConfig::load(&path)?))
     } else {
-        Ok((path, LocalConfig::default()))
+        Ok((path, LocalConfig::new_for_local_device()))
     }
 }
 

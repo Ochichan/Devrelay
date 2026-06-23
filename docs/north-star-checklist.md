@@ -641,16 +641,16 @@ Conventions:
 
 ### M3.3 Device Identity Placeholder
 
-- [ ] Generate local device ID.
-- [ ] Store device display name.
-- [ ] Store platform key.
-- [ ] Store architecture.
-- [ ] Store capabilities JSON.
-- [ ] Store paired timestamp placeholder.
-- [ ] Store last seen timestamp.
-- [ ] Add `devrelay devices list`.
-- [ ] Add `devrelay device show`.
-- [ ] Add device identity tests.
+- [x] Generate local device ID.
+- [x] Store device display name.
+- [x] Store platform key.
+- [x] Store architecture.
+- [x] Store capabilities JSON.
+- [x] Store paired timestamp placeholder.
+- [x] Store last seen timestamp.
+- [x] Add `devrelay devices list`.
+- [x] Add `devrelay device show`.
+- [x] Add device identity tests.
 
 ### M3.4 Session Model
 

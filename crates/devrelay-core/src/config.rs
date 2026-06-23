@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const LOCAL_CONFIG_VERSION: u32 = 1;
+pub const DEVICE_ID_PREFIX: &str = "d_";
 pub const WORKSPACE_ID_PREFIX: &str = "w_";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,6 +23,16 @@ pub struct LocalConfig {
     #[serde(default = "default_device_id")]
     pub device_id: String,
     pub device_name: String,
+    #[serde(default = "default_platform_key")]
+    pub platform_key: String,
+    #[serde(default = "default_architecture")]
+    pub architecture: String,
+    #[serde(default = "default_capabilities_json")]
+    pub capabilities_json: String,
+    #[serde(default)]
+    pub paired_at_unix_seconds: Option<u64>,
+    #[serde(default)]
+    pub last_seen_unix_seconds: u64,
     pub editor: EditorPreference,
     pub resource_profile: ResourceProfile,
     pub anchor_mode: AnchorMode,
@@ -124,6 +136,11 @@ pub struct RedactedLocalConfig {
     pub fabric_name: String,
     pub device_id: String,
     pub device_name: String,
+    pub platform_key: String,
+    pub architecture: String,
+    pub capabilities_json: String,
+    pub paired_at_unix_seconds: Option<u64>,
+    pub last_seen_unix_seconds: u64,
     pub editor: EditorPreference,
     pub resource_profile: ResourceProfile,
     pub anchor_mode: AnchorMode,
@@ -139,6 +156,17 @@ pub struct RedactedProjectRegistryEntry {
     pub workspace_count: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceIdentity {
+    pub device_id: String,
+    pub display_name: String,
+    pub platform_key: String,
+    pub architecture: String,
+    pub capabilities_json: String,
+    pub paired_at_unix_seconds: Option<u64>,
+    pub last_seen_unix_seconds: u64,
+}
+
 impl Default for LocalConfig {
     fn default() -> Self {
         Self {
@@ -146,6 +174,11 @@ impl Default for LocalConfig {
             fabric_name: "Personal Fabric".to_string(),
             device_id: default_device_id(),
             device_name: "this-device".to_string(),
+            platform_key: default_platform_key(),
+            architecture: default_architecture(),
+            capabilities_json: default_capabilities_json(),
+            paired_at_unix_seconds: None,
+            last_seen_unix_seconds: 0,
             editor: EditorPreference {
                 command: "system".to_string(),
             },
@@ -157,6 +190,19 @@ impl Default for LocalConfig {
 }
 
 impl LocalConfig {
+    pub fn new_for_local_device() -> Self {
+        Self {
+            device_id: generate_device_id(),
+            device_name: default_device_display_name(),
+            platform_key: default_platform_key(),
+            architecture: default_architecture(),
+            capabilities_json: default_capabilities_json(),
+            paired_at_unix_seconds: None,
+            last_seen_unix_seconds: unix_now_seconds(),
+            ..Self::default()
+        }
+    }
+
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let raw = fs::read_to_string(path)?;
         Self::parse(&raw)
@@ -194,6 +240,9 @@ impl LocalConfig {
         validate_non_empty("fabric_name", &self.fabric_name)?;
         validate_non_empty("device_id", &self.device_id)?;
         validate_non_empty("device_name", &self.device_name)?;
+        validate_non_empty("platform_key", &self.platform_key)?;
+        validate_non_empty("architecture", &self.architecture)?;
+        validate_capabilities_json(&self.capabilities_json)?;
         validate_non_empty("editor.command", &self.editor.command)?;
 
         for (key, project) in &self.project_registry.projects {
@@ -263,6 +312,11 @@ impl LocalConfig {
             fabric_name: self.fabric_name.clone(),
             device_id: self.device_id.clone(),
             device_name: self.device_name.clone(),
+            platform_key: self.platform_key.clone(),
+            architecture: self.architecture.clone(),
+            capabilities_json: self.capabilities_json.clone(),
+            paired_at_unix_seconds: self.paired_at_unix_seconds,
+            last_seen_unix_seconds: self.last_seen_unix_seconds,
             editor: self.editor.clone(),
             resource_profile: self.resource_profile,
             anchor_mode: self.anchor_mode,
@@ -284,6 +338,22 @@ impl LocalConfig {
                 })
                 .collect(),
         }
+    }
+
+    pub fn device_identity(&self) -> DeviceIdentity {
+        DeviceIdentity {
+            device_id: self.device_id.clone(),
+            display_name: self.device_name.clone(),
+            platform_key: self.platform_key.clone(),
+            architecture: self.architecture.clone(),
+            capabilities_json: self.capabilities_json.clone(),
+            paired_at_unix_seconds: self.paired_at_unix_seconds,
+            last_seen_unix_seconds: self.last_seen_unix_seconds,
+        }
+    }
+
+    pub fn mark_device_seen_now(&mut self) {
+        self.last_seen_unix_seconds = unix_now_seconds();
     }
 
     fn backfill_legacy_workspaces(&mut self) {
@@ -382,8 +452,67 @@ fn validate_non_empty(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_capabilities_json(value: &str) -> Result<()> {
+    let parsed: serde_json::Value = serde_json::from_str(value).map_err(|err| {
+        DevRelayError::Config(format!("capabilities_json must be valid JSON: {err}"))
+    })?;
+    if !parsed.is_object() {
+        return Err(DevRelayError::Config(
+            "capabilities_json must encode a JSON object".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn default_device_id() -> String {
     "local-device".to_string()
+}
+
+fn default_device_display_name() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "this-device".to_string())
+}
+
+fn default_platform_key() -> String {
+    std::env::consts::OS.to_string()
+}
+
+fn default_architecture() -> String {
+    std::env::consts::ARCH.to_string()
+}
+
+fn default_capabilities_json() -> String {
+    r#"{"anchor":true,"local_snapshots":true}"#.to_string()
+}
+
+pub fn generate_device_id() -> String {
+    let seed = format!(
+        "{}\0{}\0{}\0{}\0{}",
+        default_device_display_name(),
+        default_platform_key(),
+        default_architecture(),
+        std::process::id(),
+        unix_now_nanos()
+    );
+    let digest = blake3::hash(seed.as_bytes());
+    format!("{DEVICE_ID_PREFIX}{}", &digest.to_hex()[..24])
+}
+
+fn unix_now_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn unix_now_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
 }
 
 #[cfg(test)]
@@ -402,9 +531,33 @@ mod tests {
         assert_eq!(decoded.fabric_name, "Personal Fabric");
         assert_eq!(decoded.device_id, "local-device");
         assert_eq!(decoded.device_name, "this-device");
+        assert_eq!(decoded.platform_key, std::env::consts::OS);
+        assert_eq!(decoded.architecture, std::env::consts::ARCH);
+        assert!(serde_json::from_str::<serde_json::Value>(&decoded.capabilities_json).is_ok());
+        assert_eq!(decoded.paired_at_unix_seconds, None);
+        assert_eq!(decoded.last_seen_unix_seconds, 0);
         assert_eq!(decoded.editor.command, "system");
         assert_eq!(decoded.resource_profile, ResourceProfile::Balanced);
         assert_eq!(decoded.anchor_mode, AnchorMode::LocalOnly);
+    }
+
+    #[test]
+    fn new_local_config_generates_device_identity() {
+        let config = LocalConfig::new_for_local_device();
+        config.validate().unwrap();
+
+        assert!(config.device_id.starts_with(DEVICE_ID_PREFIX));
+        assert_eq!(config.device_id.len(), DEVICE_ID_PREFIX.len() + 24);
+        assert!(!config.device_name.is_empty());
+        assert_eq!(config.platform_key, std::env::consts::OS);
+        assert_eq!(config.architecture, std::env::consts::ARCH);
+        assert_eq!(config.paired_at_unix_seconds, None);
+        assert!(config.last_seen_unix_seconds > 0);
+
+        let identity = config.device_identity();
+        assert_eq!(identity.device_id, config.device_id);
+        assert_eq!(identity.display_name, config.device_name);
+        assert_eq!(identity.capabilities_json, config.capabilities_json);
     }
 
     #[test]

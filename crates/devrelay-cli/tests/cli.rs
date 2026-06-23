@@ -1418,6 +1418,55 @@ fn anchor_init_and_status_report_layout() {
 }
 
 #[test]
+fn device_commands_show_generated_local_identity() {
+    let root = std::env::temp_dir().join(format!("devrelay-device-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let list = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["devices", "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let devices: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let local = devices.as_array().unwrap().first().unwrap();
+    let device_id = local["device_id"].as_str().unwrap();
+    assert!(device_id.starts_with("d_"));
+    assert!(!local["display_name"].as_str().unwrap().is_empty());
+    assert_eq!(local["platform_key"], std::env::consts::OS);
+    assert_eq!(local["architecture"], std::env::consts::ARCH);
+    assert!(
+        serde_json::from_str::<serde_json::Value>(local["capabilities_json"].as_str().unwrap())
+            .unwrap()
+            .is_object()
+    );
+    assert!(local["paired_at_unix_seconds"].is_null());
+    assert!(local["last_seen_unix_seconds"].as_u64().unwrap() > 0);
+    assert!(root.join("config.toml").exists());
+    assert!(root.join("agent.sqlite").exists());
+
+    let show = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["device", "show", device_id, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        show.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&show.stderr)
+    );
+    let shown: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(shown["device_id"], device_id);
+    assert_eq!(shown["display_name"], local["display_name"]);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn project_registry_commands_round_trip() {
     let root = std::env::temp_dir().join(format!(
         "devrelay-project-test-{}-{}",
@@ -1561,7 +1610,11 @@ fn project_add_uses_manifest_and_records_fingerprints() {
             .is_some_and(|value| value.starts_with("w_"))
     );
     assert_eq!(workspace["project_id"].as_str(), Some("manifest-project"));
-    assert_eq!(workspace["device_id"].as_str(), Some("local-device"));
+    assert!(
+        workspace["device_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("d_"))
+    );
     assert_eq!(
         workspace["local_path"].as_str(),
         Some(root.canonicalize().unwrap().to_str().unwrap())

@@ -4,7 +4,7 @@
 //! metadata in a per-project SQLite database. Migrations are monotonic and run
 //! inside a transaction so a failed migration leaves the previous schema intact.
 
-use crate::Result;
+use crate::{DeviceIdentity, Result};
 use rusqlite::{Connection, Transaction};
 use std::collections::BTreeSet;
 use std::fs;
@@ -224,11 +224,101 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
         tx.commit()?;
         Ok(result)
     }
+
+    pub fn upsert_device_identity(&self, device: &DeviceIdentity) -> Result<()> {
+        self.conn.execute(
+            r#"
+INSERT INTO devices (
+    device_id,
+    display_name,
+    platform_key,
+    architecture,
+    capabilities_json,
+    paired_at_unix_seconds,
+    last_seen_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+ON CONFLICT(device_id) DO UPDATE SET
+    display_name = excluded.display_name,
+    platform_key = excluded.platform_key,
+    architecture = excluded.architecture,
+    capabilities_json = excluded.capabilities_json,
+    paired_at_unix_seconds = excluded.paired_at_unix_seconds,
+    last_seen_unix_seconds = excluded.last_seen_unix_seconds
+"#,
+            (
+                device.device_id.as_str(),
+                device.display_name.as_str(),
+                device.platform_key.as_str(),
+                device.architecture.as_str(),
+                device.capabilities_json.as_str(),
+                device.paired_at_unix_seconds.map(|value| value as i64),
+                device.last_seen_unix_seconds as i64,
+            ),
+        )?;
+        Ok(())
+    }
+
+    pub fn list_devices(&self) -> Result<Vec<DeviceIdentity>> {
+        let mut statement = self.conn.prepare(
+            r#"
+SELECT device_id,
+       display_name,
+       platform_key,
+       architecture,
+       capabilities_json,
+       paired_at_unix_seconds,
+       last_seen_unix_seconds
+FROM devices
+ORDER BY display_name ASC, device_id ASC
+"#,
+        )?;
+        let rows = statement.query_map([], device_identity_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn get_device(&self, device_id: &str) -> Result<Option<DeviceIdentity>> {
+        let mut statement = self.conn.prepare(
+            r#"
+SELECT device_id,
+       display_name,
+       platform_key,
+       architecture,
+       capabilities_json,
+       paired_at_unix_seconds,
+       last_seen_unix_seconds
+FROM devices
+WHERE device_id = ?1
+"#,
+        )?;
+        let mut rows = statement.query([device_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(device_identity_from_row(row)?))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+fn device_identity_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceIdentity> {
+    let paired_at_unix_seconds = row
+        .get::<_, Option<i64>>(5)?
+        .map(|value| value.max(0) as u64);
+    let last_seen_unix_seconds = row.get::<_, i64>(6)?.max(0) as u64;
+    Ok(DeviceIdentity {
+        device_id: row.get(0)?,
+        display_name: row.get(1)?,
+        platform_key: row.get(2)?,
+        architecture: row.get(3)?,
+        capabilities_json: row.get(4)?,
+        paired_at_unix_seconds,
+        last_seen_unix_seconds,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LocalConfig;
 
     fn table_exists(db: &MetadataDb, table: &str) -> bool {
         db.connection()
@@ -435,6 +525,31 @@ mod tests {
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+    }
+
+    #[test]
+    fn stores_device_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let db = MetadataDb::open(&path).unwrap();
+        let mut identity = LocalConfig::new_for_local_device().device_identity();
+        identity.display_name = "Laptop".to_string();
+
+        db.upsert_device_identity(&identity).unwrap();
+        let devices = db.list_devices().unwrap();
+
+        assert_eq!(devices, vec![identity.clone()]);
+        assert_eq!(
+            db.get_device(&identity.device_id).unwrap().as_ref(),
+            Some(&identity)
+        );
+
+        let mut renamed = identity.clone();
+        renamed.display_name = "Renamed Laptop".to_string();
+        db.upsert_device_identity(&renamed).unwrap();
+
+        let devices = db.list_devices().unwrap();
+        assert_eq!(devices, vec![renamed]);
     }
 
     #[test]

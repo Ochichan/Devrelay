@@ -52,9 +52,10 @@ mod snapshot_store;
 mod storage;
 
 pub use config::{
-    AgentRole, AnchorMode, EditorPreference, LocalConfig, ProjectRegistryEntry,
-    ProjectRegistryIndex, RedactedLocalConfig, ResourceProfile, WORKSPACE_ID_PREFIX,
-    WorkspaceRegistryEntry, WorkspaceState, migrate_local_config, workspace_id_for,
+    AgentRole, AnchorMode, DEVICE_ID_PREFIX, DeviceIdentity, EditorPreference, LocalConfig,
+    ProjectRegistryEntry, ProjectRegistryIndex, RedactedLocalConfig, ResourceProfile,
+    WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry, WorkspaceState, generate_device_id,
+    migrate_local_config, workspace_id_for,
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{
