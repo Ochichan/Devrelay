@@ -991,16 +991,16 @@ Conventions:
 
 ### M6.2 Adaptive Debounce
 
-- [ ] Add first-event quiet timer.
-- [ ] Add minimum checkpoint interval.
-- [ ] Add max dirty interval.
-- [ ] Add publish quiet timer.
-- [ ] Add max publish interval.
-- [ ] Add immediate flush on explicit checkpoint.
-- [ ] Add immediate flush on handoff.
+- [x] Add first-event quiet timer.
+- [x] Add minimum checkpoint interval.
+- [x] Add max dirty interval.
+- [x] Add publish quiet timer.
+- [x] Add max publish interval.
+- [x] Add immediate flush on explicit checkpoint.
+- [x] Add immediate flush on handoff.
 - [ ] Add immediate flush on sleep/lock signal where available.
-- [ ] Add debounce tests.
-- [ ] Add coalescing tests.
+- [x] Add debounce tests.
+- [x] Add coalescing tests.
 
 ### M6.3 Background Checkpoint
 

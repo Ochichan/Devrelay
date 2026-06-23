@@ -37,6 +37,7 @@
 
 mod audit;
 mod config;
+mod debounce;
 mod discovery;
 mod error;
 mod events;
@@ -78,6 +79,10 @@ pub use config::{
     ProjectRegistryEntry, ProjectRegistryIndex, RedactedLocalConfig, ResourceProfile,
     WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry, WorkspaceState, generate_device_id,
     migrate_local_config, workspace_id_for,
+};
+pub use debounce::{
+    AdaptiveDebouncer, BackgroundDebouncePolicy, DebounceDrain, DebounceFlushReason,
+    DebouncedCheckpoint, DebouncedPublish,
 };
 pub use discovery::{
     DEVRELAY_ANCHOR_SERVICE_TYPE, DEVRELAY_DISCOVERY_PROTOCOL, DEVRELAY_PEER_SERVICE_TYPE,
