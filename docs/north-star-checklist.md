@@ -1599,20 +1599,20 @@ Conventions:
 
 ### M11.2 Path Portability Doctor
 
-- [ ] Walk Git-tracked paths.
-- [ ] Walk accepted untracked paths.
-- [ ] Detect case-fold collisions.
-- [ ] Detect Unicode normalization collisions.
-- [ ] Detect Windows reserved names.
-- [ ] Detect trailing dot.
-- [ ] Detect trailing space.
-- [ ] Detect invalid Windows characters.
-- [ ] Detect path length budget violations.
-- [ ] Detect symlink capability mismatch.
-- [ ] Report path conflict codes.
-- [ ] Add target exclusion safe action.
-- [ ] Add rename guidance safe action.
-- [ ] Add portability tests.
+- [x] Walk Git-tracked paths.
+- [x] Walk accepted untracked paths.
+- [x] Detect case-fold collisions.
+- [x] Detect Unicode normalization collisions.
+- [x] Detect Windows reserved names.
+- [x] Detect trailing dot.
+- [x] Detect trailing space.
+- [x] Detect invalid Windows characters.
+- [x] Detect path length budget violations.
+- [x] Detect symlink capability mismatch.
+- [x] Report path conflict codes.
+- [x] Add target exclusion safe action.
+- [x] Add rename guidance safe action.
+- [x] Add portability tests.
 
 ### M11.3 Line Endings
 

@@ -50,6 +50,7 @@ mod lease;
 mod logging;
 pub mod manifest;
 mod pairing;
+mod path_doctor;
 mod platform;
 mod policy;
 mod rpc;
@@ -116,10 +117,14 @@ pub use pairing::{
     compute_handshake_transcript_hash, derive_short_authentication_string,
     generate_ephemeral_pairing_key, generate_pairing_id, validate_key_hex,
 };
+pub use path_doctor::{
+    PathPortabilityDoctorReport, PathPortabilityIssue, PathPortabilityIssueCode,
+    PathPortabilityPathSource, run_path_portability_doctor,
+};
 pub use platform::{
     PLATFORM_KEY_FORMAT, PlatformCapabilities, PlatformIdentity, WslIdentity,
     current_platform_architecture, current_platform_capabilities_json, current_platform_key,
-    detect_platform_identity,
+    detect_platform_identity, platform_capabilities_for_key,
 };
 pub use policy::{ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths};
 #[cfg(unix)]

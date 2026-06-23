@@ -51,6 +51,20 @@ pub fn current_platform_capabilities_json() -> String {
         .unwrap_or_else(|_| r#"{"anchor":true,"local_snapshots":true}"#.to_string())
 }
 
+pub fn platform_capabilities_for_key(platform_key: &str) -> PlatformCapabilities {
+    if platform_key.starts_with("darwin-") {
+        capabilities_for("darwin")
+    } else if platform_key.starts_with("linux-gnu-") {
+        capabilities_for("linux")
+    } else if platform_key.starts_with("wsl2-linux-gnu-") {
+        capabilities_for("wsl2")
+    } else if platform_key.starts_with("windows-native-") {
+        capabilities_for("windows")
+    } else {
+        capabilities_for("unknown")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlatformProbe {
     os: String,

@@ -282,6 +282,67 @@ fn doctor_git_performance_reports_and_preserves_user_config() {
 }
 
 #[test]
+fn doctor_paths_reports_tracked_and_untracked_portability_issues() {
+    let repo =
+        std::env::temp_dir().join(format!("devrelay-doctor-paths-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    std::fs::write(
+        repo.join("devrelay.toml"),
+        r#"
+schema = 1
+project_id = "12345678"
+name = "demo"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#,
+    )
+    .unwrap();
+    std::fs::write(repo.join("CON.txt"), "reserved\n").unwrap();
+    git(&repo, &["add", "devrelay.toml", "CON.txt"]);
+    git(&repo, &["commit", "-m", "manifest and reserved path"]);
+    std::fs::write(repo.join("scratch?.txt"), "accepted untracked\n").unwrap();
+
+    let output = devrelay()
+        .args([
+            "doctor",
+            "paths",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--target-platform",
+            "windows-native-x86_64",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["target_platform_key"], "windows-native-x86_64");
+    assert_eq!(value["accepted_untracked_count"], 1);
+    let issues = value["issues"].as_array().unwrap();
+    assert!(issues.iter().any(|issue| {
+        issue["code"] == "windows-reserved-name"
+            && issue["path"] == "CON.txt"
+            && issue["source"] == "tracked"
+    }));
+    assert!(issues.iter().any(|issue| {
+        issue["code"] == "windows-invalid-character"
+            && issue["path"] == "scratch?.txt"
+            && issue["source"] == "accepted-untracked"
+    }));
+
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[test]
 fn audit_list_and_export_redact_by_default() {
     use devrelay_core::{AuditEventInput, AuditEventType, AuditOutcome, DevRelayHome, MetadataDb};
 

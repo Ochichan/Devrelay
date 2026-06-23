@@ -18,16 +18,17 @@ use devrelay_core::{
     METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
     METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
     METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, MetadataDb, PairingSession,
-    PairingStartRequest, PathDecision, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
-    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
-    RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
-    RecoverShowResult, ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind,
-    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
-    StoredSession, StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
-    WorkspaceState, apply_snapshot, build_discovery_advertisement, classify_untracked_paths,
-    create_snapshot, current_platform_key, linux_systemd_user_template,
-    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file,
-    run_git_performance_doctor, workspace_id_for, write_snapshot_file,
+    PairingStartRequest, PathDecision, PathPortabilityDoctorReport, PatternConfig,
+    PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
+    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RecoverListParams,
+    RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
+    ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore,
+    StatusGetParams, StatusGetResult, StatusSummary, StoredSession, StoredSnapshot,
+    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, apply_snapshot,
+    build_discovery_advertisement, classify_untracked_paths, create_snapshot, current_platform_key,
+    linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
+    read_snapshot_file, run_git_performance_doctor, run_path_portability_doctor, workspace_id_for,
+    write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -268,6 +269,16 @@ enum DoctorCommand {
         repo: PathBuf,
         #[arg(long)]
         fix_safe: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Paths {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, default_value = "devrelay.toml")]
+        manifest: PathBuf,
+        #[arg(long)]
+        target_platform: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -1363,6 +1374,25 @@ fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
             let report = run_git_performance_doctor(&repo, fix_safe)?;
             render_git_performance_doctor(&report, json)
         }
+        DoctorCommand::Paths {
+            repo,
+            manifest,
+            target_platform,
+            json,
+        } => {
+            let repo_root = resolve_git_root(&repo)?;
+            let manifest_path = if manifest.is_absolute() {
+                manifest
+            } else {
+                repo_root.join(manifest)
+            };
+            let manifest = Manifest::load(&manifest_path)
+                .with_context(|| format!("failed to load {}", manifest_path.display()))?;
+            let target_platform = target_platform.unwrap_or_else(current_platform_key);
+            let report =
+                run_path_portability_doctor(&GitRepo::new(repo_root), &manifest, &target_platform)?;
+            render_path_portability_doctor(&report, json)
+        }
     }
 }
 
@@ -1396,6 +1426,36 @@ fn render_git_performance_doctor(
         }
         for recommendation in &report.recommendations {
             println!("  recommendation: {}", recommendation.message);
+        }
+    }
+    Ok(())
+}
+
+fn render_path_portability_doctor(
+    report: &PathPortabilityDoctorReport,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!("path portability doctor: {}", report.repo.display());
+        println!("  target: {}", report.target_platform_key);
+        println!("  tracked paths: {}", report.tracked_count);
+        println!(
+            "  accepted untracked paths: {}",
+            report.accepted_untracked_count
+        );
+        if report.issues.is_empty() {
+            println!("  issues: none");
+        } else {
+            println!("  issues: {}", report.issues.len());
+            for issue in &report.issues {
+                println!("  - {:?}: {}", issue.code, issue.path);
+                println!("    {}", issue.message);
+                for action in &issue.safe_actions {
+                    println!("    action: {action}");
+                }
+            }
         }
     }
     Ok(())
