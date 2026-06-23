@@ -46,6 +46,7 @@ pub mod manifest;
 mod policy;
 mod rpc;
 mod service;
+mod session;
 mod snapshot;
 mod snapshot_schema;
 mod snapshot_store;
@@ -97,6 +98,9 @@ pub use rpc::{
 pub use service::{
     LINUX_SYSTEMD_UNIT, MACOS_LAUNCH_AGENT_LABEL, ServiceTemplate, ServiceTemplateInput,
     ServiceTemplateKind, linux_systemd_user_template, macos_launch_agent_template,
+};
+pub use session::{
+    SESSION_ID_PREFIX, SessionState, StoredSession, generate_session_id, unix_now_seconds,
 };
 pub use snapshot::{
     ApplyPlan, VerificationDetails, apply_snapshot, create_snapshot, plan_apply_snapshot,

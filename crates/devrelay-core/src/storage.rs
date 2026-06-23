@@ -4,8 +4,10 @@
 //! metadata in a per-project SQLite database. Migrations are monotonic and run
 //! inside a transaction so a failed migration leaves the previous schema intact.
 
-use crate::{DeviceIdentity, Result};
-use rusqlite::{Connection, Transaction};
+use crate::{
+    DeviceIdentity, Result, SessionState, StoredSession, generate_session_id, unix_now_seconds,
+};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -160,6 +162,20 @@ CREATE INDEX idx_handoffs_target_device_state
     ON handoffs(target_device_id, state);
 "#,
     },
+    Migration {
+        version: 3,
+        name: "session_model",
+        sql: r#"
+ALTER TABLE sessions ADD COLUMN name TEXT;
+ALTER TABLE sessions ADD COLUMN parent_session_id TEXT;
+ALTER TABLE sessions ADD COLUMN archived_at_unix_seconds INTEGER;
+
+CREATE INDEX idx_sessions_project_state
+    ON sessions(project_id, state);
+CREATE INDEX idx_sessions_parent
+    ON sessions(parent_session_id);
+"#,
+    },
 ];
 
 pub struct MetadataDb {
@@ -297,6 +313,191 @@ WHERE device_id = ?1
             Ok(None)
         }
     }
+
+    pub fn ensure_default_session(
+        &self,
+        project_id: &str,
+        display_name: &str,
+        active_workspace_id: Option<&str>,
+    ) -> Result<StoredSession> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO projects (project_id, display_name) VALUES (?1, ?2)",
+            (project_id, display_name),
+        )?;
+        self.conn.execute(
+            "UPDATE projects SET display_name = ?1 WHERE project_id = ?2",
+            (display_name, project_id),
+        )?;
+
+        if let Some(session) = self
+            .conn
+            .query_row(
+                r#"
+SELECT session_id,
+       project_id,
+       name,
+       parent_session_id,
+       active_workspace_id,
+       state,
+       archived_at_unix_seconds,
+       created_at_unix_seconds,
+       updated_at_unix_seconds
+FROM sessions
+WHERE project_id = ?1 AND parent_session_id IS NULL
+ORDER BY created_at_unix_seconds ASC, session_id ASC
+LIMIT 1
+"#,
+                [project_id],
+                stored_session_from_row,
+            )
+            .optional()?
+        {
+            return Ok(session);
+        }
+
+        self.insert_session(
+            project_id,
+            display_name,
+            None,
+            active_workspace_id,
+            SessionState::Active,
+        )
+    }
+
+    pub fn insert_session(
+        &self,
+        project_id: &str,
+        name: &str,
+        parent_session_id: Option<&str>,
+        active_workspace_id: Option<&str>,
+        state: SessionState,
+    ) -> Result<StoredSession> {
+        let session_id = generate_session_id();
+        let now = unix_now_seconds();
+        self.conn.execute(
+            r#"
+INSERT INTO sessions (
+    session_id,
+    project_id,
+    active_workspace_id,
+    state,
+    name,
+    parent_session_id,
+    archived_at_unix_seconds,
+    created_at_unix_seconds,
+    updated_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+"#,
+            (
+                session_id.as_str(),
+                project_id,
+                active_workspace_id,
+                state.as_str(),
+                name,
+                parent_session_id,
+                Option::<i64>::None,
+                now as i64,
+                now as i64,
+            ),
+        )?;
+        self.get_session(&session_id)?
+            .ok_or_else(|| crate::DevRelayError::Config("session insert disappeared".to_string()))
+    }
+
+    pub fn list_sessions(&self, project_id: Option<&str>) -> Result<Vec<StoredSession>> {
+        let sql = r#"
+SELECT session_id,
+       project_id,
+       name,
+       parent_session_id,
+       active_workspace_id,
+       state,
+       archived_at_unix_seconds,
+       created_at_unix_seconds,
+       updated_at_unix_seconds
+FROM sessions
+"#;
+        let mut sessions = if let Some(project_id) = project_id {
+            let mut statement = self.conn.prepare(&format!(
+                "{sql} WHERE project_id = ?1 ORDER BY created_at_unix_seconds ASC, session_id ASC"
+            ))?;
+            let rows = statement.query_map([project_id], stored_session_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            let mut statement = self.conn.prepare(&format!(
+                "{sql} ORDER BY project_id ASC, created_at_unix_seconds ASC, session_id ASC"
+            ))?;
+            let rows = statement.query_map([], stored_session_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        sessions.sort_by(|left, right| {
+            left.project_id
+                .cmp(&right.project_id)
+                .then(
+                    left.created_at_unix_seconds
+                        .cmp(&right.created_at_unix_seconds),
+                )
+                .then(left.session_id.cmp(&right.session_id))
+        });
+        Ok(sessions)
+    }
+
+    pub fn get_session(&self, session_id: &str) -> Result<Option<StoredSession>> {
+        self.conn
+            .query_row(
+                r#"
+SELECT session_id,
+       project_id,
+       name,
+       parent_session_id,
+       active_workspace_id,
+       state,
+       archived_at_unix_seconds,
+       created_at_unix_seconds,
+       updated_at_unix_seconds
+FROM sessions
+WHERE session_id = ?1
+"#,
+                [session_id],
+                stored_session_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn fork_session(&self, session_id: &str, name: &str) -> Result<StoredSession> {
+        let parent = self
+            .get_session(session_id)?
+            .ok_or_else(|| crate::DevRelayError::Config(format!("unknown session {session_id}")))?;
+        self.insert_session(
+            &parent.project_id,
+            name,
+            Some(&parent.session_id),
+            parent.active_workspace_id.as_deref(),
+            SessionState::Fork,
+        )
+    }
+
+    pub fn archive_session(&self, session_id: &str) -> Result<StoredSession> {
+        let now = unix_now_seconds();
+        let changed = self.conn.execute(
+            r#"
+UPDATE sessions
+SET state = ?1,
+    archived_at_unix_seconds = ?2,
+    updated_at_unix_seconds = ?2
+WHERE session_id = ?3
+"#,
+            (SessionState::Archived.as_str(), now as i64, session_id),
+        )?;
+        if changed == 0 {
+            return Err(crate::DevRelayError::Config(format!(
+                "unknown session {session_id}"
+            )));
+        }
+        self.get_session(session_id)?
+            .ok_or_else(|| crate::DevRelayError::Config("session archive disappeared".to_string()))
+    }
 }
 
 fn device_identity_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceIdentity> {
@@ -312,6 +513,25 @@ fn device_identity_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceI
         capabilities_json: row.get(4)?,
         paired_at_unix_seconds,
         last_seen_unix_seconds,
+    })
+}
+
+fn stored_session_from_row(row: &Row<'_>) -> rusqlite::Result<StoredSession> {
+    let archived_at_unix_seconds = row
+        .get::<_, Option<i64>>(6)?
+        .map(|value| value.max(0) as u64);
+    Ok(StoredSession {
+        session_id: row.get(0)?,
+        project_id: row.get(1)?,
+        name: row
+            .get::<_, Option<String>>(2)?
+            .unwrap_or_else(|| "Default".to_string()),
+        parent_session_id: row.get(3)?,
+        active_workspace_id: row.get(4)?,
+        state: SessionState::parse(&row.get::<_, String>(5)?),
+        archived_at_unix_seconds,
+        created_at_unix_seconds: row.get::<_, i64>(7)?.max(0) as u64,
+        updated_at_unix_seconds: row.get::<_, i64>(8)?.max(0) as u64,
     })
 }
 
@@ -396,6 +616,8 @@ mod tests {
         assert!(index_exists(&db, "idx_leases_project_state"));
         assert!(index_exists(&db, "idx_leases_holder_device"));
         assert!(index_exists(&db, "idx_leases_session"));
+        assert!(index_exists(&db, "idx_sessions_project_state"));
+        assert!(index_exists(&db, "idx_sessions_parent"));
         assert!(index_exists(&db, "idx_handoffs_project_state"));
         assert!(index_exists(&db, "idx_handoffs_source_device_state"));
         assert!(index_exists(&db, "idx_handoffs_target_device_state"));
@@ -435,7 +657,15 @@ mod tests {
             assert!(column_exists(&db, "projects", column), "{column}");
         }
         assert!(column_exists(&db, "workspaces", "device_id"));
-        assert!(column_exists(&db, "sessions", "session_id"));
+        for column in [
+            "session_id",
+            "project_id",
+            "name",
+            "parent_session_id",
+            "archived_at_unix_seconds",
+        ] {
+            assert!(column_exists(&db, "sessions", column), "{column}");
+        }
         assert!(column_exists(&db, "snapshots", "sequence_number"));
         for column in [
             "epoch",
@@ -553,6 +783,45 @@ mod tests {
     }
 
     #[test]
+    fn stores_and_updates_sessions() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let db = MetadataDb::open(&path).unwrap();
+
+        let default = db
+            .ensure_default_session("project123", "Demo Project", None)
+            .unwrap();
+        assert!(default.session_id.starts_with("se_"));
+        assert_eq!(default.project_id, "project123");
+        assert_eq!(default.name, "Demo Project");
+        assert_eq!(default.parent_session_id, None);
+        assert_eq!(default.active_workspace_id, None);
+        assert_eq!(default.state, SessionState::Active);
+        assert_eq!(default.archived_at_unix_seconds, None);
+
+        let same = db
+            .ensure_default_session("project123", "Renamed Project", None)
+            .unwrap();
+        assert_eq!(same.session_id, default.session_id);
+
+        let fork = db.fork_session(&default.session_id, "Experiment").unwrap();
+        assert!(fork.session_id.starts_with("se_"));
+        assert_eq!(
+            fork.parent_session_id.as_deref(),
+            Some(default.session_id.as_str())
+        );
+        assert_eq!(fork.active_workspace_id, default.active_workspace_id);
+        assert_eq!(fork.state, SessionState::Fork);
+
+        let sessions = db.list_sessions(Some("project123")).unwrap();
+        assert_eq!(sessions.len(), 2);
+
+        let archived = db.archive_session(&fork.session_id).unwrap();
+        assert_eq!(archived.state, SessionState::Archived);
+        assert!(archived.archived_at_unix_seconds.is_some());
+    }
+
+    #[test]
     fn migrations_are_idempotent() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("metadata.sqlite");
@@ -567,7 +836,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
     }
 
     #[test]

@@ -1544,6 +1544,118 @@ fn project_registry_commands_round_trip() {
 }
 
 #[test]
+fn session_commands_round_trip() {
+    let root = std::env::temp_dir().join(format!("devrelay-session-test-{}", std::process::id()));
+    let home = root.join("home");
+    let repo = root.join("repo");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    write_manifest(&repo, "session-project", "Session Project");
+    git(&repo, &["add", "devrelay.toml"]);
+    git(&repo, &["commit", "-m", "manifest"]);
+
+    let add = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "--direct",
+            "project",
+            "add",
+            repo.to_str().unwrap(),
+            "--manifest",
+            repo.join("devrelay.toml").to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let list = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args(["sessions", "list", "--project", "session-project", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let sessions: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let default = sessions.as_array().unwrap().first().unwrap();
+    let session_id = default["session_id"].as_str().unwrap();
+    assert!(session_id.starts_with("se_"));
+    assert_eq!(default["project_id"], "session-project");
+    assert_eq!(default["name"], "Session Project");
+    assert_eq!(default["parent_session_id"], serde_json::Value::Null);
+    assert_eq!(default["state"], "active");
+    assert_eq!(default["archived_at_unix_seconds"], serde_json::Value::Null);
+
+    let show = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args(["session", "show", session_id, "--json"])
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    let shown: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(shown["session_id"], session_id);
+
+    let fork = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "session",
+            "fork",
+            session_id,
+            "--project",
+            "session-project",
+            "--name",
+            "Experiment",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        fork.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&fork.stderr)
+    );
+    let forked: serde_json::Value = serde_json::from_slice(&fork.stdout).unwrap();
+    let fork_id = forked["session_id"].as_str().unwrap();
+    assert!(fork_id.starts_with("se_"));
+    assert_ne!(fork_id, session_id);
+    assert_eq!(forked["name"], "Experiment");
+    assert_eq!(forked["parent_session_id"], session_id);
+    assert_eq!(forked["state"], "fork");
+
+    let archive = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "session",
+            "archive",
+            fork_id,
+            "--project",
+            "session-project",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        archive.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&archive.stderr)
+    );
+    let archived: serde_json::Value = serde_json::from_slice(&archive.stdout).unwrap();
+    assert_eq!(archived["session_id"], fork_id);
+    assert_eq!(archived["state"], "archived");
+    assert!(archived["archived_at_unix_seconds"].as_u64().is_some());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn project_add_uses_manifest_and_records_fingerprints() {
     let root = std::env::temp_dir().join(format!(
         "devrelay-project-manifest-test-{}-{}",

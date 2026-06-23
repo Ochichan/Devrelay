@@ -1180,6 +1180,9 @@ fn handle_projects_add(
     if let Err(err) = config.save(&state.config_path) {
         return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
     }
+    if let Err(err) = ensure_default_session_for_project(&state.home, &entry) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
     for workspace in entry.workspaces.values() {
         if let Err(err) = publish_workspace_state_changed(state, workspace, None) {
             return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
@@ -1453,6 +1456,16 @@ fn registered_workspace_id(state: &AgentState, project_id: &str, path: &Path) ->
         .values()
         .find(|workspace| workspace.local_path == path)
         .map(|workspace| workspace.workspace_id.clone())
+}
+
+#[cfg(unix)]
+fn ensure_default_session_for_project(
+    home: &DevRelayHome,
+    project: &ProjectRegistryEntry,
+) -> anyhow::Result<()> {
+    let db = MetadataDb::open(home.metadata_db_path(&project.project_id))?;
+    db.ensure_default_session(&project.project_id, &project.display_name, None)?;
+    Ok(())
 }
 
 #[cfg(unix)]

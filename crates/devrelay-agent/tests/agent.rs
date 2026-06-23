@@ -329,6 +329,13 @@ portable_paths = "strict"
             .len(),
         1
     );
+    let db =
+        devrelay_core::MetadataDb::open(running.root.join("projects/87654321/metadata.sqlite"))
+            .unwrap();
+    let sessions = db.list_sessions(Some("87654321")).unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].name, "Demo Project");
+    assert_eq!(sessions[0].state, devrelay_core::SessionState::Active);
 
     let listed = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),

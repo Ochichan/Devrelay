@@ -654,17 +654,17 @@ Conventions:
 
 ### M3.4 Session Model
 
-- [ ] Add session ID generation.
-- [ ] Add default session creation on project add.
-- [ ] Link session to project.
-- [ ] Store session name.
-- [ ] Store parent session ID.
-- [ ] Store archived timestamp.
-- [ ] Add `devrelay sessions list`.
-- [ ] Add `devrelay session show`.
-- [ ] Add `devrelay session fork`.
-- [ ] Add `devrelay session archive`.
-- [ ] Add session tests.
+- [x] Add session ID generation.
+- [x] Add default session creation on project add.
+- [x] Link session to project.
+- [x] Store session name.
+- [x] Store parent session ID.
+- [x] Store archived timestamp.
+- [x] Add `devrelay sessions list`.
+- [x] Add `devrelay session show`.
+- [x] Add `devrelay session fork`.
+- [x] Add `devrelay session archive`.
+- [x] Add session tests.
 
 ### M3.5 Lease State Machine
 

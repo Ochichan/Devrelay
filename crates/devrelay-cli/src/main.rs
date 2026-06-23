@@ -20,10 +20,10 @@ use devrelay_core::{
     RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
     RecoverShowResult, ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind,
     SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
-    StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
-    apply_snapshot, classify_untracked_paths, create_snapshot, linux_systemd_user_template,
-    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file, workspace_id_for,
-    write_snapshot_file,
+    StoredSession, StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
+    WorkspaceState, apply_snapshot, classify_untracked_paths, create_snapshot,
+    linux_systemd_user_template, macos_launch_agent_template, plan_apply_snapshot,
+    read_snapshot_file, workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -106,6 +106,14 @@ enum Command {
     Recover {
         #[command(subcommand)]
         command: RecoverCommand,
+    },
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
+    Sessions {
+        #[command(subcommand)]
+        command: SessionsCommand,
     },
     Snapshot {
         #[command(subcommand)]
@@ -215,6 +223,43 @@ enum DeviceCommand {
 #[derive(Debug, Subcommand)]
 enum DevicesCommand {
     List {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionsCommand {
+    List {
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionCommand {
+    Show {
+        session_id: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Fork {
+        session_id: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Archive {
+        session_id: String,
+        #[arg(long)]
+        project: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -592,6 +637,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
         },
         Command::Recover { command } => handle_recover_command(command, &agent_options)?,
+        Command::Session { command } => handle_session_command(command)?,
+        Command::Sessions { command } => handle_sessions_command(command)?,
         Command::Snapshot { command } => match command {
             SnapshotCommand::List { project, json } => {
                 let home = DevRelayHome::resolve()?;
@@ -1053,6 +1100,129 @@ fn render_device(device: &DeviceIdentity, json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn handle_sessions_command(command: SessionsCommand) -> anyhow::Result<()> {
+    match command {
+        SessionsCommand::List { project, json } => {
+            let sessions = list_sessions(project)?;
+            render_sessions_list(&sessions, json)
+        }
+    }
+}
+
+fn handle_session_command(command: SessionCommand) -> anyhow::Result<()> {
+    match command {
+        SessionCommand::Show {
+            session_id,
+            project,
+            json,
+        } => {
+            let (_, session) = find_session(project, &session_id)?;
+            render_session(&session, json)
+        }
+        SessionCommand::Fork {
+            session_id,
+            project,
+            name,
+            json,
+        } => {
+            let (db, _) = find_session(project, &session_id)?;
+            let session = db.fork_session(&session_id, &name)?;
+            render_session(&session, json)
+        }
+        SessionCommand::Archive {
+            session_id,
+            project,
+            json,
+        } => {
+            let (db, _) = find_session(project, &session_id)?;
+            let session = db.archive_session(&session_id)?;
+            render_session(&session, json)
+        }
+    }
+}
+
+fn list_sessions(project: Option<String>) -> anyhow::Result<Vec<StoredSession>> {
+    let (_, config) = load_or_default_config(None)?;
+    let home = DevRelayHome::resolve()?;
+    let project_ids = session_project_ids(project.as_deref(), &config)?;
+    let mut sessions = Vec::new();
+    for project_id in project_ids {
+        let db = MetadataDb::open(home.metadata_db_path(&project_id))?;
+        sessions.extend(db.list_sessions(Some(&project_id))?);
+    }
+    sessions.sort_by(|left, right| {
+        left.project_id
+            .cmp(&right.project_id)
+            .then(
+                left.created_at_unix_seconds
+                    .cmp(&right.created_at_unix_seconds),
+            )
+            .then(left.session_id.cmp(&right.session_id))
+    });
+    Ok(sessions)
+}
+
+fn find_session(
+    project: Option<String>,
+    session_id: &str,
+) -> anyhow::Result<(MetadataDb, StoredSession)> {
+    let (_, config) = load_or_default_config(None)?;
+    let home = DevRelayHome::resolve()?;
+    for project_id in session_project_ids(project.as_deref(), &config)? {
+        let db = MetadataDb::open(home.metadata_db_path(&project_id))?;
+        if let Some(session) = db.get_session(session_id)? {
+            return Ok((db, session));
+        }
+    }
+    Err(DevRelayError::Config(format!("unknown session {session_id}")).into())
+}
+
+fn session_project_ids(project: Option<&str>, config: &LocalConfig) -> anyhow::Result<Vec<String>> {
+    if let Some(project) = project {
+        let entry = find_project(config, project)?;
+        return Ok(vec![entry.project_id.clone()]);
+    }
+    Ok(config.project_registry.projects.keys().cloned().collect())
+}
+
+fn ensure_default_session_for_project(project: &ProjectRegistryEntry) -> anyhow::Result<()> {
+    let home = DevRelayHome::resolve()?;
+    home.create_base_dirs()?;
+    let db = MetadataDb::open(home.metadata_db_path(&project.project_id))?;
+    db.ensure_default_session(&project.project_id, &project.display_name, None)?;
+    Ok(())
+}
+
+fn render_sessions_list(sessions: &[StoredSession], json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(sessions)?);
+    } else {
+        for session in sessions {
+            println!("{} ({})", session.name, session.session_id);
+            println!("  project: {}", session.project_id);
+            println!("  state: {}", session.state.as_str());
+        }
+    }
+    Ok(())
+}
+
+fn render_session(session: &StoredSession, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(session)?);
+    } else {
+        println!("session: {} ({})", session.name, session.session_id);
+        println!("  project: {}", session.project_id);
+        println!("  state: {}", session.state.as_str());
+        if let Some(parent) = &session.parent_session_id {
+            println!("  parent: {parent}");
+        }
+        if let Some(archived_at) = session.archived_at_unix_seconds {
+            println!("  archived at: {archived_at}");
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AgentServicePlatform {
     Macos,
@@ -1260,6 +1430,7 @@ fn project_add_direct(
         .cloned()
         .ok_or_else(|| DevRelayError::Config("project disappeared".to_string()))?;
     local_config.save(&config_path)?;
+    ensure_default_session_for_project(&added)?;
     Ok((added, config_path))
 }
 
