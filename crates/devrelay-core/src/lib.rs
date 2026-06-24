@@ -70,6 +70,7 @@ mod retention;
 mod route_selection;
 mod rpc;
 mod scheduler_constraints;
+mod scheduler_score;
 mod secret_provider;
 mod service;
 mod session;
@@ -269,6 +270,12 @@ pub use scheduler_constraints::{
     SchedulerConstraintDecision, SchedulerConstraintRejection, SchedulerDevicePolicy,
     SchedulerDeviceSnapshot, SchedulerDynamicResources, SchedulerNetworkRouteQuality,
     collect_local_scheduler_device, evaluate_scheduler_constraints, filter_scheduler_candidates,
+};
+pub use scheduler_score::{
+    SchedulerScore, SchedulerScoreComponent, SchedulerScoreComponentKind,
+    SchedulerScoreMeasurements, SchedulerScoreWeights, SchedulerTaskClass,
+    SchedulerThermalPressure, infer_scheduler_task_class, scheduler_score_components,
+    score_scheduler_candidate, score_scheduler_candidate_with_class,
 };
 pub use secret_provider::{
     RedactedSecretMaterializationReport, SecretFileMaterialization, SecretMaterializationReport,

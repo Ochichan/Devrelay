@@ -4,7 +4,8 @@ Last updated: 2026-06-24
 
 Compute fabric task execution must not take writer ownership of an active
 workspace. The current implementation covers task definitions, immutable
-execution snapshots, task run metadata, and scheduler constraint filtering.
+execution snapshots, task run metadata, scheduler constraint filtering, and
+explainable scheduler scoring.
 
 ## Task Model
 
@@ -45,3 +46,19 @@ The filter rejects incompatible task platform globs, missing task features,
 insufficient CPU, memory, or disk, unknown required resource metrics, and devices
 paused by local policy. Later M10 scheduler scoring can rank only the eligible
 candidate set.
+
+## Scheduler Scoring
+
+Scheduler scoring runs after constraints. Ineligible devices receive score `0`
+with constraint rejection details. Eligible devices receive an explainable
+0..1000 score from weighted component signals:
+
+- cache warmth, idle CPU, free memory, power preference, data locality, network
+  quality, historical speed, and user affinity;
+- transfer cost, foreground activity, and thermal pressure penalty-style scores;
+- task-class weight profiles for interactive, test, build, batch, and
+  background tasks.
+
+Unknown signals are neutral rather than silently treated as ideal. The score
+output includes every component, its normalized score, its weight, weighted
+points, and a short explanation string.

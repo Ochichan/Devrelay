@@ -67,6 +67,16 @@ pub struct SchedulerDynamicResources {
 #[serde(rename_all = "kebab-case")]
 pub enum SchedulerNetworkRouteQuality {
     Unknown,
+    Poor,
+    Fair,
+    Good,
+    Excellent,
+}
+
+impl Default for SchedulerNetworkRouteQuality {
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -448,12 +448,15 @@ Completed capabilities:
 - Scheduler constraint filtering can collect static/dynamic device resources and
   reject incompatible platforms, missing features, insufficient resources, or
   locally disallowed devices.
+- Explainable scheduler scoring normalizes cache warmth, CPU, memory, power,
+  data locality, network quality, historical speed, user affinity, transfer
+  cost, foreground load, and thermal placeholder signals with task-class
+  weights.
 - Task run metadata can be recorded and listed from the per-project metadata
   database.
 
 Open work:
 
-- Scheduler scoring.
 - Remote runner, logs, artifacts, and cache.
 
 ### M11. Cross-Platform Hardening

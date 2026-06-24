@@ -1499,20 +1499,20 @@ Conventions:
 
 ### M10.3 Scheduler Score
 
-- [ ] Implement cache warmth score.
-- [ ] Implement idle CPU score.
-- [ ] Implement free memory score.
-- [ ] Implement power preference score.
-- [ ] Implement data locality score.
-- [ ] Implement network quality score.
-- [ ] Implement historical speed score.
-- [ ] Implement user affinity score.
-- [ ] Implement transfer cost penalty.
-- [ ] Implement foreground penalty.
-- [ ] Implement thermal penalty placeholder.
-- [ ] Add task-class weight profiles.
-- [ ] Add explanation output.
-- [ ] Add scheduler score tests.
+- [x] Implement cache warmth score.
+- [x] Implement idle CPU score.
+- [x] Implement free memory score.
+- [x] Implement power preference score.
+- [x] Implement data locality score.
+- [x] Implement network quality score.
+- [x] Implement historical speed score.
+- [x] Implement user affinity score.
+- [x] Implement transfer cost penalty.
+- [x] Implement foreground penalty.
+- [x] Implement thermal penalty placeholder.
+- [x] Add task-class weight profiles.
+- [x] Add explanation output.
+- [x] Add scheduler score tests.
 
 ### M10.4 Runner Workspace
 
