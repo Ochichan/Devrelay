@@ -15,8 +15,8 @@ The export is redacted by default and records:
 - apply verification failures when non-success `snapshot.applied` audit events
   exist
 - handoff phase and committed total durations from handoff journal timestamps
-- scheduler choice reasons when task-run metadata includes scheduler reason or
-  scheduler selection fields
+- scheduler choice reasons from task-run metadata, including the canonical
+  `scheduler_choice_reason` produced from scheduler selection output
 - hydration state counts and hydrate duration samples from persisted hydration
   records
 
@@ -28,3 +28,9 @@ boundary mechanically.
 Known recording gaps are explicit in `recording_gaps`. Legacy hydration records
 that predate duration fields do not produce duration samples until the workspace
 hydrates again.
+
+Scheduler metrics expect task-run metadata to preserve the scheduler selection
+reason. New task runners should use the core `scheduler_selection_metadata`
+helper so exports can group runs by stable reasons such as
+`highest-eligible-score`, `no-eligible-target`, and `no-candidates` without
+parsing free-form explanation text.

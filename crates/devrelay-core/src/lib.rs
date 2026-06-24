@@ -307,8 +307,8 @@ pub use scheduler_score::{
     SchedulerScore, SchedulerScoreComponent, SchedulerScoreComponentKind,
     SchedulerScoreMeasurements, SchedulerScoreWeights, SchedulerTargetSelection,
     SchedulerTaskClass, SchedulerThermalPressure, infer_scheduler_task_class,
-    scheduler_score_components, score_scheduler_candidate, score_scheduler_candidate_with_class,
-    select_scheduler_target,
+    scheduler_score_components, scheduler_selection_metadata, scheduler_selection_reason,
+    score_scheduler_candidate, score_scheduler_candidate_with_class, select_scheduler_target,
 };
 pub use secret_provider::{
     RedactedSecretMaterializationReport, SecretFileMaterialization, SecretMaterializationReport,

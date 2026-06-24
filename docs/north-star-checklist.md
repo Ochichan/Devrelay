@@ -1914,7 +1914,7 @@ Conventions:
 - [x] Track apply verification failures.
 - [x] Track handoff phase durations.
 - [x] Track environment hydrate duration.
-- [ ] Track scheduler choice reason.
+- [x] Track scheduler choice reason.
 - [x] Keep metrics local by default.
 - [x] Add metrics export with redaction.
 - [x] Add metrics tests.

@@ -179,6 +179,30 @@ pub struct SchedulerTargetSelection {
     pub explanation: Vec<String>,
 }
 
+pub fn scheduler_selection_reason(selection: &SchedulerTargetSelection) -> &'static str {
+    if selection.selected_device_id.is_some() {
+        "highest-eligible-score"
+    } else if selection.scores.is_empty() {
+        "no-candidates"
+    } else {
+        "no-eligible-target"
+    }
+}
+
+pub fn scheduler_selection_metadata(selection: &SchedulerTargetSelection) -> serde_json::Value {
+    let choice_reason = scheduler_selection_reason(selection);
+    serde_json::json!({
+        "scheduler_choice_reason": choice_reason,
+        "scheduler": {
+            "choice_reason": choice_reason,
+            "selected_device_id": selection.selected_device_id.clone(),
+            "selected_score_per_mille": selection.selected_score_per_mille,
+            "explanation": selection.explanation.clone(),
+        },
+        "scheduler_selection": selection.clone(),
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchedulerScoreComponent {
     pub kind: SchedulerScoreComponentKind,
@@ -675,6 +699,20 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("cache warmth"))
         );
+        let metadata = scheduler_selection_metadata(&selection);
+        assert_eq!(
+            metadata["scheduler_choice_reason"],
+            "highest-eligible-score"
+        );
+        assert_eq!(
+            metadata["scheduler"]["choice_reason"],
+            "highest-eligible-score"
+        );
+        assert_eq!(metadata["scheduler"]["selected_device_id"], "fast");
+        assert_eq!(
+            metadata["scheduler_selection"]["selected_device_id"],
+            "fast"
+        );
     }
 
     #[test]
@@ -693,6 +731,22 @@ mod tests {
                 .explanation
                 .iter()
                 .any(|line| line.contains("no eligible scheduler target"))
+        );
+        assert_eq!(scheduler_selection_reason(&selection), "no-eligible-target");
+    }
+
+    #[test]
+    fn explains_when_no_scheduler_candidates_exist() {
+        let definition = task_definition("test", false);
+
+        let selection = select_scheduler_target(&definition, &[], &BTreeMap::new());
+
+        assert_eq!(selection.selected_device_id, None);
+        assert_eq!(selection.scores.len(), 0);
+        assert_eq!(scheduler_selection_reason(&selection), "no-candidates");
+        assert_eq!(
+            scheduler_selection_metadata(&selection)["scheduler"]["choice_reason"],
+            "no-candidates"
         );
     }
 
