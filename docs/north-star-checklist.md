@@ -1115,7 +1115,7 @@ Conventions:
 - [x] Create desktop app package.
 - [x] Wire Rust backend to local agent client.
 - [x] Add frontend build setup.
-- [ ] Import visual direction from prototype.
+- [x] Import visual direction from prototype.
 - [x] Add dark theme.
 - [x] Add light theme.
 - [x] Add responsive layout.

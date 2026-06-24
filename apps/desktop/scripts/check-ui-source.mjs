@@ -58,6 +58,13 @@ const css = await readFile(resolve(appDir, "src/app.css"), "utf8");
 if (!css.includes("@media (prefers-reduced-motion: reduce)")) {
   failures.push("src/app.css is missing reduced motion handling");
 }
+if (
+  !css.includes("--violet") ||
+  !css.includes("backdrop-filter: blur") ||
+  !css.includes("box-shadow: inset 2px 0 0 var(--accent)")
+) {
+  failures.push("src/app.css is missing imported prototype visual direction markers");
+}
 
 const tauriConfig = JSON.parse(await readFile(resolve(appDir, "src-tauri/tauri.conf.json"), "utf8"));
 if (!tauriConfig.bundle?.icon?.includes("icons/icon.icns")) {
