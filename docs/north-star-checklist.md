@@ -1902,8 +1902,8 @@ Conventions:
 - [x] Add resource policy doctor.
 - [x] Add anchor health doctor.
 - [x] Add device trust doctor.
-- [ ] Add one-click safe fixes where appropriate.
-- [ ] Add doctor UX tests.
+- [x] Add one-click safe fixes where appropriate.
+- [x] Add doctor UX tests.
 
 ### M14.4 Local Metrics
 

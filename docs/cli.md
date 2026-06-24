@@ -119,6 +119,11 @@ snapshot, CAS, and startup paths, and returns safe actions such as
 registered devices, revocations, and key-rotation-required revocation warnings.
 It returns pairing safe actions when no paired peer devices are registered.
 
+One-click safe fixes are intentionally limited. `doctor git-performance
+--fix-safe` may set known-safe Git performance config when those keys are unset;
+project safety, path, secret, resource, anchor, device trust, and environment
+doctors report safe actions without mutating project or trust state.
+
 ## Local Metrics
 
 `metrics export` writes a local JSON report. It uses the local agent by default
