@@ -2115,7 +2115,7 @@ Conventions:
 - [x] No watcher event is treated as the source of truth. Evidence suite: `safety/watcher_events_are_hints`.
 - [x] No cross-device handoff succeeds before verification passes. Evidence suite: `safety/no_unverified_handoff`.
 - [x] No compute task writes directly into the active session. Evidence suite: `safety/no_active_workspace_remote_task`.
-- [ ] Every destructive cleanup has explicit confirmation or prior snapshot. Evidence suite: `safety/destructive_cleanup_has_snapshot`.
+- [x] Every destructive cleanup has explicit confirmation or prior snapshot. Evidence suite: `safety/destructive_cleanup_has_snapshot`.
 - [x] Every recovery operation defaults to a new session or workspace. Evidence suite: `safety/recovery_defaults_new_workspace`.
 - [x] Every published snapshot is immutable. Evidence suite: `safety/published_snapshots_immutable`.
 - [x] Every lease epoch transition is monotonic. Evidence suite: `safety/lease_epoch_monotonic`.

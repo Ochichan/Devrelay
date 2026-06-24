@@ -84,6 +84,7 @@ The final safety checklist must be tied to integration suite names:
 | UI state comes only from agent events/RPC | `safety/ui_has_no_state_authority` |
 | Watcher events are hints only | `safety/watcher_events_are_hints` |
 | Remote tasks do not mutate active sessions | `safety/no_active_workspace_remote_task` |
+| Destructive dirty-target cleanup requires a recoverable pinned backup | `safety/destructive_cleanup_has_snapshot` |
 | Diagnostic exports are redacted by default | `safety/diagnostics_redacted_by_default` |
 
 Existing unit and integration tests cover many underlying cases. The suite

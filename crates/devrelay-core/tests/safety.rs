@@ -357,6 +357,77 @@ mod no_active_workspace_remote_task {
     }
 }
 
+mod destructive_cleanup_has_snapshot {
+    //! Invariant: `safety/destructive_cleanup_has_snapshot`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    #[test]
+    fn dirty_target_cleanup_happens_only_after_recoverable_pinned_backup() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let recovery_path = temp.path().join("recovered-backup");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        let target = clone_repo(&source, &source_path, &target_path);
+
+        fs::write(source_path.join("README.md"), "incoming change\n").unwrap();
+        let incoming = create_snapshot(&source, &manifest()).unwrap();
+
+        fs::write(target_path.join("README.md"), "target local change\n").unwrap();
+        fs::write(target_path.join("target-only.txt"), "preserve me\n").unwrap();
+        let blocked = apply_snapshot(&target, &source, &incoming).unwrap_err();
+        assert!(matches!(blocked, DevRelayError::TargetDirty(_)));
+
+        let mut backup_metadata = create_snapshot(&target, &manifest()).unwrap();
+        backup_metadata.session_id = Some("fork_destructive_cleanup_backup".to_string());
+        let mut store = SnapshotStore::open(&home, &incoming.project_id).unwrap();
+        let backup = store
+            .store_snapshot(
+                &target,
+                backup_metadata,
+                true,
+                Some(format!(
+                    "dirty target backup before {}",
+                    incoming.snapshot_id
+                )),
+            )
+            .unwrap();
+        assert!(backup.pinned);
+        assert!(
+            backup
+                .session_id
+                .as_deref()
+                .is_some_and(|session_id| session_id.starts_with("fork_"))
+        );
+
+        target.run(&["reset", "--hard", "HEAD"]).unwrap();
+        target.run(&["clean", "-fd"]).unwrap();
+        assert!(!target_path.join("target-only.txt").exists());
+
+        apply_snapshot(&target, &source, &incoming).unwrap();
+        assert_eq!(
+            fs::read_to_string(target_path.join("README.md")).unwrap(),
+            "incoming change\n"
+        );
+        assert!(!target_path.join("target-only.txt").exists());
+
+        let recovery = clone_repo(&source, &source_path, &recovery_path);
+        let backup_source = GitRepo::new(store.snapshot_repo_path());
+        apply_snapshot(&recovery, &backup_source, &backup.metadata).unwrap();
+        assert_eq!(
+            fs::read_to_string(recovery_path.join("README.md")).unwrap(),
+            "target local change\n"
+        );
+        assert_eq!(
+            fs::read_to_string(recovery_path.join("target-only.txt")).unwrap(),
+            "preserve me\n"
+        );
+    }
+}
+
 mod no_untrusted_remote_execution {
     //! Invariant: `safety/no_untrusted_remote_execution`; see `docs/data-loss-safety.md`.
 
