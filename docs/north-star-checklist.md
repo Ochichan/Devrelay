@@ -834,9 +834,9 @@ Conventions:
 
 - [x] Decide whether M4.5 is HTTP `/v1` or versioned remote RPC over mTLS.
 - [ ] Add remote JSON-RPC server over mTLS.
-- [ ] Add remote `devices.list`.
-- [ ] Add remote `projects.list`.
-- [ ] Add remote `workspaces.list`.
+- [x] Add remote `devices.list`.
+- [x] Add remote `projects.list`.
+- [x] Add remote `workspaces.list`.
 - [ ] Add remote `sessions.snapshots.list`.
 - [ ] Add remote handoff methods.
 - [ ] Add remote recovery methods.

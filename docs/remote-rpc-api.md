@@ -2,7 +2,8 @@
 
 Last updated: 2026-06-24
 
-Status: schema plan and core pre-dispatch policy accepted; server not
+Status: schema plan, core pre-dispatch policy, and core read handlers for
+`devices.list`, `projects.list`, and `workspaces.list` accepted; server not
 implemented.
 
 ADR 0005 selects JSON-RPC 2.0 over mTLS for the remote Control API. This
@@ -13,6 +14,10 @@ The core pre-dispatch helper enforces the method allowlist, authenticated mTLS
 peer requirement, control-envelope validation, request ID requirement, and JSON
 error mapping. A remote socket server still has to call that helper before
 method dispatch.
+
+The core read handlers for `devices.list`, `projects.list`, and
+`workspaces.list` return remote-safe data only. Project and workspace responses
+do not serialize local filesystem paths.
 
 ## Transport And Auth
 

@@ -265,8 +265,11 @@ pub use policy::{
 pub use remote_rpc::{
     METHOD_REMOTE_RECOVERY_LIST, METHOD_REMOTE_RECOVERY_OPEN,
     METHOD_REMOTE_SESSIONS_SNAPSHOTS_LIST, METHOD_REMOTE_WORKSPACES_LIST, REMOTE_RPC_METHODS,
-    RemoteRpcRequestContext, is_remote_rpc_method_allowed, preflight_remote_rpc_request,
-    remote_rpc_error_from_devrelay,
+    RemoteProjectSummary, RemoteProjectsListResult, RemoteRpcRequestContext,
+    RemoteWorkspaceSummary, RemoteWorkspacesListParams, RemoteWorkspacesListResult,
+    is_remote_rpc_method_allowed, preflight_remote_rpc_request, remote_devices_list,
+    remote_projects_list, remote_rpc_error_from_devrelay, remote_rpc_negotiate,
+    remote_workspaces_list,
 };
 pub use retention::{
     HandoffSnapshotProtection, PruningDecision, PruningDecisionAction, PruningPlan,
