@@ -693,6 +693,10 @@ table {
   min-width: 1360px;
 }
 
+.runs-table {
+  min-width: 1180px;
+}
+
 .capability-list {
   min-width: 0;
   display: flex;

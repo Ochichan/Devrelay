@@ -150,7 +150,62 @@ const bootstrap = {
       last_seen_unix_seconds: nowSeconds - 3600,
     },
   ],
-  runs: [],
+  runs: [
+    {
+      task_run_id: "run-queued-1",
+      project_id: "project-1",
+      session_id: "session-1",
+      state: "queued",
+      command: "npm test",
+      metadata: {
+        scheduler_reason: "Target has warm cache",
+        target_device_id: "target-device",
+        artifact_count: 0,
+      },
+      created_at_unix_seconds: nowSeconds - 50,
+      updated_at_unix_seconds: nowSeconds - 40,
+    },
+    {
+      task_run_id: "run-running-1",
+      project_id: "project-1",
+      session_id: "session-1",
+      state: "running",
+      command: "cargo test",
+      metadata: {
+        scheduler_explanation: "Local writer is idle",
+        target_device_id: "local-device",
+        artifacts: ["target/log.txt"],
+      },
+      created_at_unix_seconds: nowSeconds - 120,
+      updated_at_unix_seconds: nowSeconds - 20,
+    },
+    {
+      task_run_id: "run-failed-1",
+      project_id: "project-2",
+      session_id: "session-2",
+      state: "failed",
+      command: "cargo clippy",
+      metadata: {
+        scheduler_reason: "Target selected before failure",
+        artifact_count: 2,
+      },
+      created_at_unix_seconds: nowSeconds - 240,
+      updated_at_unix_seconds: nowSeconds - 180,
+    },
+    {
+      task_run_id: "run-done-1",
+      project_id: "project-1",
+      session_id: "session-1",
+      state: "succeeded",
+      command: "npm run build",
+      metadata: {
+        scheduler_reason: "Completed on local device",
+        artifact_count: 1,
+      },
+      created_at_unix_seconds: nowSeconds - 360,
+      updated_at_unix_seconds: nowSeconds - 300,
+    },
+  ],
   activity: [
     {
       audit_id: 1,
@@ -253,6 +308,28 @@ handleAction({
   context
 );
 assert.match(app.innerHTML, /Run elsewhere is not wired to the agent yet/, "run placeholder did not warn");
+vm.runInContext('state.view = "runs"; render();', context);
+assert.match(app.innerHTML, /Recent runs/, "runs view did not render recent runs");
+assert.match(app.innerHTML, /Queued runs/, "runs view did not render queued runs");
+assert.match(app.innerHTML, /Running runs/, "runs view did not render running runs");
+assert.match(app.innerHTML, /Failed runs/, "runs view did not render failed runs");
+assert.match(app.innerHTML, /Scheduler explanation/, "runs view did not render scheduler explanation");
+assert.match(app.innerHTML, /Target has warm cache/, "runs view did not render scheduler reason");
+assert.match(app.innerHTML, /Run task/, "runs view did not render run task placeholder");
+assert.match(app.innerHTML, /Cancel/, "runs view did not render cancel placeholder");
+assert.match(app.innerHTML, /Artifacts/, "runs view did not render artifact placeholder");
+assert.match(app.innerHTML, /Target device/, "runs view did not render target device name");
+await vm.runInContext(
+  `
+handleAction({
+  dataset: {
+    action: "run-task-placeholder",
+  },
+});
+`,
+  context
+);
+assert.match(app.innerHTML, /Run task is not wired to the agent yet/, "run task placeholder did not warn");
 vm.runInContext('state.view = "devices"; render();', context);
 assert.match(app.innerHTML, /3 known identities - 2 online/, "devices view did not render device counts");
 assert.match(app.innerHTML, /Pair device/, "devices view did not render pair placeholder");

@@ -720,6 +720,70 @@ function quotaUsage(payload) {
   return `${used}/${limit} ${unit}`.trim();
 }
 
+function runStateGroup(run) {
+  const stateValue = String(run?.state ?? "").toLowerCase();
+  if (["queued", "pending", "scheduled"].includes(stateValue)) return "queued";
+  if (["running", "started", "in-progress", "in_progress"].includes(stateValue)) return "running";
+  if (["failed", "error", "errored", "canceled", "cancelled"].includes(stateValue)) return "failed";
+  return "recent";
+}
+
+function runStateTone(run) {
+  const group = runStateGroup(run);
+  if (group === "running") return "warn";
+  if (group === "failed") return "bad";
+  if (group === "queued") return "";
+  return "good";
+}
+
+function runProjectName(projectId) {
+  const project = projects().find((entry) => entry.project_id === projectId);
+  return project?.display_name ?? projectId ?? "Unknown project";
+}
+
+function runMetadata(run) {
+  return parseJsonObject(run?.metadata);
+}
+
+function runSchedulerExplanation(run) {
+  const metadata = runMetadata(run);
+  return (
+    metadata.scheduler_explanation ??
+    metadata.schedulerExplanation ??
+    metadata.scheduler_reason ??
+    metadata.schedulerReason ??
+    metadata.target_reason ??
+    metadata.targetReason ??
+    "Scheduler explanation not reported"
+  );
+}
+
+function runTargetLabel(run) {
+  const metadata = runMetadata(run);
+  const deviceId =
+    metadata.target_device_id ??
+    metadata.targetDeviceId ??
+    metadata.device_id ??
+    metadata.deviceId ??
+    null;
+  if (deviceId) return deviceName(deviceId);
+  return run.session_id ?? "Target pending";
+}
+
+function runArtifactLabel(run) {
+  const metadata = runMetadata(run);
+  if (Array.isArray(metadata.artifacts)) return `${metadata.artifacts.length} artifacts`;
+  if (metadata.artifact_count !== undefined) return `${metadata.artifact_count} artifacts`;
+  if (metadata.artifactCount !== undefined) return `${metadata.artifactCount} artifacts`;
+  if (metadata.artifact_summary) return String(metadata.artifact_summary);
+  if (metadata.artifactSummary) return String(metadata.artifactSummary);
+  return "No artifacts reported";
+}
+
+function runUpdatedAt(run) {
+  return run.updated_at_unix_seconds ?? run.created_at_unix_seconds;
+}
+
 function statusCounts(statusResult) {
   return statusResult?.status?.counts ?? {
     staged: 0,
@@ -1212,25 +1276,57 @@ function renderDevices() {
 }
 
 function renderRuns() {
-  const rows = runs()
-    .map((run) => `<tr>
-      <td><div class="cell-main"><strong>${escapeHtml(shortId(run.task_run_id))}</strong><span>${escapeHtml(run.project_id)}</span></div></td>
-      <td><span class="badge">${escapeHtml(run.state)}</span></td>
-      <td><code>${escapeHtml(run.command ?? "-")}</code></td>
-      <td>${formatAge(run.updated_at_unix_seconds)}</td>
-      <td><pre class="json-box">${escapeHtml(JSON.stringify(run.metadata ?? {}, null, 2))}</pre></td>
-    </tr>`)
-    .join("");
+  const allRuns = runs();
+  const queued = allRuns.filter((run) => runStateGroup(run) === "queued");
+  const running = allRuns.filter((run) => runStateGroup(run) === "running");
+  const failed = allRuns.filter((run) => runStateGroup(run) === "failed");
+  const recent = allRuns.filter((run) => runStateGroup(run) === "recent");
+  const rowForRun = (run) => {
+    const canCancel = ["queued", "running"].includes(runStateGroup(run));
+    return `<tr>
+      <td><div class="cell-main"><strong>${escapeHtml(shortId(run.task_run_id))}</strong><span>${escapeHtml(runProjectName(run.project_id))}</span></div></td>
+      <td><span class="badge ${runStateTone(run)}">${escapeHtml(titleize(run.state))}</span></td>
+      <td><code>${escapeHtml(run.command ?? "Command not recorded")}</code></td>
+      <td><div class="cell-main"><strong>${escapeHtml(runTargetLabel(run))}</strong><span>${escapeHtml(run.session_id ?? "No session recorded")}</span></div></td>
+      <td><div class="cell-main"><strong>${escapeHtml(runSchedulerExplanation(run))}</strong><span>${escapeHtml(runArtifactLabel(run))}</span></div></td>
+      <td>${formatAge(runUpdatedAt(run))}</td>
+      <td>
+        <div class="button-row">
+          <button class="button" data-action="run-artifacts-placeholder" data-run-id="${escapeHtml(run.task_run_id)}">${icons.download}<span>Artifacts</span></button>
+          <button class="button danger" data-action="run-cancel-placeholder" data-run-id="${escapeHtml(run.task_run_id)}" ${!canCancel || state.operation ? "disabled" : ""}>${icons.x}<span>Cancel</span></button>
+        </div>
+      </td>
+    </tr>`;
+  };
+  const groupRows = (label, entries) =>
+    entries.length === 0
+      ? ""
+      : `<tr class="table-group-row"><td colspan="7">${escapeHtml(label)} (${entries.length})</td></tr>${entries.map(rowForRun).join("")}`;
+  const rows = `${groupRows("Failed runs", failed)}${groupRows("Running runs", running)}${groupRows("Queued runs", queued)}${groupRows("Recent runs", recent)}`;
   return `
     <section class="screen">
       ${agentErrors()}
       <div class="panel">
-        <div class="panel-head"><div><h3>Runs</h3><p>${runs().length} task records</p></div></div>
+        <div class="panel-head">
+          <div><h3>Runs</h3><p>${allRuns.length} task records - ${running.length} running, ${queued.length} queued, ${failed.length} failed</p></div>
+          <button class="button" data-action="run-task-placeholder" ${state.operation ? "disabled" : ""}>${icons.terminal}<span>Run task</span></button>
+        </div>
+        <div class="panel-body project-hero">
+          <div class="summary-grid">
+            <div class="metric"><strong>${recent.length}</strong><span>Recent runs</span></div>
+            <div class="metric"><strong>${queued.length}</strong><span>Queued runs</span></div>
+            <div class="metric"><strong>${running.length}</strong><span>Running runs</span></div>
+            <div class="metric"><strong>${failed.length}</strong><span>Failed runs</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div><h3>Scheduler explanation</h3><p>Target choice and artifact availability reported by task run metadata.</p></div></div>
         <div class="panel-body">
           ${
-            runs().length === 0
+            allRuns.length === 0
               ? '<div class="empty"><strong>No task runs</strong><p>Remote and local task records will appear here after execution.</p></div>'
-              : `<div class="table-scroll" data-scroll-container><table><thead><tr><th>Run</th><th>State</th><th>Command</th><th>Updated</th><th>Metadata</th></tr></thead><tbody>${rows}</tbody></table></div>`
+              : `<div class="table-scroll" data-scroll-container><table class="runs-table"><thead><tr><th>Run</th><th>State</th><th>Command</th><th>Target</th><th>Scheduler / artifacts</th><th>Updated</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
           }
         </div>
       </div>
@@ -1591,6 +1687,18 @@ async function handleAction(button) {
   }
   if (action === "run-elsewhere-placeholder") {
     toast("Run elsewhere is not wired to the agent yet", "warn");
+    return;
+  }
+  if (action === "run-task-placeholder") {
+    toast("Run task is not wired to the agent yet", "warn");
+    return;
+  }
+  if (action === "run-cancel-placeholder") {
+    toast("Run cancel is not wired to the agent yet", "warn");
+    return;
+  }
+  if (action === "run-artifacts-placeholder") {
+    toast("Run artifacts are not wired to the agent yet", "warn");
     return;
   }
   if (action === "checkpoint") {

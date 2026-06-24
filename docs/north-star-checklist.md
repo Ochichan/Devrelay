@@ -1204,14 +1204,14 @@ Conventions:
 
 ### M7.7 Runs View
 
-- [ ] Show recent runs.
-- [ ] Show queued runs.
-- [ ] Show running runs.
-- [ ] Show failed runs.
-- [ ] Show scheduler explanation.
-- [ ] Add run task action placeholder.
-- [ ] Add cancel action placeholder.
-- [ ] Add artifact action placeholder.
+- [x] Show recent runs.
+- [x] Show queued runs.
+- [x] Show running runs.
+- [x] Show failed runs.
+- [x] Show scheduler explanation.
+- [x] Add run task action placeholder.
+- [x] Add cancel action placeholder.
+- [x] Add artifact action placeholder.
 
 ### M7.8 Activity View
 
