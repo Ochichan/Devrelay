@@ -415,10 +415,13 @@ Completed capabilities:
 - Native bootstrap adapter with POSIX/PowerShell command classification, trust
   approval gate, timeout, redacted output capture, healthcheck reporting, and
   idempotency guidance.
+- Secret provider mapping model with OS keychain design, 1Password CLI,
+  Bitwarden CLI, SOPS/age, and user-script provider plans; local secret file
+  and environment materialization; required-secret errors; redacted reports; and
+  hard exclusion of manifest secret file targets from snapshots.
 
 Open work:
 
-- Secret providers.
 - Hydration state machine.
 - Environment doctor.
 - CLI/UI visibility for hydration state.

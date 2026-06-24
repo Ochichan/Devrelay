@@ -17,3 +17,17 @@ re-run a bootstrap after a target changes, or ask the user to approve a changed
 command hash. A bootstrap script should be safe to run more than once, should
 check whether tools or files already exist before mutating them, and should put
 generated artifacts in ignored or explicitly managed locations.
+
+## Secret Providers
+
+Manifest secrets are mapped by local device configuration to provider
+references. The current core model supports OS keychain design entries,
+1Password CLI `op read`, Bitwarden CLI `bw get password`, SOPS/age decrypt,
+and user-script command plans. Provider execution is still caller-owned, but
+the materialization path is implemented and testable through a fake provider.
+
+Secret files are written only inside the workspace, with restrictive file
+permissions on Unix. Secret environment variables are returned as local
+environment values for the caller to inject. Reports intended for logs redact
+secret values. Manifest-declared secret file targets are hard-excluded from
+snapshot untracked classification even when an include pattern matches them.

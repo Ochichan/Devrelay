@@ -1415,18 +1415,18 @@ Conventions:
 
 ### M9.6 Secret Providers
 
-- [ ] Define secret mapping local config.
-- [ ] Add OS keychain provider design.
-- [ ] Add 1Password CLI provider.
-- [ ] Add Bitwarden CLI provider.
-- [ ] Add SOPS/age provider.
-- [ ] Add user script provider.
-- [ ] Materialize secret file locally.
-- [ ] Materialize environment variable locally.
-- [ ] Add secret path to hard exclude.
-- [ ] Redact secret values from logs.
-- [ ] Add missing required secret error.
-- [ ] Add secret provider tests with fake provider.
+- [x] Define secret mapping local config.
+- [x] Add OS keychain provider design.
+- [x] Add 1Password CLI provider.
+- [x] Add Bitwarden CLI provider.
+- [x] Add SOPS/age provider.
+- [x] Add user script provider.
+- [x] Materialize secret file locally.
+- [x] Materialize environment variable locally.
+- [x] Add secret path to hard exclude.
+- [x] Redact secret values from logs.
+- [x] Add missing required secret error.
+- [x] Add secret provider tests with fake provider.
 
 ### M9.7 Hydration State Machine
 

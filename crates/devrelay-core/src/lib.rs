@@ -67,6 +67,7 @@ mod policy;
 mod retention;
 mod route_selection;
 mod rpc;
+mod secret_provider;
 mod service;
 mod session;
 mod sidecar;
@@ -251,6 +252,12 @@ pub use rpc::{
     RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
     RunsListParams, RunsListResult, SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult,
     SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult,
+};
+pub use secret_provider::{
+    RedactedSecretMaterializationReport, SecretFileMaterialization, SecretMaterializationReport,
+    SecretProvider, SecretProviderCommandPlan, SecretProviderKind, SecretProviderLocalConfig,
+    SecretProviderMapping, SecretProviderRequest, SecretValue, materialize_project_secrets,
+    secret_hard_exclude_patterns,
 };
 pub use service::{
     LINUX_SYSTEMD_UNIT, MACOS_LAUNCH_AGENT_LABEL, ServiceTemplate, ServiceTemplateInput,

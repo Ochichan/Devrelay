@@ -8,6 +8,7 @@
 use crate::error::Result;
 use crate::fs_safety::{is_traversal_boundary, is_windows_reparse_point};
 use crate::manifest::{Manifest, SecretScannerConfig, UntrackedPolicy};
+use crate::secret_hard_exclude_patterns;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
@@ -54,6 +55,7 @@ pub fn classify_untracked_paths(
 ) -> Result<Vec<ClassifiedPath>> {
     let mut exclude_patterns = manifest.workspace.exclude.patterns.clone();
     exclude_patterns.extend(default_exclude_patterns().map(str::to_string));
+    exclude_patterns.extend(secret_hard_exclude_patterns(manifest));
     let exclude = build_globset(exclude_patterns.iter().map(String::as_str))?;
     let include = build_globset(
         manifest
