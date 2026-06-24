@@ -1237,19 +1237,19 @@ Conventions:
 ### M7.10 Tray/Menu Bar
 
 - [x] Add tray icon.
-- [ ] Show active project.
-- [ ] Show latest checkpoint age.
-- [ ] Show protection state.
-- [ ] Add continue target list.
-- [ ] Add run elsewhere shortcuts.
+- [x] Show active project.
+- [x] Show latest checkpoint age.
+- [x] Show protection state.
+- [x] Add continue target list.
+- [x] Add run elsewhere shortcuts.
 - [x] Add open dashboard.
-- [ ] Add pause background work.
+- [x] Add pause background work.
 - [x] Add quit.
-- [ ] Add two-click handoff path.
+- [x] Add two-click handoff path.
 
 ### M7 Exit Gate
 
-- [ ] Same-LAN handoff can start from tray in two clicks.
+- [x] Same-LAN handoff can start from tray in two clicks.
 - [ ] Critical state is not color-only.
 - [ ] Dirty target flow avoids Git jargon.
 - [ ] UI state comes from agent events.

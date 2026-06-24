@@ -2158,6 +2158,19 @@ async function installEventListeners() {
   await listen("devrelay-tray-refresh", () => {
     refresh();
   });
+  await listen("devrelay-tray-notice", (event) => {
+    const payload = event?.payload ?? {};
+    const message = payload.message ? String(payload.message) : "Tray action completed";
+    const kind = payload.kind ? String(payload.kind) : "good";
+    toast(message, kind);
+  });
+  await listen("devrelay-tray-open-runs", (event) => {
+    const payload = event?.payload ?? {};
+    if (payload.project_id) state.selectedProjectId = payload.project_id;
+    state.view = "runs";
+    const target = payload.target_label ? ` for ${payload.target_label}` : "";
+    toast(`Run elsewhere${target} is not wired to the agent yet`, "warn");
+  });
   await listen("devrelay-agent-event", (event) => {
     markEventBridgeEvent(event?.payload);
     queueEventRefresh(400);

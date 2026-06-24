@@ -13,11 +13,11 @@ use devrelay_core::{
     METHOD_RECOVER_OPEN, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
     METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, ProjectRegistryEntry,
     ProjectResult, ProjectsAddParams, ProjectsListResult, RPC_JSONRPC_VERSION,
-    RPC_PROTOCOL_VERSION, RecoverOpenParams, RecoverOpenResult, RpcId, RpcRequest, RpcResponse,
-    RpcVersionNegotiationParams, RpcVersionNegotiationResult, RunsListParams, RunsListResult,
-    SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult, SnapshotsListParams,
-    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection,
-    VerificationDetails, detect_platform_identity,
+    RPC_PROTOCOL_VERSION, RecoverOpenParams, RecoverOpenResult, ResourceProfile, RpcId, RpcRequest,
+    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, RunsListParams,
+    RunsListResult, SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult,
+    SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot,
+    UnixIpcConnection, VerificationDetails, WorkspaceState, detect_platform_identity,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -25,16 +25,20 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{
-    Emitter, Manager,
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    Emitter, Manager, Runtime,
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
 };
 
 static EVENT_BRIDGE_RPC_ID: AtomicU64 = AtomicU64::new(1);
 const TRAY_OPEN_ID: &str = "open-devrelay";
 const TRAY_REFRESH_ID: &str = "refresh-state";
+const TRAY_PAUSE_BACKGROUND_ID: &str = "pause-background";
+const TRAY_HANDOFF_PREFIX: &str = "handoff-target|";
+const TRAY_RUN_PREFIX: &str = "run-target|";
+const TRAY_TARGET_SEPARATOR: char = '|';
 
 #[derive(Debug, Serialize)]
 struct RuntimeStatus {
@@ -89,6 +93,19 @@ struct UiOperationResult<T: Serialize> {
     ok: bool,
     message: String,
     data: Option<T>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrayNotice {
+    message: String,
+    kind: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrayRunTargetPayload {
+    project_id: String,
+    target_device_id: String,
+    target_label: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -852,6 +869,477 @@ fn operation_error<T: Serialize>(message: String) -> UiOperationResult<T> {
     }
 }
 
+fn build_tray_menu<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    state: &UiBootstrap,
+) -> tauri::Result<Menu<R>> {
+    let now = unix_now_seconds();
+    let active_project = tray_active_project(state);
+    let project_status = MenuItem::with_id(
+        manager,
+        "tray-status-project",
+        tray_project_label(active_project),
+        false,
+        None::<&str>,
+    )?;
+    let checkpoint_status = MenuItem::with_id(
+        manager,
+        "tray-status-checkpoint",
+        tray_checkpoint_label(state, active_project, now),
+        false,
+        None::<&str>,
+    )?;
+    let protection_status = MenuItem::with_id(
+        manager,
+        "tray-status-protection",
+        tray_protection_label(state, active_project),
+        false,
+        None::<&str>,
+    )?;
+    let continue_submenu = build_tray_continue_submenu(manager, state, active_project, now)?;
+    let run_submenu = build_tray_run_submenu(manager, state, active_project, now)?;
+    let pause_label = if state
+        .settings
+        .as_ref()
+        .is_some_and(|settings| settings.resource_profile == ResourceProfile::Eco)
+    {
+        "Resume background work"
+    } else {
+        "Pause background work"
+    };
+    let pause_background = MenuItem::with_id(
+        manager,
+        TRAY_PAUSE_BACKGROUND_ID,
+        pause_label,
+        state.settings.is_some() && state.agent.connected,
+        None::<&str>,
+    )?;
+    let open = MenuItem::with_id(manager, TRAY_OPEN_ID, "Open Dashboard", true, None::<&str>)?;
+    let refresh = MenuItem::with_id(
+        manager,
+        TRAY_REFRESH_ID,
+        "Refresh State",
+        true,
+        None::<&str>,
+    )?;
+    let separator_one = PredefinedMenuItem::separator(manager)?;
+    let separator_two = PredefinedMenuItem::separator(manager)?;
+    let separator_three = PredefinedMenuItem::separator(manager)?;
+    let quit = PredefinedMenuItem::quit(manager, Some("Quit DevRelay"))?;
+    let menu = Menu::new(manager)?;
+    menu.append(&project_status)?;
+    menu.append(&checkpoint_status)?;
+    menu.append(&protection_status)?;
+    menu.append(&separator_one)?;
+    menu.append(&continue_submenu)?;
+    menu.append(&run_submenu)?;
+    menu.append(&pause_background)?;
+    menu.append(&separator_two)?;
+    menu.append(&open)?;
+    menu.append(&refresh)?;
+    menu.append(&separator_three)?;
+    menu.append(&quit)?;
+    Ok(menu)
+}
+
+fn build_tray_continue_submenu<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    state: &UiBootstrap,
+    active_project: Option<&ProjectRegistryEntry>,
+    now: u64,
+) -> tauri::Result<Submenu<R>> {
+    let submenu = Submenu::with_id(manager, "tray-continue-submenu", "Continue on", true)?;
+    let targets = tray_target_devices(state);
+    if targets.is_empty() {
+        let empty = MenuItem::with_id(
+            manager,
+            "tray-continue-empty",
+            "No paired targets",
+            false,
+            None::<&str>,
+        )?;
+        submenu.append(&empty)?;
+        return Ok(submenu);
+    }
+
+    let blocker = tray_handoff_blocker(state, active_project);
+    if let Some(reason) = blocker {
+        let item = MenuItem::with_id(
+            manager,
+            "tray-continue-blocker",
+            reason,
+            false,
+            None::<&str>,
+        )?;
+        submenu.append(&item)?;
+    }
+
+    for target in targets {
+        let project_id = active_project
+            .map(|project| project.project_id.as_str())
+            .unwrap_or_default();
+        let target_id = target.identity.device_id.as_str();
+        let item = MenuItem::with_id(
+            manager,
+            tray_target_menu_id(TRAY_HANDOFF_PREFIX, project_id, target_id),
+            tray_device_label(target, now),
+            blocker.is_none(),
+            None::<&str>,
+        )?;
+        submenu.append(&item)?;
+    }
+    Ok(submenu)
+}
+
+fn build_tray_run_submenu<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    state: &UiBootstrap,
+    active_project: Option<&ProjectRegistryEntry>,
+    now: u64,
+) -> tauri::Result<Submenu<R>> {
+    let submenu = Submenu::with_id(manager, "tray-run-submenu", "Run elsewhere", true)?;
+    let targets = tray_target_devices(state);
+    if targets.is_empty() {
+        let empty = MenuItem::with_id(
+            manager,
+            "tray-run-empty",
+            "No paired targets",
+            false,
+            None::<&str>,
+        )?;
+        submenu.append(&empty)?;
+        return Ok(submenu);
+    }
+    if active_project.is_none() {
+        let item = MenuItem::with_id(
+            manager,
+            "tray-run-blocker",
+            "Add a project first",
+            false,
+            None::<&str>,
+        )?;
+        submenu.append(&item)?;
+    }
+
+    for target in targets {
+        let project_id = active_project
+            .map(|project| project.project_id.as_str())
+            .unwrap_or_default();
+        let target_id = target.identity.device_id.as_str();
+        let item = MenuItem::with_id(
+            manager,
+            tray_target_menu_id(TRAY_RUN_PREFIX, project_id, target_id),
+            tray_device_label(target, now),
+            active_project.is_some(),
+            None::<&str>,
+        )?;
+        submenu.append(&item)?;
+    }
+    Ok(submenu)
+}
+
+fn tray_active_project<'a>(state: &'a UiBootstrap) -> Option<&'a ProjectRegistryEntry> {
+    if let Some(local_device_id) = state
+        .settings
+        .as_ref()
+        .map(|settings| settings.device_id.as_str())
+    {
+        if let Some(project) = state.projects.iter().find(|project| {
+            project.workspaces.values().any(|workspace| {
+                workspace.device_id == local_device_id && workspace.state == WorkspaceState::Active
+            })
+        }) {
+            return Some(project);
+        }
+        if let Some(project) = state
+            .projects
+            .iter()
+            .find(|project| has_local_active_lease(state, &project.project_id))
+        {
+            return Some(project);
+        }
+    }
+    state.projects.first()
+}
+
+fn tray_project_label(project: Option<&ProjectRegistryEntry>) -> String {
+    match project {
+        Some(project) => format!("Project: {}", truncate_menu_text(&project.display_name, 44)),
+        None => "Project: none".to_string(),
+    }
+}
+
+fn tray_checkpoint_label(
+    state: &UiBootstrap,
+    project: Option<&ProjectRegistryEntry>,
+    now: u64,
+) -> String {
+    match project.and_then(|project| latest_snapshot_for_project(state, &project.project_id)) {
+        Some(snapshot) => format!(
+            "Checkpoint: {}",
+            format_tray_age(snapshot.created_at_unix_seconds, now)
+        ),
+        None => "Checkpoint: none".to_string(),
+    }
+}
+
+fn tray_protection_label(state: &UiBootstrap, project: Option<&ProjectRegistryEntry>) -> String {
+    let Some(project) = project else {
+        return "Protection: No project".to_string();
+    };
+    let label = if !state.agent.connected {
+        "Agent offline"
+    } else if open_handoff_for_project(state, &project.project_id) {
+        "Handoff in progress"
+    } else if latest_snapshot_for_project(state, &project.project_id).is_some() {
+        "Checkpoint available"
+    } else if has_local_active_lease(state, &project.project_id) {
+        "Needs checkpoint"
+    } else {
+        "Open project here"
+    };
+    format!("Protection: {label}")
+}
+
+fn latest_snapshot_for_project<'a>(
+    state: &'a UiBootstrap,
+    project_id: &str,
+) -> Option<&'a StoredSnapshot> {
+    state
+        .snapshots
+        .iter()
+        .filter(|snapshot| snapshot.project_id == project_id)
+        .max_by(|left, right| {
+            left.created_at_unix_seconds
+                .cmp(&right.created_at_unix_seconds)
+                .then(left.sequence_number.cmp(&right.sequence_number))
+        })
+}
+
+fn tray_target_devices(state: &UiBootstrap) -> Vec<&UiDeviceIdentity> {
+    let local_device_id = state
+        .settings
+        .as_ref()
+        .map(|settings| settings.device_id.as_str());
+    let mut targets: Vec<&UiDeviceIdentity> = state
+        .devices
+        .iter()
+        .filter(|device| Some(device.identity.device_id.as_str()) != local_device_id)
+        .collect();
+    targets.sort_by(|left, right| {
+        left.identity
+            .display_name
+            .cmp(&right.identity.display_name)
+            .then(left.identity.device_id.cmp(&right.identity.device_id))
+    });
+    targets
+}
+
+fn tray_device_label(device: &UiDeviceIdentity, now: u64) -> String {
+    let name = truncate_menu_text(&device.identity.display_name, 36);
+    if device.identity.last_seen_unix_seconds == 0 {
+        return name;
+    }
+    format!(
+        "{name} ({})",
+        format_tray_age(device.identity.last_seen_unix_seconds, now)
+    )
+}
+
+fn tray_handoff_blocker(
+    state: &UiBootstrap,
+    project: Option<&ProjectRegistryEntry>,
+) -> Option<&'static str> {
+    let project = match project {
+        Some(project) => project,
+        None => return Some("Add a project first"),
+    };
+    if !state.agent.connected {
+        return Some("Start the local agent first");
+    }
+    if !tray_method_available(state, METHOD_HANDOFF_BEGIN)
+        || !tray_method_available(state, METHOD_CHECKPOINT_CREATE)
+    {
+        return Some("Update the local agent first");
+    }
+    if open_handoff_for_project(state, &project.project_id) {
+        return Some("Finish the current handoff first");
+    }
+    if !has_local_active_lease(state, &project.project_id) {
+        return Some("Open this project here first");
+    }
+    None
+}
+
+fn tray_method_available(state: &UiBootstrap, method: &str) -> bool {
+    state
+        .agent
+        .methods
+        .iter()
+        .any(|candidate| candidate == method)
+}
+
+fn has_local_active_lease(state: &UiBootstrap, project_id: &str) -> bool {
+    let Some(local_device_id) = state
+        .settings
+        .as_ref()
+        .map(|settings| settings.device_id.as_str())
+    else {
+        return false;
+    };
+    state.leases.iter().any(|lease| {
+        lease.project_id == project_id
+            && lease.state == LeaseState::Active
+            && lease.holder_device_id.as_deref() == Some(local_device_id)
+    })
+}
+
+fn open_handoff_for_project(state: &UiBootstrap, project_id: &str) -> bool {
+    state.handoffs.iter().any(|handoff| {
+        handoff.record.project_id == project_id && !handoff.record.state.is_terminal()
+    })
+}
+
+fn tray_target_menu_id(prefix: &str, project_id: &str, target_device_id: &str) -> String {
+    format!("{prefix}{project_id}{TRAY_TARGET_SEPARATOR}{target_device_id}")
+}
+
+fn parse_tray_target_id<'a>(id: &'a str, prefix: &str) -> Option<(&'a str, &'a str)> {
+    let payload = id.strip_prefix(prefix)?;
+    let (project_id, target_device_id) = payload.split_once(TRAY_TARGET_SEPARATOR)?;
+    if project_id.is_empty() || target_device_id.is_empty() {
+        return None;
+    }
+    Some((project_id, target_device_id))
+}
+
+fn truncate_menu_text(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let keep = max_chars.saturating_sub(3);
+    format!("{}...", value.chars().take(keep).collect::<String>())
+}
+
+fn format_tray_age(created_at_unix_seconds: u64, now: u64) -> String {
+    if created_at_unix_seconds == 0 {
+        return "never".to_string();
+    }
+    let delta = now.saturating_sub(created_at_unix_seconds);
+    if delta < 10 {
+        "just now".to_string()
+    } else if delta < 60 {
+        format!("{delta}s ago")
+    } else if delta < 3_600 {
+        format!("{}m ago", delta / 60)
+    } else if delta < 86_400 {
+        format!("{}h ago", delta / 3_600)
+    } else {
+        format!("{}d ago", delta / 86_400)
+    }
+}
+
+fn unix_now_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn emit_tray_notice(app: &tauri::AppHandle, message: impl Into<String>, kind: &str) {
+    let _ = app.emit(
+        "devrelay-tray-notice",
+        TrayNotice {
+            message: message.into(),
+            kind: kind.to_string(),
+        },
+    );
+}
+
+fn refresh_tray_menu(app: &tauri::AppHandle) {
+    let state = build_ui_bootstrap();
+    match build_tray_menu(app, &state) {
+        Ok(menu) => {
+            if let Some(tray) = app.tray_by_id("main")
+                && let Err(error) = tray.set_menu(Some(menu))
+            {
+                emit_tray_notice(app, format!("Tray refresh failed: {error}"), "bad");
+            }
+        }
+        Err(error) => emit_tray_notice(app, format!("Tray refresh failed: {error}"), "bad"),
+    }
+}
+
+fn handle_tray_handoff(app: &tauri::AppHandle, project_id: &str, target_device_id: &str) {
+    show_main_window(app);
+    let result = handoff_prepare(project_id.to_string(), target_device_id.to_string());
+    let kind = if result.ok { "good" } else { "bad" };
+    emit_tray_notice(app, result.message, kind);
+    refresh_tray_menu(app);
+    let _ = app.emit("devrelay-tray-refresh", ());
+}
+
+fn handle_tray_run_elsewhere(app: &tauri::AppHandle, project_id: &str, target_device_id: &str) {
+    let state = build_ui_bootstrap();
+    let target_label = state
+        .devices
+        .iter()
+        .find(|device| device.identity.device_id == target_device_id)
+        .map(|device| device.identity.display_name.clone())
+        .unwrap_or_else(|| target_device_id.to_string());
+    let _ = app.emit(
+        "devrelay-tray-open-runs",
+        TrayRunTargetPayload {
+            project_id: project_id.to_string(),
+            target_device_id: target_device_id.to_string(),
+            target_label,
+        },
+    );
+    show_main_window(app);
+}
+
+fn handle_tray_background_toggle(app: &tauri::AppHandle) {
+    let socket = resolved_home().agent_socket_path();
+    let settings: SettingsGetResult = match call_agent(&socket, METHOD_SETTINGS_GET, json!({})) {
+        Ok(settings) => settings,
+        Err(error) => {
+            emit_tray_notice(app, format!("Settings refresh failed: {error}"), "bad");
+            return;
+        }
+    };
+    let next_profile = if settings.resource_profile == ResourceProfile::Eco {
+        ResourceProfile::Adaptive
+    } else {
+        ResourceProfile::Eco
+    };
+    let result = settings_update(SettingsUpdateParams {
+        resource_profile: Some(next_profile),
+        mdns_enabled: None,
+        editor_command: None,
+    });
+    if result.ok {
+        let message = if next_profile == ResourceProfile::Eco {
+            "Background work moved to Eco profile"
+        } else {
+            "Background work resumed"
+        };
+        emit_tray_notice(app, message, "good");
+    } else {
+        emit_tray_notice(app, result.message, "bad");
+    }
+    refresh_tray_menu(app);
+    let _ = app.emit("devrelay-tray-refresh", ());
+}
+
+fn spawn_tray_action<F>(name: &str, task: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let _ = std::thread::Builder::new()
+        .name(format!("devrelay-desktop-tray-{name}"))
+        .spawn(task);
+}
+
 fn spawn_agent_event_bridge(app: tauri::AppHandle) {
     std::thread::Builder::new()
         .name("devrelay-desktop-event-bridge".to_string())
@@ -871,22 +1359,47 @@ fn spawn_agent_event_bridge(app: tauri::AppHandle) {
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open DevRelay", true, None::<&str>)?;
-    let refresh = MenuItem::with_id(app, TRAY_REFRESH_ID, "Refresh State", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let quit = PredefinedMenuItem::quit(app, Some("Quit DevRelay"))?;
-    let menu = Menu::with_items(app, &[&open, &refresh, &separator, &quit])?;
+    let state = build_ui_bootstrap();
+    let menu = build_tray_menu(app, &state)?;
 
     let mut tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .tooltip("DevRelay")
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {
-            if event.id() == TRAY_OPEN_ID {
+            let id = event.id().as_ref();
+            if id == TRAY_OPEN_ID {
                 show_main_window(app);
-            } else if event.id() == TRAY_REFRESH_ID {
-                let _ = app.emit("devrelay-tray-refresh", ());
+            } else if id == TRAY_REFRESH_ID {
                 show_main_window(app);
+                let app = app.clone();
+                spawn_tray_action("refresh", move || {
+                    refresh_tray_menu(&app);
+                    let _ = app.emit("devrelay-tray-refresh", ());
+                });
+            } else if id == TRAY_PAUSE_BACKGROUND_ID {
+                let app = app.clone();
+                spawn_tray_action("background-toggle", move || {
+                    handle_tray_background_toggle(&app);
+                });
+            } else if let Some((project_id, target_device_id)) =
+                parse_tray_target_id(id, TRAY_HANDOFF_PREFIX)
+            {
+                let app = app.clone();
+                let project_id = project_id.to_string();
+                let target_device_id = target_device_id.to_string();
+                spawn_tray_action("handoff", move || {
+                    handle_tray_handoff(&app, &project_id, &target_device_id);
+                });
+            } else if let Some((project_id, target_device_id)) =
+                parse_tray_target_id(id, TRAY_RUN_PREFIX)
+            {
+                let app = app.clone();
+                let project_id = project_id.to_string();
+                let target_device_id = target_device_id.to_string();
+                spawn_tray_action("run-shortcut", move || {
+                    handle_tray_run_elsewhere(&app, &project_id, &target_device_id);
+                });
             }
         });
     if let Some(icon) = app.default_window_icon() {
@@ -962,6 +1475,45 @@ fn run_event_bridge_once(
                 let _ = app.emit("devrelay-agent-gap", &gap);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tray_target_ids_round_trip() {
+        let id = tray_target_menu_id(TRAY_HANDOFF_PREFIX, "project-1", "device-2");
+
+        assert_eq!(
+            parse_tray_target_id(&id, TRAY_HANDOFF_PREFIX),
+            Some(("project-1", "device-2"))
+        );
+        assert_eq!(parse_tray_target_id(&id, TRAY_RUN_PREFIX), None);
+    }
+
+    #[test]
+    fn tray_target_id_rejects_empty_parts() {
+        assert_eq!(
+            parse_tray_target_id("handoff-target|project-1|", TRAY_HANDOFF_PREFIX),
+            None
+        );
+        assert_eq!(
+            parse_tray_target_id("handoff-target||device-2", TRAY_HANDOFF_PREFIX),
+            None
+        );
+    }
+
+    #[test]
+    fn tray_age_uses_compact_labels() {
+        let now = 200_000;
+        assert_eq!(format_tray_age(0, now), "never");
+        assert_eq!(format_tray_age(now - 5, now), "just now");
+        assert_eq!(format_tray_age(now - 50, now), "50s ago");
+        assert_eq!(format_tray_age(now - 120, now), "2m ago");
+        assert_eq!(format_tray_age(now - 7_200, now), "2h ago");
+        assert_eq!(format_tray_age(now - 172_800, now), "2d ago");
     }
 }
 

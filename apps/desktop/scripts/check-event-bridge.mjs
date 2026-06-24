@@ -520,6 +520,8 @@ assert(
 
 for (const eventName of [
   "devrelay-tray-refresh",
+  "devrelay-tray-notice",
+  "devrelay-tray-open-runs",
   "devrelay-agent-connected",
   "devrelay-agent-event",
   "devrelay-agent-gap",
@@ -527,6 +529,33 @@ for (const eventName of [
 ]) {
   assert.equal(typeof handlers.get(eventName), "function", `${eventName} listener was not installed`);
 }
+
+handlers.get("devrelay-tray-notice")({
+  payload: {
+    message: "Tray action completed",
+    kind: "good",
+  },
+});
+assert.match(app.innerHTML, /Tray action completed/, "tray notice did not render toast");
+handlers.get("devrelay-tray-open-runs")({
+  payload: {
+    project_id: "project-1",
+    target_device_id: "target-device",
+    target_label: "Target device",
+  },
+});
+assert.equal(vm.runInContext("state.view", context), "runs", "tray run shortcut did not open runs view");
+assert.equal(
+  vm.runInContext("state.selectedProjectId", context),
+  "project-1",
+  "tray run shortcut did not preserve project context"
+);
+assert.match(
+  app.innerHTML,
+  /Run elsewhere for Target device is not wired to the agent yet/,
+  "tray run shortcut did not warn"
+);
+vm.runInContext('state.view = "continue"; render();', context);
 
 handlers.get("devrelay-agent-connected")({
   payload: {
