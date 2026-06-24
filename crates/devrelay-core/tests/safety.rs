@@ -1,15 +1,15 @@
 use devrelay_core::{
-    AuditOutcome, CanonicalPublishRequest, DevRelayError, GitRepo, HandoffJournalPhase,
-    HandoffState, LeaseRecord, LeaseState, Manifest, MetadataDb, SnapshotMetadata, apply_snapshot,
-    classification_reason, create_snapshot,
+    AuditOutcome, BackgroundCheckpointManager, BackgroundCheckpointOutcome, BackgroundWorkspace,
+    CanonicalPublishRequest, DebounceFlushReason, DebouncedCheckpoint, DevRelayError, DevRelayHome,
+    GitRepo, HandoffJournalPhase, HandoffState, LeaseRecord, LeaseState, Manifest, MetadataDb,
+    ProtectionStatus, SnapshotMetadata, SnapshotStore, apply_snapshot, classification_reason,
+    create_snapshot,
 };
 use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-fn manifest() -> Manifest {
-    Manifest::parse(
-        r#"
+const MANIFEST_TEXT: &str = r#"
 schema = 1
 project_id = "12345678"
 name = "safety"
@@ -17,9 +17,10 @@ name = "safety"
 [workspace]
 untracked = "safe"
 portable_paths = "strict"
-"#,
-    )
-    .unwrap()
+"#;
+
+fn manifest() -> Manifest {
+    Manifest::parse(MANIFEST_TEXT).unwrap()
 }
 
 fn init_repo(path: &Path) -> GitRepo {
@@ -261,5 +262,71 @@ mod no_plaintext_secret_snapshot {
         }));
         assert!(!work_tree_paths.lines().any(|path| path == ".env"));
         assert!(!work_tree_paths.lines().any(|path| path == "private.pem"));
+    }
+}
+
+mod watcher_events_are_hints {
+    //! Invariant: `safety/watcher_events_are_hints`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    fn background_workspace(path: &Path) -> BackgroundWorkspace {
+        BackgroundWorkspace {
+            project_id: "12345678".to_string(),
+            workspace_id: "w-source".to_string(),
+            device_id: Some("device-a".to_string()),
+            repo_path: path.to_path_buf(),
+            manifest_path: Some(path.join("devrelay.toml")),
+        }
+    }
+
+    fn debounced_checkpoint(source_generation: u64, paths: Vec<PathBuf>) -> DebouncedCheckpoint {
+        DebouncedCheckpoint {
+            workspace_id: "w-source".to_string(),
+            source_generation,
+            reason: DebounceFlushReason::QuietWindow,
+            paths,
+        }
+    }
+
+    #[test]
+    fn phantom_watcher_path_does_not_create_new_snapshot_after_clean_rescan() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("devrelay.toml"), MANIFEST_TEXT).unwrap();
+        source.run(&["add", "devrelay.toml"]).unwrap();
+        source.run(&["commit", "-m", "manifest"]).unwrap();
+        let workspace = background_workspace(&source_path);
+        let mut manager = BackgroundCheckpointManager::new();
+
+        fs::write(source_path.join("README.md"), "actual change\n").unwrap();
+        let first = manager.handle_checkpoint(
+            &home,
+            &workspace,
+            &debounced_checkpoint(1, vec![PathBuf::from("README.md")]),
+        );
+        let stored = first.snapshot.as_ref().unwrap();
+        let first_snapshot_id = stored.snapshot_id.clone();
+        let first_state_hash = stored.metadata.state_hash.clone();
+
+        let second = manager.handle_checkpoint(
+            &home,
+            &workspace,
+            &debounced_checkpoint(2, vec![PathBuf::from("phantom-watcher-path.txt")]),
+        );
+
+        assert_eq!(
+            second.outcome,
+            BackgroundCheckpointOutcome::Unchanged {
+                snapshot_id: first_snapshot_id.clone(),
+                state_hash: first_state_hash.clone(),
+            }
+        );
+        assert_eq!(second.event.status, ProtectionStatus::Unchanged);
+        let store = SnapshotStore::open(&home, "12345678").unwrap();
+        assert_eq!(store.list_snapshots().unwrap().len(), 1);
     }
 }
