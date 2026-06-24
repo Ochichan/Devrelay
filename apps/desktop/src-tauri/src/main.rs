@@ -2,13 +2,14 @@ use devrelay_core::{
     ActivityListParams, ActivityListResult, AgentRpcClient, CheckpointCreateParams,
     CheckpointCreateResult, DevRelayHome, DevicesListResult, DiagnosticsExportParams,
     DiagnosticsExportResult, EventReplayCursor, EventStreamMessage, EventsSubscribeParams,
-    EventsSubscribeResult, HandoffStatus, HandoffsListParams, HandoffsListResult, IpcConnection,
-    IpcLimits, LeaseRecord, LeasesListParams, LeasesListResult, METHOD_ACTIVITY_LIST,
-    METHOD_AGENT_HEALTH, METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT,
-    METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_PROJECTS_LIST,
-    METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE,
-    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, ProjectRegistryEntry, ProjectsListResult,
-    RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcId, RpcRequest, RpcResponse,
+    EventsSubscribeResult, HandoffBeginParams, HandoffMutationResult, HandoffStatus,
+    HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, LeaseRecord, LeaseState,
+    LeasesListParams, LeasesListResult, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH,
+    METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT,
+    METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_BEGIN, METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST,
+    METHOD_PROJECTS_LIST, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
+    METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, ProjectRegistryEntry,
+    ProjectsListResult, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcId, RpcRequest, RpcResponse,
     RpcVersionNegotiationParams, RpcVersionNegotiationResult, RunsListParams, RunsListResult,
     SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult, SnapshotsListParams,
     SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection,
@@ -110,6 +111,73 @@ fn checkpoint_create(project_id: String) -> UiOperationResult<CheckpointCreateRe
             data: Some(result),
         },
         Err(err) => operation_error(format!("checkpoint failed: {err}")),
+    }
+}
+
+#[tauri::command]
+fn handoff_prepare(
+    project_id: String,
+    target_device_id: String,
+) -> UiOperationResult<HandoffMutationResult> {
+    let socket = resolved_home().agent_socket_path();
+    let settings: SettingsGetResult = match call_agent(&socket, METHOD_SETTINGS_GET, json!({})) {
+        Ok(result) => result,
+        Err(err) => return operation_error(format!("failed to load local device settings: {err}")),
+    };
+    if settings.device_id == target_device_id {
+        return operation_error("target device must be different from this device".to_string());
+    }
+
+    let project = match project_by_id(&socket, &project_id) {
+        Ok(project) => project,
+        Err(err) => return operation_error(err),
+    };
+    let leases: LeasesListResult = match call_agent(
+        &socket,
+        METHOD_LEASES_LIST,
+        LeasesListParams {
+            project: Some(project_id.clone()),
+        },
+    ) {
+        Ok(result) => result,
+        Err(err) => return operation_error(format!("failed to load writer lease: {err}")),
+    };
+    let Some(lease) = leases.leases.into_iter().find(|lease| {
+        lease.state == LeaseState::Active
+            && lease.holder_device_id.as_deref() == Some(settings.device_id.as_str())
+    }) else {
+        return operation_error(
+            "this device does not currently hold an active writer lease".to_string(),
+        );
+    };
+
+    let checkpoint: CheckpointCreateResult = match call_agent(
+        &socket,
+        METHOD_CHECKPOINT_CREATE,
+        CheckpointCreateParams {
+            repo: project.local_path,
+            manifest: project.manifest_path,
+            label: Some("desktop-handoff".to_string()),
+            pin: false,
+        },
+    ) {
+        Ok(result) => result,
+        Err(err) => return operation_error(format!("handoff checkpoint failed: {err}")),
+    };
+    let params = HandoffBeginParams {
+        project: project_id,
+        lease_id: lease.lease_id,
+        target_device_id,
+        source_generation: checkpoint.checkpoint.metadata.state_hash,
+        ttl_seconds: None,
+    };
+    match call_agent(&socket, METHOD_HANDOFF_BEGIN, params) {
+        Ok(result) => UiOperationResult {
+            ok: true,
+            message: "target preparation started".to_string(),
+            data: Some(result),
+        },
+        Err(err) => operation_error(format!("handoff preparation failed: {err}")),
     }
 }
 
@@ -501,6 +569,7 @@ fn main() {
             runtime_status,
             ui_bootstrap,
             checkpoint_create,
+            handoff_prepare,
             project_status,
             open_project,
             settings_update,

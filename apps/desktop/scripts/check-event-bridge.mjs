@@ -14,6 +14,7 @@ const app = {
   querySelectorAll: () => [],
   querySelector: () => null,
 };
+const nowSeconds = Math.floor(Date.now() / 1000);
 const bootstrap = {
   runtime: {
     platform_key: "macos",
@@ -37,10 +38,68 @@ const bootstrap = {
     mdns_enabled: false,
     editor_command: "code",
   },
-  projects: [],
-  devices: [],
+  projects: [
+    {
+      project_id: "project-1",
+      display_name: "Project One",
+      local_path: "/tmp/project-one",
+      manifest_path: "/tmp/project-one/devrelay.toml",
+      workspaces: {
+        main: {
+          workspace_id: "session-1",
+          state: "active",
+          device_id: "local-device",
+          local_path: "/tmp/project-one",
+        },
+      },
+    },
+  ],
+  snapshots: [],
+  leases: [
+    {
+      lease_id: "lease-1",
+      project_id: "project-1",
+      session_id: "session-1",
+      state: "active",
+      holder_device_id: "local-device",
+      latest_snapshot_id: null,
+      handoff_id: null,
+    },
+  ],
+  handoffs: [],
+  devices: [
+    {
+      device_id: "local-device",
+      display_name: "Local device",
+      platform_key: "darwin-arm64",
+      architecture: "arm64",
+      last_seen_unix_seconds: nowSeconds,
+    },
+    {
+      device_id: "target-device",
+      display_name: "Target device",
+      platform_key: "linux-gnu-x86_64",
+      architecture: "x86_64",
+      last_seen_unix_seconds: nowSeconds,
+    },
+  ],
   runs: [],
   activity: [],
+};
+const cleanStatus = {
+  ok: true,
+  data: {
+    status: {
+      clean: true,
+      counts: {
+        staged: 0,
+        unstaged: 0,
+        untracked: 0,
+        ignored: 0,
+        unmerged: 0,
+      },
+    },
+  },
 };
 const invoked = [];
 
@@ -59,6 +118,7 @@ const context = {
       core: {
         invoke: async (name) => {
           invoked.push(name);
+          if (name === "project_status") return cleanStatus;
           return bootstrap;
         },
       },
@@ -77,6 +137,13 @@ const context = {
 vm.createContext(context);
 vm.runInContext(source, context, { filename: "app.js" });
 await new Promise((resolve) => setTimeout(resolve, 20));
+
+assert.match(app.innerHTML, /Prepare handoff/, "ready target handoff action did not render");
+assert.match(
+  app.innerHTML,
+  /target apply and verification remain pending/,
+  "handoff panel did not keep verification pending"
+);
 
 for (const eventName of [
   "devrelay-tray-refresh",

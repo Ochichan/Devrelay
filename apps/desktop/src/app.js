@@ -215,6 +215,10 @@ function latestHandoff(projectId) {
   );
 }
 
+function handoffIsOpen(handoff) {
+  return Boolean(handoff && !["committed", "aborted"].includes(handoff.record?.state));
+}
+
 function deviceName(deviceId) {
   if (!deviceId) return "No writer recorded";
   const found = devices().find((device) => device.device_id === deviceId);
@@ -255,12 +259,18 @@ function recentlySeen(device) {
 
 function macLinuxTarget(device) {
   const platform = String(device?.platform_key ?? "");
-  return platform.startsWith("darwin-") || platform.startsWith("linux-gnu-");
+  return (
+    ["darwin", "macos", "linux", "linux-gnu"].includes(platform) ||
+    platform.startsWith("darwin-") ||
+    platform.startsWith("linux-gnu-")
+  );
 }
 
-function targetReadiness(device, handoffReady) {
+function targetReadiness(device, context) {
+  const { handoffReady, lease, openHandoff } = context;
   if (!macLinuxTarget(device)) {
     return {
+      ready: false,
       tone: "warn",
       label: "Later OS",
       detail: "Windows and WSL UI wait for named pipe IPC hardening.",
@@ -268,6 +278,7 @@ function targetReadiness(device, handoffReady) {
   }
   if (!recentlySeen(device)) {
     return {
+      ready: false,
       tone: "warn",
       label: "Offline",
       detail: `Last seen ${formatAge(device.last_seen_unix_seconds)}`,
@@ -275,15 +286,41 @@ function targetReadiness(device, handoffReady) {
   }
   if (!handoffReady) {
     return {
+      ready: false,
       tone: "warn",
       label: "RPC missing",
       detail: "This agent build does not expose handoff.begin yet.",
     };
   }
+  if (openHandoff) {
+    return {
+      ready: false,
+      tone: "warn",
+      label: "Preparing",
+      detail: "A handoff is already waiting for target apply.",
+    };
+  }
+  if (!lease || lease.state !== "active") {
+    return {
+      ready: false,
+      tone: "warn",
+      label: "No writer",
+      detail: "This device does not hold an active writer lease.",
+    };
+  }
+  if (lease.holder_device_id !== state.bootstrap?.settings?.device_id) {
+    return {
+      ready: false,
+      tone: "warn",
+      label: "Not writer",
+      detail: "Only the active writer can prepare a handoff.",
+    };
+  }
   return {
-    tone: "warn",
-    label: "UI pending",
-    detail: "Metadata handoff RPC exists; target apply wiring is disabled.",
+    ready: true,
+    tone: "good",
+    label: "Ready",
+    detail: "Fresh checkpoint and target preparation can start.",
   };
 }
 
@@ -546,9 +583,15 @@ function renderContinue() {
   const latest = activity().find((event) => event.project_id === project.project_id);
   const checkpoint = latestSnapshot(project.project_id);
   const handoff = latestHandoff(project.project_id);
+  const openHandoff = handoffIsOpen(handoff);
   const targetDevices = devices().filter((device) => device.device_id !== state.bootstrap?.settings?.device_id);
   const handoffReady = methods().has("handoff.begin");
   const suggestedSession = workspace?.workspace_id ?? checkpoint?.session_id ?? project.project_id;
+  const handoffPanelCopy = openHandoff
+    ? "Target preparation is in progress; target apply and verification remain pending"
+    : handoffReady
+      ? "Start target preparation with a fresh checkpoint; target apply and verification remain pending"
+      : "Handoff RPC is not exposed by this agent build";
   return `
     <section class="screen">
       ${agentErrors()}
@@ -590,7 +633,7 @@ function renderContinue() {
       </div>
       <div class="panel">
         <div class="panel-head">
-          <div><h3>Continue on another device</h3><p>${handoffReady ? "Metadata handoff RPC available; target apply wiring is disabled" : "Handoff RPC is not exposed by this agent build"}</p></div>
+          <div><h3>Continue on another device</h3><p>${handoffPanelCopy}</p></div>
         </div>
         <div class="panel-body">
           ${
@@ -598,13 +641,14 @@ function renderContinue() {
               ? '<div class="empty"><strong>No paired target devices</strong><p>Pair another device before starting a desktop handoff.</p></div>'
               : `<div class="list">${targetDevices
                   .map((device) => {
-                    const readiness = targetReadiness(device, handoffReady);
+                    const readiness = targetReadiness(device, { handoffReady, lease, openHandoff });
+                    const disabled = !readiness.ready || Boolean(state.operation);
                     return `<div class="list-item">
                       <div class="list-item-row">
                         <div><strong>${escapeHtml(device.display_name)}</strong><span>${escapeHtml(device.platform_key)} ${escapeHtml(device.architecture)} - ${escapeHtml(readiness.detail)}</span></div>
                         <span class="badge ${readiness.tone}">${escapeHtml(readiness.label)}</span>
                       </div>
-                      <button class="button" disabled>${icons.play}<span>${handoffReady ? "UI adapter pending" : "Handoff API unavailable"}</span></button>
+                      <button class="button ${readiness.ready ? "primary" : ""}" data-action="handoff-prepare" data-project-id="${escapeHtml(project.project_id)}" data-target-device-id="${escapeHtml(device.device_id)}" ${disabled ? "disabled" : ""}>${icons.play}<span>${readiness.ready ? "Prepare handoff" : readiness.label}</span></button>
                     </div>`;
                   })
                   .join("")}</div>`
@@ -848,6 +892,7 @@ function attachHandlers() {
 async function handleAction(button) {
   const action = button.dataset.action;
   const projectId = button.dataset.projectId;
+  const targetDeviceId = button.dataset.targetDeviceId;
   if (action === "refresh") {
     await refresh();
     return;
@@ -868,6 +913,15 @@ async function handleAction(button) {
       const result = await invoke("checkpoint_create", { projectId });
       if (!result.ok) throw new Error(result.message);
       toast("Checkpoint created");
+      await refresh();
+    }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    return;
+  }
+  if (action === "handoff-prepare") {
+    await runOperation("Preparing handoff", async () => {
+      const result = await invoke("handoff_prepare", { projectId, targetDeviceId });
+      if (!result.ok) throw new Error(result.message);
+      toast("Handoff preparation started");
       await refresh();
     }).catch((error) => toast(String(error?.message ?? error), "bad"));
     return;

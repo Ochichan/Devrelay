@@ -1146,7 +1146,7 @@ Conventions:
 - [x] Show handoff-in-progress state.
 - [ ] Show environment warmth.
 - [ ] Add primary "Continue here" action.
-- [ ] Add "Continue elsewhere" action.
+- [x] Add "Continue elsewhere" action.
 - [x] Add "Checkpoint" action.
 - [ ] Add "Run elsewhere" action placeholder.
 - [x] Add empty state.
