@@ -1046,7 +1046,7 @@ Conventions:
 - [x] Add resource policy persistence.
 - [x] Add resource policy tests.
 - [x] Add resource benchmark plan.
-- [ ] Implement repeatable resource benchmark harness.
+- [x] Implement repeatable resource benchmark harness.
 - [ ] Record representative resource benchmark results.
 
 ### M6.6 Retention And Quota
@@ -2006,10 +2006,10 @@ Conventions:
 
 ### M15.4 Resource Gate
 
-- [ ] Measure idle agent CPU.
-- [ ] Measure idle agent RSS.
-- [ ] Measure active checkpoint CPU burst.
-- [ ] Measure active checkpoint RSS.
+- [x] Measure idle agent CPU.
+- [x] Measure idle agent RSS.
+- [x] Measure active checkpoint CPU burst.
+- [x] Measure active checkpoint RSS.
 - [ ] Measure background network cap.
 - [ ] Measure battery behavior.
 - [ ] Measure low-power behavior.
@@ -2090,7 +2090,7 @@ Conventions:
 - [x] Fix README, roadmap, API surface, and M4 gate documentation drift.
 - [ ] Decide macOS/Linux-first dogfood versus Windows IPC first.
 - [ ] Finish Windows named pipe transport and pipe ACL if 3-OS UI is required.
-- [ ] Implement resource benchmark harness and record idle CPU/RSS plus checkpoint burst results.
+- [x] Implement resource benchmark harness and record idle CPU/RSS plus checkpoint burst results.
 - [x] Add first safety suites: `no_silent_overwrite`, `no_unverified_handoff`, `stale_publish_is_fork`, and `no_plaintext_secret_snapshot`.
 - [ ] Start Tauri shell with agent event subscription.
 - [ ] Implement tray and Continue screen for macOS/Linux handoff.

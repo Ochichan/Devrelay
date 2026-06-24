@@ -17,4 +17,7 @@ audit:
 dependency-inventory:
     python3 scripts/dependency_inventory.py --out target/dependency-inventory
 
+resource-benchmark:
+    python3 scripts/resource_benchmark.py
+
 tooling: audit dependency-inventory

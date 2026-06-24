@@ -1,6 +1,6 @@
 # Resource Benchmark Plan
 
-Last updated: 2026-06-23
+Last updated: 2026-06-24
 
 Background protection is product behavior. An always-running personal agent
 must be measured before DevRelay claims invisible protection.
@@ -72,6 +72,34 @@ target/resource-benchmarks/<date>-<platform>.md
 
 Before beta, copy the accepted summary into a tracked document or release gate
 report. Raw target output does not need to be committed.
+
+## Harness
+
+Run the repeatable local harness with:
+
+```bash
+just resource-benchmark
+```
+
+The harness builds the CLI and agent, starts a foreground agent with an isolated
+`DEVRELAY_HOME`, samples agent CPU/RSS while idle, creates a temporary Git
+project, registers it through the agent socket, and samples the agent during a
+checkpoint burst.
+
+Use a tracked output path when a result should become project evidence:
+
+```bash
+python3 scripts/resource_benchmark.py \
+  --out output/resource-benchmark-results-2026-06-24.md \
+  --idle-seconds 5 \
+  --checkpoint-iterations 5 \
+  --tracked-files 100
+```
+
+Initial macOS smoke evidence is recorded in
+[`output/resource-benchmark-results-2026-06-24.md`](../output/resource-benchmark-results-2026-06-24.md).
+It records idle CPU/RSS and checkpoint CPU/RSS burst behavior, but it is not a
+representative release benchmark.
 
 ## Initial Budgets
 
