@@ -1762,18 +1762,18 @@ Conventions:
 
 ### M13.1 Threat Model
 
-- [ ] Document same-LAN attacker.
-- [ ] Document malicious project manifest.
-- [ ] Document stale device.
-- [ ] Document compromised device.
-- [ ] Document path traversal.
-- [ ] Document symlink escape.
-- [ ] Document secret leakage.
-- [ ] Document replay attack.
-- [ ] Document data corruption.
-- [ ] Document accepted trust assumptions.
-- [ ] Map mitigations to each threat.
-- [ ] Review threat model with implementation.
+- [x] Document same-LAN attacker.
+- [x] Document malicious project manifest.
+- [x] Document stale device.
+- [x] Document compromised device.
+- [x] Document path traversal.
+- [x] Document symlink escape.
+- [x] Document secret leakage.
+- [x] Document replay attack.
+- [x] Document data corruption.
+- [x] Document accepted trust assumptions.
+- [x] Map mitigations to each threat.
+- [x] Review threat model with implementation.
 
 ### M13.2 Fuzzing
 

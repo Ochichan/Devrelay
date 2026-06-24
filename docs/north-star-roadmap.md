@@ -534,6 +534,9 @@ Goal: get the system ready for real daily use on private machines.
 
 Completed or started:
 
+- Implementation-grounded threat model covering LAN, manifest, stale device,
+  compromised device, traversal, symlink, secret, replay, and corruption
+  threats.
 - Fuzzing targets and corpus seeds.
 - Secret scanning primitives.
 - Diagnostic bundle.
@@ -542,7 +545,6 @@ Completed or started:
 
 Open work:
 
-- Threat model.
 - False-positive override design.
 - Encrypted one-time sidecar design.
 - Release channel, signed release, and provenance strategy.
