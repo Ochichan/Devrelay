@@ -52,6 +52,7 @@ mod git;
 mod git_doctor;
 mod handoff;
 mod home;
+mod hydration;
 mod identity;
 mod ipc;
 mod lease;
@@ -141,12 +142,12 @@ pub use environment::{
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{
-    EVENT_SCHEMA_VERSION, EventEnvelope, EventGapDetector, EventReplayCursor, EventSequence,
-    EventSequenceGap, EventSequencer, EventStreamMessage, EventTimestampMillis, EventType,
-    HandoffStateChangedEvent, ProtectionStatus, ProtectionStatusEvent, QuotaWarningEvent,
-    SecurityBlockedEvent, SessionDivergedEvent, SnapshotApplyStartedEvent,
-    SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent, TypedEventPayload,
-    WorkspaceStateChangedEvent,
+    EVENT_SCHEMA_VERSION, EnvironmentProgressEvent, EventEnvelope, EventGapDetector,
+    EventReplayCursor, EventSequence, EventSequenceGap, EventSequencer, EventStreamMessage,
+    EventTimestampMillis, EventType, HandoffStateChangedEvent, ProtectionStatus,
+    ProtectionStatusEvent, QuotaWarningEvent, SecurityBlockedEvent, SessionDivergedEvent,
+    SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent,
+    TypedEventPayload, WorkspaceStateChangedEvent,
 };
 pub use git::{
     GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary,
@@ -161,6 +162,10 @@ pub use handoff::{
     HandoffRecoveryOutcome, HandoffState, generate_handoff_id,
 };
 pub use home::{AnchorLayout, DevRelayHome};
+pub use hydration::{
+    HydrationProgress, HydrationState, HydrationStateMachine, HydrationStateRecord,
+    HydrationTransition, load_hydration_state, save_hydration_state,
+};
 pub use identity::{
     DeviceCertificate, DevicePublicIdentity, DeviceRevocationRecord, FABRIC_ID_PREFIX,
     FabricIdentityBundle, FabricIdentityStore, FabricRootIdentity, RecoveryExportStatus,

@@ -419,10 +419,11 @@ Completed capabilities:
   Bitwarden CLI, SOPS/age, and user-script provider plans; local secret file
   and environment materialization; required-secret errors; redacted reports; and
   hard exclusion of manifest secret file targets from snapshots.
+- Hydration state machine from cold through app-ready, failed/retry handling,
+  JSON state persistence, and `environment.progress` event payloads.
 
 Open work:
 
-- Hydration state machine.
 - Environment doctor.
 - CLI/UI visibility for hydration state.
 

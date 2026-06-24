@@ -5,7 +5,8 @@
 //! infer ordering.
 
 use crate::{
-    HandoffRecord, HandoffState, Result, StoredSnapshot, VerificationDetails, WorkspaceState,
+    HandoffRecord, HandoffState, HydrationProgress, HydrationState, HydrationTransition, Result,
+    StoredSnapshot, VerificationDetails, WorkspaceState,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
@@ -210,6 +211,8 @@ pub enum EventType {
     SecurityBlocked,
     #[serde(rename = "quota.warning")]
     QuotaWarning,
+    #[serde(rename = "environment.progress")]
+    EnvironmentProgress,
 }
 
 pub trait TypedEventPayload: Serialize {
@@ -326,6 +329,39 @@ impl HandoffStateChangedEvent {
 impl TypedEventPayload for HandoffStateChangedEvent {
     fn event_type(&self) -> EventType {
         EventType::HandoffStateChanged
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentProgressEvent {
+    pub project_id: String,
+    pub workspace_id: Option<String>,
+    pub previous_state: Option<HydrationState>,
+    pub state: HydrationState,
+    pub transition: HydrationTransition,
+    pub attempt: u32,
+    pub failure: Option<String>,
+    pub updated_at_unix_seconds: u64,
+}
+
+impl EnvironmentProgressEvent {
+    pub fn from_progress(progress: HydrationProgress) -> Self {
+        Self {
+            project_id: progress.project_id,
+            workspace_id: progress.workspace_id,
+            previous_state: progress.previous_state,
+            state: progress.state,
+            transition: progress.transition,
+            attempt: progress.attempt,
+            failure: progress.failure,
+            updated_at_unix_seconds: progress.updated_at_unix_seconds,
+        }
+    }
+}
+
+impl TypedEventPayload for EnvironmentProgressEvent {
+    fn event_type(&self) -> EventType {
+        EventType::EnvironmentProgress
     }
 }
 
@@ -730,6 +766,27 @@ mod tests {
         assert_eq!(encoded["payload"]["previous_state"], "target-prepare");
         assert_eq!(encoded["payload"]["state"], "target-verified");
         assert!(encoded["payload"].get("source_generation").is_none());
+
+        let environment = EventEnvelope::with_typed_payload_at(
+            EventSequence::new(9).unwrap(),
+            EventTimestampMillis::new(70),
+            EnvironmentProgressEvent::from_progress(HydrationProgress {
+                project_id: "12345678".to_string(),
+                workspace_id: Some("w_target".to_string()),
+                previous_state: Some(HydrationState::CacheReady),
+                state: HydrationState::ShellReady,
+                transition: HydrationTransition::ShellPrepared,
+                attempt: 1,
+                failure: None,
+                updated_at_unix_seconds: 1_700_000_400,
+            }),
+        )
+        .unwrap();
+        let encoded = serde_json::to_value(environment).unwrap();
+        assert_eq!(encoded["type"], "environment.progress");
+        assert_eq!(encoded["payload"]["previous_state"], "cache-ready");
+        assert_eq!(encoded["payload"]["state"], "shell-ready");
+        assert_eq!(encoded["payload"]["transition"], "shell-prepared");
 
         let protection = EventEnvelope::with_typed_payload_at(
             EventSequence::new(4).unwrap(),

@@ -6,6 +6,21 @@ Environment hydration prepares the tools around a verified code handoff. It
 must not rewrite project source state, hide command trust changes, or require a
 successful editor restore before code can be verified.
 
+## Hydration State
+
+The core hydration state machine records environment readiness separately from
+Git handoff state. The normal path is `cold` -> `metadata-ready` ->
+`cache-ready` -> `shell-ready` -> `app-ready`.
+
+Any state can move to `failed` with a redacted failure summary. Only `failed`
+can take the `retry` transition, which clears the failure, increments the
+attempt counter, and returns the record to `cold`.
+
+Hydration state can be saved and loaded as JSON through the core persistence
+helpers. The agent or UI layer owns where that JSON record lives on disk.
+Progress updates can be wrapped in the stable `environment.progress` event
+payload so CLI, desktop, and editor clients can render the same state names.
+
 ## Native Bootstrap
 
 Native bootstrap profiles run on the host through the command declared in

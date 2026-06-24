@@ -1430,16 +1430,16 @@ Conventions:
 
 ### M9.7 Hydration State Machine
 
-- [ ] Add cold state.
-- [ ] Add metadata-ready state.
-- [ ] Add cache-ready state.
-- [ ] Add shell-ready state.
-- [ ] Add app-ready state.
-- [ ] Add failed state.
-- [ ] Add retry transition.
-- [ ] Add state persistence.
-- [ ] Emit environment progress events.
-- [ ] Add state machine tests.
+- [x] Add cold state.
+- [x] Add metadata-ready state.
+- [x] Add cache-ready state.
+- [x] Add shell-ready state.
+- [x] Add app-ready state.
+- [x] Add failed state.
+- [x] Add retry transition.
+- [x] Add state persistence.
+- [x] Emit environment progress events.
+- [x] Add state machine tests.
 
 ### M9.8 Environment Doctor
 
@@ -1456,8 +1456,8 @@ Conventions:
 
 ### M9 Exit Gate
 
-- [ ] Manifest command changes require explicit trust.
-- [ ] Required secrets materialize locally and remain excluded from snapshots.
+- [x] Manifest command changes require explicit trust.
+- [x] Required secrets materialize locally and remain excluded from snapshots.
 - [ ] Environment failure leaves code state intact.
 - [ ] Warm target can enter dev shell within SLO on representative project.
 - [ ] Hydration state is visible in CLI and UI.
