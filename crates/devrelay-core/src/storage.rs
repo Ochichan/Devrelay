@@ -2416,6 +2416,14 @@ INSERT INTO handoffs (
         self.abort_handoff_at(handoff_id, unix_now_seconds(), "manual abort")
     }
 
+    pub fn abort_handoff_with_reason(
+        &mut self,
+        handoff_id: &str,
+        reason: &str,
+    ) -> Result<HandoffRecord> {
+        self.abort_handoff_at(handoff_id, unix_now_seconds(), reason)
+    }
+
     pub fn commit_handoff(
         &mut self,
         handoff_id: &str,

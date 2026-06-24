@@ -51,6 +51,7 @@ pub const METHOD_DEVICES_LIST: &str = "devices.list";
 pub const METHOD_ACTIVITY_LIST: &str = "activity.list";
 pub const METHOD_RUNS_LIST: &str = "runs.list";
 pub const METHOD_EDITOR_CONTEXT_UPDATE: &str = "editor.context.update";
+pub const METHOD_EDITOR_EVENT_RECORD: &str = "editor.event.record";
 pub const METHOD_SETTINGS_GET: &str = "settings.get";
 pub const METHOD_SETTINGS_UPDATE: &str = "settings.update";
 
@@ -469,6 +470,33 @@ pub struct EditorContextUpdateResult {
     pub recorded_at_unix_seconds: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EditorEventKind {
+    TextDocumentChanged,
+    TextDocumentSaved,
+    ActiveEditorChanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorEventRecordParams {
+    pub project: Option<String>,
+    pub workspace_path: Option<PathBuf>,
+    pub event_kind: EditorEventKind,
+    pub document_uri: Option<String>,
+    pub document_path: Option<PathBuf>,
+    pub document_version: Option<i64>,
+    #[serde(default)]
+    pub meaningful_edit: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorEventRecordResult {
+    pub project: Option<String>,
+    pub source_generation: u64,
+    pub aborted_handoffs: Vec<HandoffRecord>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsGetResult {
     pub fabric_name: String,
@@ -836,6 +864,24 @@ mod tests {
             &std::path::PathBuf::from("/Users/dev/project")
         );
         assert_eq!(params.capsule["source"], "vscode");
+    }
+
+    #[test]
+    fn editor_event_record_params_use_stable_names() {
+        let params: EditorEventRecordParams = serde_json::from_value(json!({
+            "project": "project-a",
+            "workspace_path": "/Users/dev/project",
+            "event_kind": "text-document-changed",
+            "document_uri": "file:///Users/dev/project/src/main.rs",
+            "document_path": "/Users/dev/project/src/main.rs",
+            "document_version": 12,
+            "meaningful_edit": true
+        }))
+        .unwrap();
+
+        assert_eq!(params.event_kind, EditorEventKind::TextDocumentChanged);
+        assert_eq!(params.meaningful_edit, true);
+        assert_eq!(params.document_version, Some(12));
     }
 
     #[cfg(unix)]

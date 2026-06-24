@@ -39,7 +39,14 @@ test("extension surfaces local agent connection state", () => {
   assert.match(extensionSource, /createStatusBarItem/);
   assert.match(extensionSource, /client\.call<AgentHealthResult>\("agent\.health"\)/);
   assert.match(extensionSource, /client\.call<EditorContextUpdateResult>\(\s*"editor\.context\.update"/);
+  assert.match(extensionSource, /client\.call<EditorEventRecordResult>\("editor\.event\.record"/);
   assert.match(extensionSource, /statusBar\.command = "devrelay\.explainState"/);
+});
+
+test("extension wires edit guard event listeners", () => {
+  assert.match(extensionSource, /onDidChangeTextDocument/);
+  assert.match(extensionSource, /onDidSaveTextDocument/);
+  assert.match(extensionSource, /onDidChangeActiveTextEditor/);
 });
 
 test("package exposes unsaved buffer safety settings", () => {

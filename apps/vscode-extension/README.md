@@ -8,7 +8,9 @@ locally in VS Code SecretStorage when `devrelay.captureUnsavedBuffers` is
 enabled; untitled buffers require `devrelay.includeUntitledUnsavedBuffers`.
 Restore opens dirty untitled documents and does not save them to disk. The
 status bar reads agent leases and handoffs to show active, inactive, handoff,
-and delayed protection states.
+and delayed protection states. Edit, save, and active-editor changes are sent to
+the local agent through `editor.event.record`; meaningful edits increment source
+generation and abort pending source handoffs.
 
 ```bash
 npm install

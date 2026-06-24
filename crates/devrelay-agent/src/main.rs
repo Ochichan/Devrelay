@@ -5,11 +5,12 @@ use devrelay_core::{
     ActivityListParams, ActivityListResult, AnchorSnapshotRepo, ApplySnapshotParams,
     ApplySnapshotResult, AuditEventInput, AuditEventType, AuditOutcome, CheckpointCreateParams,
     CheckpointCreateResult, DevicesListResult, DiagnosticsExportParams, DiagnosticsExportResult,
-    EditorContextUpdateParams, EditorContextUpdateResult, EventEnvelope, EventReplayCursor,
-    EventSequence, EventStreamMessage, EventsSubscribeParams, EventsSubscribeResult, GitRepo,
-    HandoffBeginParams, HandoffCommitParams, HandoffIdParams, HandoffMutationResult, HandoffRecord,
-    HandoffRecoverParams, HandoffRecoverResult, HandoffState, HandoffStateChangedEvent,
-    HandoffStatus, HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, IpcTransport,
+    EditorContextUpdateParams, EditorContextUpdateResult, EditorEventKind, EditorEventRecordParams,
+    EditorEventRecordResult, EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage,
+    EventsSubscribeParams, EventsSubscribeResult, GitRepo, HandoffBeginParams, HandoffCommitParams,
+    HandoffIdParams, HandoffMutationResult, HandoffRecord, HandoffRecoverParams,
+    HandoffRecoverResult, HandoffState, HandoffStateChangedEvent, HandoffStatus,
+    HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, IpcTransport,
     LeasesListParams, LeasesListResult, Manifest, ProjectRegistryEntry, ProjectResult,
     ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
     RPC_PROTOCOL_VERSION, RecoverListParams, RecoverListResult, RecoverOpenParams,
@@ -26,13 +27,13 @@ use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, LogRedactor,
     METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
     METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EDITOR_CONTEXT_UPDATE,
-    METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN, METHOD_HANDOFF_COMMIT,
-    METHOD_HANDOFF_RECOVER, METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY,
-    METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
-    METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
-    METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb,
-    StructuredLogLevel, current_platform_key,
+    METHOD_EDITOR_EVENT_RECORD, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT,
+    METHOD_HANDOFF_BEGIN, METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_RECOVER,
+    METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY, METHOD_HANDOFFS_LIST,
+    METHOD_LEASES_LIST, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
+    METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
+    METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE,
+    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb, StructuredLogLevel, current_platform_key,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -140,6 +141,8 @@ struct AgentState {
     logger: AgentLogger,
     #[cfg(unix)]
     next_operation_id: Arc<AtomicU64>,
+    #[cfg(unix)]
+    editor_source_generations: Arc<Mutex<BTreeMap<String, u64>>>,
 }
 
 #[cfg(unix)]
@@ -237,6 +240,7 @@ impl AgentState {
             METHOD_ACTIVITY_LIST.to_string(),
             METHOD_RUNS_LIST.to_string(),
             METHOD_EDITOR_CONTEXT_UPDATE.to_string(),
+            METHOD_EDITOR_EVENT_RECORD.to_string(),
             METHOD_SETTINGS_GET.to_string(),
             METHOD_SETTINGS_UPDATE.to_string(),
         ]
@@ -388,6 +392,8 @@ fn main() -> anyhow::Result<()> {
         logger,
         #[cfg(unix)]
         next_operation_id: Arc::new(AtomicU64::new(1)),
+        #[cfg(unix)]
+        editor_source_generations: Arc::new(Mutex::new(BTreeMap::new())),
     };
 
     if cli.health {
@@ -701,6 +707,7 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_ACTIVITY_LIST => handle_activity_list(id, request.params, state),
         METHOD_RUNS_LIST => handle_runs_list(id, request.params, state),
         METHOD_EDITOR_CONTEXT_UPDATE => handle_editor_context_update(id, request.params, state),
+        METHOD_EDITOR_EVENT_RECORD => handle_editor_event_record(id, request.params, state),
         METHOD_SETTINGS_GET => handle_settings_get(id, state),
         METHOD_SETTINGS_UPDATE => handle_settings_update(id, request.params, state),
         method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
@@ -1717,6 +1724,134 @@ fn handle_editor_context_update(
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }
+}
+
+#[cfg(unix)]
+fn handle_editor_event_record(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: EditorEventRecordParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let project = match resolve_editor_event_project(state, &params) {
+        Ok(project) => project,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let generation_key =
+        editor_source_generation_key(project.as_deref(), params.workspace_path.as_deref());
+    let increments_generation =
+        params.event_kind == EditorEventKind::TextDocumentChanged && params.meaningful_edit;
+    let source_generation = match state.editor_source_generations.lock() {
+        Ok(mut generations) => {
+            let generation = generations.entry(generation_key).or_insert(0);
+            if increments_generation {
+                *generation = generation.saturating_add(1);
+            }
+            *generation
+        }
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+
+    let aborted_handoffs = if increments_generation {
+        match abort_source_handoffs_after_editor_edit(state, project.as_deref()) {
+            Ok(aborted) => aborted,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        }
+    } else {
+        Vec::new()
+    };
+    let result = EditorEventRecordResult {
+        project,
+        source_generation,
+        aborted_handoffs,
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn resolve_editor_event_project(
+    state: &AgentState,
+    params: &EditorEventRecordParams,
+) -> anyhow::Result<Option<String>> {
+    let config = state
+        .config
+        .lock()
+        .map_err(|err| anyhow::anyhow!("config lock poisoned: {err}"))?;
+    if let Some(project) = params.project.as_deref() {
+        let project = project.trim();
+        if project.is_empty() {
+            anyhow::bail!("project must not be empty");
+        }
+        if !config.project_registry.projects.contains_key(project) {
+            anyhow::bail!("unknown project {project}");
+        }
+        return Ok(Some(project.to_string()));
+    }
+    if let Some(path) = params.workspace_path.as_deref()
+        && let Some((project, _workspace)) = config.project_registry.workspace_by_path(path)
+    {
+        return Ok(Some(project.project_id.clone()));
+    }
+    if let Some(path) = params.workspace_path.as_deref()
+        && let Ok(canonical) = path.canonicalize()
+        && let Some((project, _workspace)) = config.project_registry.workspace_by_path(&canonical)
+    {
+        return Ok(Some(project.project_id.clone()));
+    }
+    Ok(None)
+}
+
+#[cfg(unix)]
+fn editor_source_generation_key(project: Option<&str>, workspace_path: Option<&Path>) -> String {
+    if let Some(project) = project {
+        return format!("project:{project}");
+    }
+    if let Some(workspace_path) = workspace_path {
+        return format!("workspace:{}", workspace_path.to_string_lossy());
+    }
+    "workspace:unknown".to_string()
+}
+
+#[cfg(unix)]
+fn abort_source_handoffs_after_editor_edit(
+    state: &AgentState,
+    project: Option<&str>,
+) -> anyhow::Result<Vec<HandoffRecord>> {
+    let Some(project) = project else {
+        return Ok(Vec::new());
+    };
+    let source_device_id = state
+        .config
+        .lock()
+        .map_err(|err| anyhow::anyhow!("config lock poisoned: {err}"))?
+        .device_id
+        .clone();
+    let mut db = open_registered_project_db(state, project)?;
+    let pending = db
+        .list_handoffs(Some(project))?
+        .into_iter()
+        .filter(|handoff| {
+            !handoff.state.is_terminal() && handoff.source_device_id == source_device_id
+        })
+        .collect::<Vec<_>>();
+    let mut aborted = Vec::new();
+    for handoff in pending {
+        let previous_state = handoff.state;
+        let next = db.abort_handoff_with_reason(
+            &handoff.handoff_id,
+            "source generation changed by editor event",
+        )?;
+        publish_handoff_state_changed(state, &next, Some(previous_state))?;
+        aborted.push(next);
+    }
+    Ok(aborted)
 }
 
 #[cfg(unix)]

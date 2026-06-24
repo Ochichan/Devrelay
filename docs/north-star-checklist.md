@@ -1308,13 +1308,13 @@ Conventions:
 
 ### M8.5 Handoff Edit Guard
 
-- [ ] Notify agent when text document changes.
-- [ ] Notify agent when file save occurs.
-- [ ] Notify agent when active editor changes.
-- [ ] Increment source generation on meaningful edit.
-- [ ] Show handoff-in-progress warning.
-- [ ] Abort handoff on source generation change.
-- [ ] Add tests with mocked agent.
+- [x] Notify agent when text document changes.
+- [x] Notify agent when file save occurs.
+- [x] Notify agent when active editor changes.
+- [x] Increment source generation on meaningful edit.
+- [x] Show handoff-in-progress warning.
+- [x] Abort handoff on source generation change.
+- [x] Add tests with mocked agent.
 
 ### M8.6 Context Restore
 

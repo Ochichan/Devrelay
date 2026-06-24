@@ -7,6 +7,14 @@ import {
   editorContextUpdateParams,
 } from "./contextCapture";
 import {
+  EditorEventRecordParams,
+  EditorEventRecordResult,
+  editorEventRecordParams,
+  editorEventResultSummary,
+  shouldNotifyEditorEvent,
+  shouldWarnHandoffInProgress,
+} from "./editGuard";
+import {
   ConnectionStatus,
   HandoffSummary,
   LeaseSummary,
@@ -167,6 +175,30 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  const recordEditorEvent = async (params: EditorEventRecordParams) => {
+    if (!shouldNotifyEditorEvent(params)) {
+      return;
+    }
+    const warnBeforeRecord = shouldWarnHandoffInProgress(lastStatus.kind, params.event_kind);
+    try {
+      const result = await client.call<EditorEventRecordResult>("editor.event.record", params);
+      output.appendLine(editorEventResultSummary(result));
+      if (result.aborted_handoffs.length > 0) {
+        void vscode.window.showWarningMessage(
+          "DevRelay aborted the active handoff because this workspace changed."
+        );
+        void refresh();
+      } else if (warnBeforeRecord) {
+        void vscode.window.showWarningMessage(
+          "DevRelay recorded an edit while handoff was in progress."
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output.appendLine(`Editor event record failed: ${message}`);
+    }
+  };
+
   const openDashboard = () => {
     output.appendLine(`Dashboard opened: ${new Date().toISOString()}`);
     output.appendLine(`Current state: ${lastStatus.detail}`);
@@ -183,6 +215,34 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("devrelay.openDashboard", openDashboard),
     vscode.commands.registerCommand("devrelay.explainState", () => {
       void vscode.window.showInformationMessage(lastStatus.detail);
+    }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      void recordEditorEvent(
+        editorEventRecordParams({
+          eventKind: "text-document-changed",
+          document: event.document,
+          workspaceFolders: vscode.workspace.workspaceFolders,
+          contentChangeCount: event.contentChanges.length,
+        })
+      );
+    }),
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      void recordEditorEvent(
+        editorEventRecordParams({
+          eventKind: "text-document-saved",
+          document,
+          workspaceFolders: vscode.workspace.workspaceFolders,
+        })
+      );
+    }),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      void recordEditorEvent(
+        editorEventRecordParams({
+          eventKind: "active-editor-changed",
+          document: editor?.document,
+          workspaceFolders: vscode.workspace.workspaceFolders,
+        })
+      );
     })
   );
 

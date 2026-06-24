@@ -1235,6 +1235,163 @@ fn foreground_records_editor_context_update_rpc() {
 
 #[cfg(unix)]
 #[test]
+fn foreground_editor_event_aborts_source_handoff() {
+    use devrelay_core::{
+        DeviceIdentity, IpcConnection, IpcLimits, LeaseRecord, LeaseState, MetadataDb,
+        UnixIpcConnection,
+    };
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("dr-agent-editguard");
+    let repo = running.root.join("editguard-project");
+    create_manifest_repo(&repo, "97531864", "Edit Guard Project");
+
+    let added = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "editguard-project-add",
+            "method": "projects.add",
+            "params": {
+                "path": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+    assert_eq!(added["result"]["project"]["project_id"], "97531864");
+
+    let settings = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "editguard-settings",
+            "method": "settings.get"
+        }),
+    );
+    let source_device_id = settings["result"]["device_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let global_db = MetadataDb::open(running.root.join("agent.sqlite")).unwrap();
+    global_db
+        .upsert_device_identity(&DeviceIdentity {
+            device_id: "device-editguard-target".to_string(),
+            display_name: "Edit Guard Target".to_string(),
+            platform_key: "linux-gnu-x86_64".to_string(),
+            architecture: "x86_64".to_string(),
+            capabilities_json: "{}".to_string(),
+            paired_at_unix_seconds: Some(100),
+            last_seen_unix_seconds: 200,
+        })
+        .unwrap();
+
+    let project_db =
+        MetadataDb::open(running.root.join("projects/97531864/metadata.sqlite")).unwrap();
+    let session = project_db
+        .list_sessions(Some("97531864"))
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    project_db
+        .upsert_lease(&LeaseRecord {
+            lease_id: "lease-editguard".to_string(),
+            project_id: "97531864".to_string(),
+            session_id: session.session_id,
+            state: LeaseState::Active,
+            epoch: 3,
+            holder_device_id: Some(source_device_id.clone()),
+            latest_snapshot_id: None,
+            handoff_id: None,
+        })
+        .unwrap();
+
+    let begin = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "editguard-handoff-begin",
+            "method": "handoff.begin",
+            "params": {
+                "project": "97531864",
+                "lease_id": "lease-editguard",
+                "target_device_id": "device-editguard-target",
+                "source_generation": "editor-0",
+                "ttl_seconds": 300
+            }
+        }),
+    );
+    let handoff_id = begin["result"]["handoff"]["handoff_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(begin["result"]["handoff"]["state"], "target-prepare");
+
+    let mut events = UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap();
+    let subscribe = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": "editguard-events",
+        "method": "events.subscribe",
+        "params": { "cursor": {} }
+    }))
+    .unwrap();
+    events
+        .write_message(&subscribe, IpcLimits::default())
+        .unwrap();
+    let ack: serde_json::Value =
+        serde_json::from_slice(&events.read_message(IpcLimits::default()).unwrap()).unwrap();
+    for _ in 0..ack["result"]["replayed"].as_u64().unwrap_or_default() {
+        let _ = read_stream_message(&mut events, IpcLimits::default());
+    }
+    let workspace_path = repo.to_string_lossy().to_string();
+    let document_path = repo.join("src/main.rs").to_string_lossy().to_string();
+    let document_uri = format!("file://{document_path}");
+
+    let edit = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "editguard-editor-event",
+            "method": "editor.event.record",
+            "params": {
+                "project": null,
+                "workspace_path": workspace_path,
+                "event_kind": "text-document-changed",
+                "document_uri": document_uri,
+                "document_path": document_path,
+                "document_version": 2,
+                "meaningful_edit": true
+            }
+        }),
+    );
+    assert_eq!(edit["result"]["project"], "97531864");
+    assert_eq!(edit["result"]["source_generation"], 1);
+    assert_eq!(
+        edit["result"]["aborted_handoffs"][0]["handoff_id"],
+        handoff_id
+    );
+    assert_eq!(edit["result"]["aborted_handoffs"][0]["state"], "aborted");
+    assert_handoff_state_event(
+        &mut events,
+        IpcLimits::default(),
+        &handoff_id,
+        "aborted",
+        Some("target-prepare"),
+    );
+
+    let lease = project_db.get_lease("lease-editguard").unwrap().unwrap();
+    assert_eq!(lease.state, LeaseState::Active);
+    assert_eq!(
+        lease.holder_device_id.as_deref(),
+        Some(source_device_id.as_str())
+    );
+    assert_eq!(lease.handoff_id, None);
+
+    running.stop();
+}
+
+#[cfg(unix)]
+#[test]
 fn foreground_serves_handoff_state_machine_rpc_methods() {
     use devrelay_core::{
         DeviceIdentity, IpcConnection, IpcLimits, LeaseRecord, LeaseState, MetadataDb,

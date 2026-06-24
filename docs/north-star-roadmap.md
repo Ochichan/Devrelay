@@ -376,10 +376,12 @@ Completed capabilities:
   default-off settings, untitled-buffer opt-in, and dirty untitled restore.
 - Status bar active/inactive/handoff/protection-delayed states from agent
   leases and handoffs, plus explain and dashboard commands.
+- Handoff edit guard: VS Code edit/save/active-editor events report to the
+  agent, meaningful edits increment source generation, and source-side pending
+  handoffs abort on generation change.
 
 Open work:
 
-- Handoff edit guard.
 - Context restore UX.
 - Extension-host validation inside VS Code.
 
