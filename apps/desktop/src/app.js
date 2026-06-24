@@ -134,6 +134,10 @@ function snapshots() {
   return state.bootstrap?.snapshots ?? [];
 }
 
+function leases() {
+  return state.bootstrap?.leases ?? [];
+}
+
 function handoffs() {
   return state.bootstrap?.handoffs ?? [];
 }
@@ -156,6 +160,20 @@ function activeWorkspace(project) {
   return (
     entries.find((workspace) => workspace.state === "active" && workspace.device_id === deviceId) ??
     entries.find((workspace) => workspace.state === "active") ??
+    entries[0] ??
+    null
+  );
+}
+
+function projectLeases(projectId) {
+  return leases().filter((lease) => lease.project_id === projectId);
+}
+
+function activeLease(projectId) {
+  const entries = projectLeases(projectId);
+  return (
+    entries.find((lease) => lease.state === "active") ??
+    entries.find((lease) => lease.state === "handoff-pending") ??
     entries[0] ??
     null
   );
@@ -195,6 +213,20 @@ function latestHandoff(projectId) {
       return rightTime - leftTime;
     })[0]
   );
+}
+
+function deviceName(deviceId) {
+  if (!deviceId) return "No writer recorded";
+  const found = devices().find((device) => device.device_id === deviceId);
+  return found?.display_name ?? deviceId;
+}
+
+function activeWriterRow(workspace, lease) {
+  if (lease) {
+    const tone = lease.state === "active" ? "good" : "warn";
+    return `<div class="status-row"><span class="dot ${tone}"></span><div><strong>${escapeHtml(deviceName(lease.holder_device_id))}</strong><span>${escapeHtml(titleize(lease.state))} writer from agent state</span></div><span class="badge ${tone}">Writer</span></div>`;
+  }
+  return `<div class="status-row"><span class="dot ${workspace?.state === "active" ? "good" : "warn"}"></span><div><strong>${escapeHtml(workspace?.device_id ?? "No writer recorded")}</strong><span>${escapeHtml(workspace?.local_path ?? "No workspace path")}</span></div><span class="badge">${escapeHtml(workspace?.state ?? "unknown")}</span></div>`;
 }
 
 function handoffTone(handoff) {
@@ -509,6 +541,7 @@ function renderContinue() {
   const status = projectStatus(project.project_id);
   const counts = statusCounts(status?.data);
   const workspace = activeWorkspace(project);
+  const lease = activeLease(project.project_id);
   const device = currentDevice();
   const latest = activity().find((event) => event.project_id === project.project_id);
   const checkpoint = latestSnapshot(project.project_id);
@@ -548,7 +581,7 @@ function renderContinue() {
           <div class="panel-body status-stack">
             <div class="status-row"><span class="dot good"></span><div><strong>${escapeHtml(device.display_name ?? "Local device")}</strong><span>${escapeHtml(device.platform_key ?? "unknown")} ${escapeHtml(device.architecture ?? "")}</span></div><span class="badge good">This device</span></div>
             <div class="status-row"><span class="dot ${suggestedSession ? "good" : "warn"}"></span><div><strong>Suggested session</strong><span>${escapeHtml(suggestedSession ?? "No continuation session recorded")}</span></div><span class="badge">${workspace?.state ? escapeHtml(workspace.state) : "selected"}</span></div>
-            <div class="status-row"><span class="dot ${workspace?.state === "active" ? "good" : "warn"}"></span><div><strong>${escapeHtml(workspace?.device_id ?? "No device")}</strong><span>${escapeHtml(workspace?.local_path ?? "No workspace path")}</span></div><span class="badge">${escapeHtml(workspace?.state ?? "unknown")}</span></div>
+            ${activeWriterRow(workspace, lease)}
             ${handoffRow(handoff)}
             <div class="status-row"><span class="dot ${checkpoint ? "good" : "warn"}"></span><div><strong>${checkpoint ? escapeHtml(shortId(checkpoint.snapshot_id)) : "No checkpoint recorded"}</strong><span>${checkpoint ? `${formatAge(checkpoint.created_at_unix_seconds)} - ${escapeHtml(checkpoint.label ?? "unlabeled")}` : "Create a checkpoint before cross-device handoff."}</span></div><span class="badge">${checkpoint ? `#${checkpoint.sequence_number}` : "empty"}</span></div>
             <div class="status-row"><span class="dot ${latest ? "good" : "warn"}"></span><div><strong>${latest ? escapeHtml(latest.summary) : "No activity recorded"}</strong><span>${latest ? formatAge(latest.created_at_unix_seconds) : "waiting for agent events"}</span></div><span class="badge">${latest ? escapeHtml(latest.outcome) : "empty"}</span></div>

@@ -9,17 +9,17 @@ use devrelay_core::{
     EventsSubscribeResult, GitRepo, HandoffBeginParams, HandoffCommitParams, HandoffIdParams,
     HandoffMutationResult, HandoffRecord, HandoffRecoverParams, HandoffRecoverResult,
     HandoffStatus, HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, IpcTransport,
-    Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
-    ProjectsRemoveParams, ProjectsShowParams, RPC_PROTOCOL_VERSION, RecoverListParams,
-    RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
-    RpcError, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
-    RpcVersionNegotiationResult, RunsListParams, RunsListResult, SettingsGetResult,
-    SettingsUpdateParams, SettingsUpdateResult, SnapshotApplyStartedEvent,
-    SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent, SnapshotStore, SnapshotsListParams,
-    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, StructuredLogFile,
-    StructuredLogRecord, TypedEventPayload, UnixIpcConnection, UnixIpcListener,
-    WorkspaceRegistryEntry, WorkspaceState, WorkspaceStateChangedEvent, apply_snapshot,
-    classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
+    LeasesListParams, LeasesListResult, Manifest, ProjectRegistryEntry, ProjectResult,
+    ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
+    RPC_PROTOCOL_VERSION, RecoverListParams, RecoverListResult, RecoverOpenParams,
+    RecoverOpenResult, RecoverShowParams, RecoverShowResult, RpcError, RpcId, RpcRequest,
+    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, RunsListParams,
+    RunsListResult, SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult,
+    SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent,
+    SnapshotStore, SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult,
+    StoredSnapshot, StructuredLogFile, StructuredLogRecord, TypedEventPayload, UnixIpcConnection,
+    UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, WorkspaceStateChangedEvent,
+    apply_snapshot, classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
 };
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, LogRedactor,
@@ -27,10 +27,10 @@ use devrelay_core::{
     METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT,
     METHOD_HANDOFF_BEGIN, METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_RECOVER,
     METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY, METHOD_HANDOFFS_LIST,
-    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
-    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE,
-    METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST,
-    METHOD_STATUS_GET, MetadataDb, StructuredLogLevel, current_platform_key,
+    METHOD_LEASES_LIST, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
+    METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
+    METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE,
+    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb, StructuredLogLevel, current_platform_key,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -216,6 +216,7 @@ impl AgentState {
             METHOD_CHECKPOINT_CREATE.to_string(),
             METHOD_SNAPSHOTS_LIST.to_string(),
             METHOD_APPLY_SNAPSHOT.to_string(),
+            METHOD_LEASES_LIST.to_string(),
             METHOD_HANDOFFS_LIST.to_string(),
             METHOD_HANDOFF_BEGIN.to_string(),
             METHOD_HANDOFF_TARGET_VERIFY.to_string(),
@@ -679,6 +680,7 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_CHECKPOINT_CREATE => handle_checkpoint_create(id, request.params, state),
         METHOD_SNAPSHOTS_LIST => handle_snapshots_list(id, request.params, state),
         METHOD_APPLY_SNAPSHOT => handle_apply_snapshot(id, request.params, state),
+        METHOD_LEASES_LIST => handle_leases_list(id, request.params, state),
         METHOD_HANDOFFS_LIST => handle_handoffs_list(id, request.params, state),
         METHOD_HANDOFF_BEGIN => handle_handoff_begin(id, request.params, state),
         METHOD_HANDOFF_TARGET_VERIFY => handle_handoff_target_verify(id, request.params, state),
@@ -901,6 +903,38 @@ fn handle_apply_snapshot(
 }
 
 #[cfg(unix)]
+fn handle_leases_list(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: LeasesListParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let project_ids = match registered_project_ids_for_query(state, params.project.as_deref()) {
+        Ok(project_ids) => project_ids,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let mut leases = Vec::new();
+    for project_id in project_ids {
+        let db = match open_registered_project_db(state, &project_id) {
+            Ok(db) => db,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+        match db.list_leases(Some(&project_id)) {
+            Ok(mut records) => leases.append(&mut records),
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        }
+    }
+
+    match serde_json::to_value(LeasesListResult { leases }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
 fn handle_handoffs_list(
     id: devrelay_core::RpcId,
     params: serde_json::Value,
@@ -910,7 +944,7 @@ fn handle_handoffs_list(
         Ok(params) => params,
         Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
     };
-    let project_ids = match handoff_project_ids_for_query(state, params.project.as_deref()) {
+    let project_ids = match registered_project_ids_for_query(state, params.project.as_deref()) {
         Ok(project_ids) => project_ids,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
@@ -1136,7 +1170,7 @@ fn handle_handoff_id_mutation(
 }
 
 #[cfg(unix)]
-fn handoff_project_ids_for_query(
+fn registered_project_ids_for_query(
     state: &AgentState,
     project: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {

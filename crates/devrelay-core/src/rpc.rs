@@ -14,8 +14,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
     AnchorMode, ApplyPlan, AuditEventRecord, ClassifiedPath, DeviceIdentity, HandoffJournalRecord,
-    HandoffRecord, HandoffRecoveryOutcome, ProjectRegistryEntry, ResourceProfile, StatusEntry,
-    StatusSummary, StoredSnapshot, TaskRunRecord, VerificationDetails, WorkspaceRegistryEntry,
+    HandoffRecord, HandoffRecoveryOutcome, LeaseRecord, ProjectRegistryEntry, ResourceProfile,
+    StatusEntry, StatusSummary, StoredSnapshot, TaskRunRecord, VerificationDetails,
+    WorkspaceRegistryEntry,
 };
 #[cfg(unix)]
 use crate::{DevRelayError, IpcConnection, IpcLimits, Result, UnixIpcConnection};
@@ -33,6 +34,7 @@ pub const METHOD_PROJECTS_REMOVE: &str = "projects.remove";
 pub const METHOD_CHECKPOINT_CREATE: &str = "checkpoint.create";
 pub const METHOD_SNAPSHOTS_LIST: &str = "snapshots.list";
 pub const METHOD_APPLY_SNAPSHOT: &str = "apply.snapshot";
+pub const METHOD_LEASES_LIST: &str = "leases.list";
 pub const METHOD_HANDOFFS_LIST: &str = "handoffs.list";
 pub const METHOD_HANDOFF_BEGIN: &str = "handoff.begin";
 pub const METHOD_HANDOFF_TARGET_VERIFY: &str = "handoff.target.verify";
@@ -284,6 +286,16 @@ pub struct ApplySnapshotResult {
     pub snapshot: StoredSnapshot,
     pub plan: Option<ApplyPlan>,
     pub verification: Option<VerificationDetails>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeasesListParams {
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeasesListResult {
+    pub leases: Vec<LeaseRecord>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -667,6 +679,18 @@ mod tests {
 
         assert!(!params.dry_run);
         assert_eq!(params.project, "12345678");
+    }
+
+    #[test]
+    fn leases_list_params_allow_all_or_project_filter() {
+        let all: LeasesListParams = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(all.project, None);
+
+        let filtered: LeasesListParams = serde_json::from_value(json!({
+            "project": "12345678"
+        }))
+        .unwrap();
+        assert_eq!(filtered.project.as_deref(), Some("12345678"));
     }
 
     #[test]

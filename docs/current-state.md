@@ -21,12 +21,12 @@ or anxiety around dirty target preservation.
 | --- | --- | --- |
 | M0 Git state round trip | Complete | Local snapshot create/apply/verify is implemented and covered by round-trip fixtures. |
 | M1 Local CLI, SQLite, recovery | Complete | Project registry, snapshot store, recovery, dirty policies, and local continue flow are implemented. |
-| M2 Agent, IPC, RPC, events | Nearly complete | Agent, JSON-RPC, local handoff state-machine RPC, event stream, diagnostics, and macOS/Linux local IPC exist. Windows named pipe and pipe ACL remain open. |
+| M2 Agent, IPC, RPC, events | Nearly complete | Agent, JSON-RPC, local lease and handoff state RPC, event stream, diagnostics, and macOS/Linux local IPC exist. Windows named pipe and pipe ACL remain open. |
 | M3 Anchor and single-writer lease | Complete | Canonical publish, stale publish, handoff, inactive edit fork, and crash recovery are implemented. |
 | M4 Pairing, mTLS, revocation | Mostly complete | Identity, pairing, discovery, mTLS transport, revocation, and audit are present. M4.5 Control API remains unimplemented, so the M4 exit gate is open. |
 | M5 Git object and CAS data plane | Complete | Per-project bare repo strategy, route selection, CAS, sidecars, materialization, and partial upload safety are implemented. |
 | M6 Background protection | Nearly complete | Debounce, checkpoint, resource policy, retention, quota, and crash journal exist. Initial macOS resource smoke evidence exists; Linux/Windows watcher coverage and representative resource evidence remain open. |
-| M7 Desktop UX | Started | A Tauri shell exists with tray open/refresh/quit, agent-backed bootstrap, event subscription status/gap recovery, snapshot-backed checkpoint age, handoff state visibility, target readiness, project status, checkpoint, diagnostics, settings, and overflow-tested screens. Real cross-device handoff UI and target apply wiring remain open. |
+| M7 Desktop UX | Started | A Tauri shell exists with tray open/refresh/quit, agent-backed bootstrap, event subscription status/gap recovery, lease-backed writer state, snapshot-backed checkpoint age, handoff state visibility, target readiness, project status, checkpoint, diagnostics, settings, and overflow-tested screens. Real cross-device handoff UI and target apply wiring remain open. |
 | M8 Editor context | Not started | Keep out of the first UI slice. |
 | M9 Environment hydration | Partial | Trust hashes, profile selection, Nix, and Dev Container paths exist. Native bootstrap, secrets, hydration state, and doctor remain open. |
 | M10 Compute fabric | Not started | Keep out of the first UI slice. |

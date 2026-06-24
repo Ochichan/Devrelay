@@ -73,10 +73,10 @@ but that is not the same as an implemented API boundary.
 
 ## Local Agent Handoff RPC
 
-The local agent JSON-RPC surface now exposes the handoff state-machine methods
-`handoffs.list`, `handoff.begin`, `handoff.target.verify`,
-`handoff.source.ready`, `handoff.commit`, `handoff.abort`, and
-`handoff.recover`.
+The local agent JSON-RPC surface now exposes `leases.list` plus the handoff
+state-machine methods `handoffs.list`, `handoff.begin`,
+`handoff.target.verify`, `handoff.source.ready`, `handoff.commit`,
+`handoff.abort`, and `handoff.recover`.
 
 These methods are local metadata-control commands. They do not implement the
 remote M4.5 Control API, advertise file transfer completion, or allow UI clients

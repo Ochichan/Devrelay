@@ -525,6 +525,7 @@ Conventions:
 - [x] Add `snapshots.list`.
 - [x] Add `recover.open`.
 - [x] Add `apply.snapshot`.
+- [x] Add `leases.list`.
 - [x] Add `handoffs.list`.
 - [x] Add `handoff.begin`.
 - [x] Add handoff target-verified/source-ready/commit/abort/recover RPC methods.

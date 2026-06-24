@@ -1241,6 +1241,7 @@ fn foreground_serves_handoff_state_machine_rpc_methods() {
     );
     for method in [
         "handoffs.list",
+        "leases.list",
         "handoff.begin",
         "handoff.target.verify",
         "handoff.source.ready",
@@ -1257,6 +1258,24 @@ fn foreground_serves_handoff_state_machine_rpc_methods() {
             "missing method {method}"
         );
     }
+
+    let leases = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "leases-list",
+            "method": "leases.list",
+            "params": { "project": "24681357" }
+        }),
+    );
+    assert_eq!(
+        leases["result"]["leases"][0]["lease_id"],
+        "lease-handoff-rpc"
+    );
+    assert_eq!(
+        leases["result"]["leases"][0]["holder_device_id"],
+        source_device_id
+    );
 
     let begin = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
