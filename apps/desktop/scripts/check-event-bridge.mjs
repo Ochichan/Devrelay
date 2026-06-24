@@ -14,6 +14,7 @@ const app = {
   querySelectorAll: () => [],
   querySelector: () => null,
 };
+const documentHandlers = new Map();
 const nowSeconds = Math.floor(Date.now() / 1000);
 const bootstrap = {
   runtime: {
@@ -245,6 +246,11 @@ const invoked = [];
 const context = {
   document: {
     querySelector: (selector) => (selector === "#app" ? app : null),
+    querySelectorAll: () => [],
+    addEventListener: (name, handler) => {
+      documentHandlers.set(name, handler);
+    },
+    activeElement: null,
   },
   window: {
     __TAURI__: {
@@ -301,6 +307,7 @@ assert.match(
 assert.match(app.innerHTML, /Environment warmth/, "continue view did not render environment warmth");
 assert.match(app.innerHTML, /Checkpoint metadata ready/, "continue view did not render warmth summary");
 assert.match(app.innerHTML, /Run elsewhere/, "continue view did not render run elsewhere placeholder");
+assert.match(app.innerHTML, /aria-label="Review handoff to Target device"/, "handoff review action lacked target label");
 await vm.runInContext(
   `
 handleAction({
@@ -329,6 +336,7 @@ assert.match(app.innerHTML, /Handoff review/, "handoff dialog did not render");
 assert.match(app.innerHTML, /Source device/, "handoff dialog did not render source device");
 assert.match(app.innerHTML, /Target device/, "handoff dialog did not render target device");
 assert.match(app.innerHTML, /Project\/session/, "handoff dialog did not render project session");
+assert.match(app.innerHTML, /tabindex="-1"/, "handoff dialog did not expose a focus target");
 assert.match(app.innerHTML, /Checkpoint age/, "handoff dialog did not render checkpoint age");
 assert.match(app.innerHTML, /0 staged/, "handoff dialog did not render staged count");
 assert.match(app.innerHTML, /0 modified, 0 new/, "handoff dialog did not render modified and untracked counts");
@@ -344,7 +352,16 @@ vm.runInContext('state.handoffDialog.phase = "failure"; state.handoffDialog.mess
 assert.match(app.innerHTML, /Handoff failed/, "handoff dialog did not render failure state");
 vm.runInContext('state.handoffDialog.phase = "success"; state.handoffDialog.message = "Target preparation has started"; render();', context);
 assert.match(app.innerHTML, /Handoff started/, "handoff dialog did not render success state");
-vm.runInContext("state.handoffDialog = null; render();", context);
+assert.equal(typeof documentHandlers.get("keydown"), "function", "global keydown listener was not installed");
+let escapePrevented = false;
+documentHandlers.get("keydown")({
+  key: "Escape",
+  preventDefault: () => {
+    escapePrevented = true;
+  },
+});
+assert.equal(escapePrevented, true, "Escape did not prevent default while closing dialog");
+assert.equal(vm.runInContext("state.handoffDialog", context), null, "Escape did not close handoff dialog");
 vm.runInContext('state.view = "runs"; render();', context);
 assert.match(app.innerHTML, /Recent runs/, "runs view did not render recent runs");
 assert.match(app.innerHTML, /Queued runs/, "runs view did not render queued runs");
@@ -356,6 +373,7 @@ assert.match(app.innerHTML, /Run task/, "runs view did not render run task place
 assert.match(app.innerHTML, /Cancel/, "runs view did not render cancel placeholder");
 assert.match(app.innerHTML, /Artifacts/, "runs view did not render artifact placeholder");
 assert.match(app.innerHTML, /Target device/, "runs view did not render target device name");
+assert.match(app.innerHTML, /aria-label="Cancel run run-queued-1"/, "run cancel action lacked run label");
 await vm.runInContext(
   `
 handleAction({
@@ -396,6 +414,7 @@ vm.runInContext('state.view = "devices"; render();', context);
 assert.match(app.innerHTML, /3 known identities - 2 online/, "devices view did not render device counts");
 assert.match(app.innerHTML, /Pair device/, "devices view did not render pair placeholder");
 assert.match(app.innerHTML, /Revoke/, "devices view did not render revoke placeholder");
+assert.match(app.innerHTML, /aria-label="Revoke Target device"/, "device revoke action lacked device label");
 assert.match(app.innerHTML, /Online/, "devices view did not render online state");
 assert.match(app.innerHTML, /Offline/, "devices view did not render offline state");
 assert.match(app.innerHTML, /macOS/, "devices view did not render OS family");
@@ -431,6 +450,7 @@ assert.match(app.innerHTML, /Recovery path/, "projects view did not render recov
 assert.match(app.innerHTML, /Filter projects/, "projects view did not render filter");
 assert.match(app.innerHTML, /Details/, "projects view did not render project detail action");
 assert.match(app.innerHTML, /Recovery/, "projects view did not render row recovery action");
+assert.match(app.innerHTML, /aria-label="Refresh status for Project One"/, "project status action lacked project label");
 await vm.runInContext(
   `
 handleAction({
@@ -537,6 +557,7 @@ handlers.get("devrelay-tray-notice")({
   },
 });
 assert.match(app.innerHTML, /Tray action completed/, "tray notice did not render toast");
+assert.match(app.innerHTML, /role="status" aria-live="polite"/, "tray notice did not render live region");
 handlers.get("devrelay-tray-open-runs")({
   payload: {
     project_id: "project-1",

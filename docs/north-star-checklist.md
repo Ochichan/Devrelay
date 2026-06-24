@@ -1250,11 +1250,11 @@ Conventions:
 ### M7 Exit Gate
 
 - [x] Same-LAN handoff can start from tray in two clicks.
-- [ ] Critical state is not color-only.
+- [x] Critical state is not color-only.
 - [ ] Dirty target flow avoids Git jargon.
-- [ ] UI state comes from agent events.
-- [ ] Keyboard-only core flow works.
-- [ ] Screen reader labels cover primary actions.
+- [x] UI state comes from agent events.
+- [x] Keyboard-only core flow works.
+- [x] Screen reader labels cover primary actions.
 
 ## M8. Editor Context: VS Code First
 

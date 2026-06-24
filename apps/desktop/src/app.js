@@ -37,6 +37,7 @@ const state = {
     events: [],
   },
   toasts: [],
+  pendingFocusSelector: null,
 };
 
 const icons = {
@@ -75,6 +76,40 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function selectorValue(value) {
+  return String(value ?? "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"');
+}
+
+function attrSelector(name, value) {
+  if (value === null || value === undefined || value === "") return "";
+  return `[${name}="${selectorValue(value)}"]`;
+}
+
+function actionFocusSelector(button) {
+  if (!button?.dataset?.action) return null;
+  return [
+    attrSelector("data-action", button.dataset.action),
+    attrSelector("data-project-id", button.dataset.projectId),
+    attrSelector("data-target-device-id", button.dataset.targetDeviceId),
+    attrSelector("data-handoff-id", button.dataset.handoffId),
+  ].join("");
+}
+
+function queueFocus(selector) {
+  state.pendingFocusSelector = selector || null;
+}
+
+function applyPendingFocus() {
+  const selector = state.pendingFocusSelector;
+  if (!selector) return;
+  state.pendingFocusSelector = null;
+  window.setTimeout(() => {
+    app.querySelector(selector)?.focus?.();
+  }, 0);
 }
 
 function formatAge(seconds) {
@@ -975,7 +1010,7 @@ function renderHandoffDialog() {
   const activeHandoff = handoffIsOpen(handoff);
   return `
     <div class="modal-backdrop" data-handoff-dialog>
-      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="handoff-dialog-title" aria-describedby="handoff-dialog-description">
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="handoff-dialog-title" aria-describedby="handoff-dialog-description" tabindex="-1">
         <div class="modal-head">
           <div>
             <h3 id="handoff-dialog-title">Handoff review</h3>
@@ -1315,11 +1350,11 @@ function renderContinue() {
               <div class="metric"><strong>${counts.unmerged}</strong><span>Conflicts</span></div>
             </div>
             <div class="button-row">
-              <button class="button primary" data-action="handoff-continue-here" data-project-id="${escapeHtml(project.project_id)}" data-handoff-id="${escapeHtml(incoming?.record?.handoff_id ?? "")}" ${continueDisabled ? "disabled" : ""}>${icons.play}<span>Continue here</span></button>
-              <button class="button" data-action="checkpoint" data-project-id="${escapeHtml(project.project_id)}" ${state.operation ? "disabled" : ""}>${icons.check}<span>Checkpoint now</span></button>
-              <button class="button" data-action="run-elsewhere-placeholder" data-project-id="${escapeHtml(project.project_id)}" ${state.operation ? "disabled" : ""}>${icons.terminal}<span>Run elsewhere</span></button>
-              <button class="button" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" ${status?.loading ? "disabled" : ""}>${icons.refresh}<span>Status</span></button>
-              <button class="button" data-action="open-project" data-project-id="${escapeHtml(project.project_id)}">${icons.external}<span>Open folder</span></button>
+              <button class="button primary" data-action="handoff-continue-here" data-project-id="${escapeHtml(project.project_id)}" data-handoff-id="${escapeHtml(incoming?.record?.handoff_id ?? "")}" aria-label="Continue ${escapeHtml(project.display_name)} here" ${continueDisabled ? "disabled" : ""}>${icons.play}<span>Continue here</span></button>
+              <button class="button" data-action="checkpoint" data-project-id="${escapeHtml(project.project_id)}" aria-label="Checkpoint ${escapeHtml(project.display_name)} now" ${state.operation ? "disabled" : ""}>${icons.check}<span>Checkpoint now</span></button>
+              <button class="button" data-action="run-elsewhere-placeholder" data-project-id="${escapeHtml(project.project_id)}" aria-label="Run ${escapeHtml(project.display_name)} elsewhere" ${state.operation ? "disabled" : ""}>${icons.terminal}<span>Run elsewhere</span></button>
+              <button class="button" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" aria-label="Refresh status for ${escapeHtml(project.display_name)}" ${status?.loading ? "disabled" : ""}>${icons.refresh}<span>Status</span></button>
+              <button class="button" data-action="open-project" data-project-id="${escapeHtml(project.project_id)}" aria-label="Open folder for ${escapeHtml(project.display_name)}">${icons.external}<span>Open folder</span></button>
             </div>
           </div>
         </div>
@@ -1354,7 +1389,7 @@ function renderContinue() {
                         <div><strong>${escapeHtml(device.display_name)}</strong><span>${escapeHtml(device.platform_key)} ${escapeHtml(device.architecture)} - ${escapeHtml(readiness.detail)}</span></div>
                         <span class="badge ${readiness.tone}">${escapeHtml(readiness.label)}</span>
                       </div>
-                      <button class="button ${readiness.ready ? "primary" : ""}" data-action="handoff-dialog" data-project-id="${escapeHtml(project.project_id)}" data-target-device-id="${escapeHtml(device.device_id)}" ${disabled ? "disabled" : ""}>${icons.play}<span>${readiness.ready ? "Review handoff" : readiness.label}</span></button>
+                      <button class="button ${readiness.ready ? "primary" : ""}" data-action="handoff-dialog" data-project-id="${escapeHtml(project.project_id)}" data-target-device-id="${escapeHtml(device.device_id)}" aria-label="Review handoff to ${escapeHtml(device.display_name)}" ${disabled ? "disabled" : ""}>${icons.play}<span>${readiness.ready ? "Review handoff" : readiness.label}</span></button>
                     </div>`;
                   })
                   .join("")}</div>`
@@ -1407,9 +1442,9 @@ function renderProjects() {
       <td><div class="cell-main"><strong><span class="badge ${attention.tone}">${escapeHtml(attention.label)}</span></strong><span>${escapeHtml(attention.detail)}</span><span>${counts.staged} staged, ${counts.unstaged} modified, ${counts.untracked} untracked</span></div></td>
       <td>
         <div class="button-row">
-          <button class="button" data-action="select-project" data-project-id="${escapeHtml(project.project_id)}">${icons.play}<span>Details</span></button>
-          <button class="button" data-action="project-recovery" data-project-id="${escapeHtml(project.project_id)}">${icons.box}<span>Recovery</span></button>
-          <button class="button icon-only" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" title="Status" aria-label="Status">${icons.refresh}</button>
+          <button class="button" data-action="select-project" data-project-id="${escapeHtml(project.project_id)}" aria-label="Show details for ${escapeHtml(project.display_name)}">${icons.play}<span>Details</span></button>
+          <button class="button" data-action="project-recovery" data-project-id="${escapeHtml(project.project_id)}" aria-label="Open recovery for ${escapeHtml(project.display_name)}">${icons.box}<span>Recovery</span></button>
+          <button class="button icon-only" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" title="Status" aria-label="Refresh status for ${escapeHtml(project.display_name)}">${icons.refresh}</button>
         </div>
       </td>
     </tr>`;
@@ -1481,7 +1516,7 @@ function renderDevices() {
       <td>${escapeHtml(deviceResource(device, "disk"))}</td>
       <td>${escapeHtml(deviceResource(device, "power"))}</td>
       <td>${escapeHtml(deviceResource(device, "cache"))}</td>
-      <td><div class="button-row"><button class="button danger" data-action="device-revoke-placeholder" data-device-id="${escapeHtml(device.device_id)}" ${isCurrent || state.operation ? "disabled" : ""}>${icons.x}<span>Revoke</span></button></div></td>
+      <td><div class="button-row"><button class="button danger" data-action="device-revoke-placeholder" data-device-id="${escapeHtml(device.device_id)}" aria-label="Revoke ${escapeHtml(device.display_name)}" ${isCurrent || state.operation ? "disabled" : ""}>${icons.x}<span>Revoke</span></button></div></td>
     </tr>`;
     })
     .join("");
@@ -1491,7 +1526,7 @@ function renderDevices() {
       <div class="panel">
         <div class="panel-head">
           <div><h3>Devices</h3><p>${allDevices.length} known identities - ${onlineCount} online</p></div>
-          <button class="button" data-action="device-pair-placeholder" ${state.operation ? "disabled" : ""}>${icons.monitor}<span>Pair device</span></button>
+          <button class="button" data-action="device-pair-placeholder" aria-label="Pair a new device" ${state.operation ? "disabled" : ""}>${icons.monitor}<span>Pair device</span></button>
         </div>
         <div class="panel-body">
           ${
@@ -1522,8 +1557,8 @@ function renderRuns() {
       <td>${formatAge(runUpdatedAt(run))}</td>
       <td>
         <div class="button-row">
-          <button class="button" data-action="run-artifacts-placeholder" data-run-id="${escapeHtml(run.task_run_id)}">${icons.download}<span>Artifacts</span></button>
-          <button class="button danger" data-action="run-cancel-placeholder" data-run-id="${escapeHtml(run.task_run_id)}" ${!canCancel || state.operation ? "disabled" : ""}>${icons.x}<span>Cancel</span></button>
+          <button class="button" data-action="run-artifacts-placeholder" data-run-id="${escapeHtml(run.task_run_id)}" aria-label="Open artifacts for run ${escapeHtml(shortId(run.task_run_id))}">${icons.download}<span>Artifacts</span></button>
+          <button class="button danger" data-action="run-cancel-placeholder" data-run-id="${escapeHtml(run.task_run_id)}" aria-label="Cancel run ${escapeHtml(shortId(run.task_run_id))}" ${!canCancel || state.operation ? "disabled" : ""}>${icons.x}<span>Cancel</span></button>
         </div>
       </td>
     </tr>`;
@@ -1539,7 +1574,7 @@ function renderRuns() {
       <div class="panel">
         <div class="panel-head">
           <div><h3>Runs</h3><p>${allRuns.length} task records - ${running.length} running, ${queued.length} queued, ${failed.length} failed</p></div>
-          <button class="button" data-action="run-task-placeholder" ${state.operation ? "disabled" : ""}>${icons.terminal}<span>Run task</span></button>
+          <button class="button" data-action="run-task-placeholder" aria-label="Run a task" ${state.operation ? "disabled" : ""}>${icons.terminal}<span>Run task</span></button>
         </div>
         <div class="panel-body project-hero">
           <div class="summary-grid">
@@ -1798,7 +1833,7 @@ function renderEventBridgeRow() {
 
 function renderToasts() {
   if (state.toasts.length === 0) return "";
-  return `<div class="toast-region" data-scroll-container>${state.toasts
+  return `<div class="toast-region" data-scroll-container role="status" aria-live="polite" aria-atomic="true">${state.toasts
     .map((item) => `<div class="toast ${escapeHtml(item.kind)}">${escapeHtml(item.message)}</div>`)
     .join("")}</div>`;
 }
@@ -1806,6 +1841,43 @@ function renderToasts() {
 function render() {
   app.innerHTML = shell();
   attachHandlers();
+  applyPendingFocus();
+}
+
+const dialogFocusableSelector =
+  'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+
+function closeHandoffDialog() {
+  const returnFocusSelector = state.handoffDialog?.returnFocusSelector;
+  state.handoffDialog = null;
+  if (returnFocusSelector) queueFocus(returnFocusSelector);
+  render();
+}
+
+function trapHandoffDialogFocus(event) {
+  if (!state.handoffDialog || event.key !== "Tab") return;
+  const dialog = app.querySelector("[data-handoff-dialog]");
+  const focusable = Array.from(dialog?.querySelectorAll?.(dialogFocusableSelector) ?? []);
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (event.shiftKey && active === first) {
+    event.preventDefault?.();
+    last.focus?.();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault?.();
+    first.focus?.();
+  }
+}
+
+function handleGlobalKeydown(event) {
+  if (event.key === "Escape" && state.handoffDialog) {
+    event.preventDefault?.();
+    closeHandoffDialog();
+    return;
+  }
+  trapHandoffDialogFocus(event);
 }
 
 function attachHandlers() {
@@ -1941,8 +2013,7 @@ async function handleAction(button) {
   const targetDeviceId = button.dataset.targetDeviceId;
   const handoffId = button.dataset.handoffId;
   if (action === "handoff-dialog-close") {
-    state.handoffDialog = null;
-    render();
+    closeHandoffDialog();
     return;
   }
   if (action === "handoff-dialog") {
@@ -1951,7 +2022,9 @@ async function handleAction(button) {
       targetDeviceId,
       phase: "review",
       message: null,
+      returnFocusSelector: actionFocusSelector(button),
     };
+    queueFocus('[data-action="handoff-dialog-close"]');
     render();
     return;
   }
@@ -2017,6 +2090,7 @@ async function handleAction(button) {
       targetDeviceId: targetDeviceId || dialog?.targetDeviceId,
       phase: "running",
       message: null,
+      returnFocusSelector: dialog?.returnFocusSelector,
     };
     render();
     await runOperation("Preparing handoff", async () => {
@@ -2027,6 +2101,7 @@ async function handleAction(button) {
         targetDeviceId,
         phase: "success",
         message: "Target preparation has started. Continue on the target device when ready.",
+        returnFocusSelector: dialog?.returnFocusSelector,
       };
       toast("Handoff preparation started");
       await refresh();
@@ -2036,6 +2111,7 @@ async function handleAction(button) {
         targetDeviceId: targetDeviceId || dialog?.targetDeviceId,
         phase: "failure",
         message: String(error?.message ?? error),
+        returnFocusSelector: dialog?.returnFocusSelector,
       };
       toast(String(error?.message ?? error), "bad");
       render();
@@ -2071,6 +2147,7 @@ async function handleAction(button) {
           targetDeviceId: dialog.targetDeviceId,
           phase: "success",
           message: "Handoff aborted. Source control stayed on this device.",
+          returnFocusSelector: dialog.returnFocusSelector,
         };
       }
       toast("Handoff aborted");
@@ -2189,4 +2266,5 @@ async function installEventListeners() {
   });
 }
 
+document.addEventListener?.("keydown", handleGlobalKeydown);
 installEventListeners().finally(refresh);
