@@ -306,7 +306,9 @@ representative measurements.
 
 ### M7. Desktop UX: Tray And Dashboard
 
-Status: not started.
+Status: started. The Tauri tray/dashboard first slice, Continue screen,
+handoff dialog, Activity/Settings surfaces, and agent-backed handoff
+prepare/continue paths exist. Real macOS/Linux device dogfood remains open.
 
 Goal: ship the day-to-day product surface around "Continue here" without
 exposing Git plumbing by default.
@@ -498,7 +500,7 @@ The next sequence is product-first but still safety-gated:
 3. Measure idle resource behavior.
 4. Add named safety integration suites.
 5. Scaffold Tauri shell and subscribe to agent state/events.
-6. Implement tray and Continue screen.
+6. Keep tray and Continue screen aligned with agent state during runtime checks.
 7. Dogfood clean-target handoff on real macOS/Linux devices.
 8. Dogfood dirty-target and inactive-edit preservation.
 9. Add Windows/WSL once Windows IPC/startup are credible.

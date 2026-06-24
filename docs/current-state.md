@@ -26,7 +26,7 @@ or anxiety around dirty target preservation.
 | M4 Pairing, mTLS, revocation | Mostly complete | Identity, pairing, discovery, mTLS transport, revocation, and audit are present. M4.5 Control API remains unimplemented, so the M4 exit gate is open. |
 | M5 Git object and CAS data plane | Complete | Per-project bare repo strategy, route selection, CAS, sidecars, materialization, and partial upload safety are implemented. |
 | M6 Background protection | Nearly complete | Debounce, checkpoint, resource policy, retention, quota, and crash journal exist. Initial macOS resource smoke evidence exists; Linux/Windows watcher coverage and representative resource evidence remain open. |
-| M7 Desktop UX | Started | A Tauri shell exists with tray status, refresh, continue targets, run shortcuts, background profile toggle, open/quit, reduced-motion handling, generated app icon placeholder, prototype-aligned visual polish, agent-backed bootstrap, event subscription status/gap recovery, lease-backed writer state, snapshot-backed checkpoint age, handoff state visibility, target readiness, keyboard-safe handoff review, screen-reader action labels, dirty-target-safe copy, metadata handoff prepare/abort actions, project status, checkpoint, diagnostics, settings, and overflow-tested screens. The first-slice macOS/Linux policy, agent contract, activity failure payload, and dogfood scripts are documented. Target apply wiring, real remote run dispatch, and real cross-device handoff completion remain open. |
+| M7 Desktop UX | Started | A Tauri shell exists with tray status, refresh, continue targets, run shortcuts, background profile toggle, open/quit, reduced-motion handling, generated app icon placeholder, prototype-aligned visual polish, agent-backed bootstrap, event subscription status/gap recovery, lease-backed writer state, snapshot-backed checkpoint age, handoff state visibility, target readiness, keyboard-safe handoff review, screen-reader action labels, dirty-target-safe copy, source-side prepare/abort actions, target-side apply/verify/commit, project status, checkpoint, diagnostics, settings, and overflow-tested screens. The first-slice macOS/Linux policy, agent contract, activity failure payload, and dogfood scripts are documented. Real remote run dispatch and real-device cross-device dogfood evidence remain open. |
 | M8 Editor context | Not started | Keep out of the first UI slice. |
 | M9 Environment hydration | Partial | Trust hashes, profile selection, Nix, and Dev Container paths exist. Native bootstrap, secrets, hydration state, and doctor remain open. |
 | M10 Compute fabric | Not started | Keep out of the first UI slice. |
@@ -60,10 +60,9 @@ The next implementation path is:
 3. Convert non-negotiable safety rules into integration suites with stable
    names.
 4. Run the manual desktop runtime checklist against the current Tauri shell.
-5. Wire target apply and verification into clean target continuation UI.
-6. Dogfood clean target handoff on real devices.
-7. Dogfood dirty target and inactive edit preservation.
-8. Expand to Windows/WSL after Windows IPC and startup packaging are credible.
+5. Dogfood clean target handoff on real macOS/Linux devices.
+6. Dogfood dirty target and inactive edit preservation.
+7. Expand to Windows/WSL after Windows IPC and startup packaging are credible.
 
 ## Current Blockers Before Broad UI Claims
 

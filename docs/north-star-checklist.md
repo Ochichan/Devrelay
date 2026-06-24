@@ -2100,7 +2100,7 @@ Conventions:
 - [x] Implement resource benchmark harness and record idle CPU/RSS plus checkpoint burst results.
 - [x] Add first safety suites: `no_silent_overwrite`, `no_unverified_handoff`, `stale_publish_is_fork`, and `no_plaintext_secret_snapshot`.
 - [x] Start Tauri shell with agent event subscription.
-- [ ] Implement tray and Continue screen for macOS/Linux handoff.
+- [x] Implement tray and Continue screen for macOS/Linux handoff.
 - [ ] Dogfood clean-target handoff on real macOS/Linux devices.
 - [ ] Dogfood dirty-target and inactive-edit preservation.
 - [ ] Add Windows/WSL 3-device dogfood after Windows IPC/startup are credible.
