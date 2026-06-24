@@ -57,6 +57,28 @@ interface HandoffsListResult {
   handoffs: HandoffSummary[];
 }
 
+interface ProjectRegistryEntry {
+  project_id: string;
+  display_name: string;
+  local_path: string;
+  manifest_path?: string | null;
+}
+
+interface ProjectsListResult {
+  projects: ProjectRegistryEntry[];
+}
+
+interface DeviceIdentity {
+  device_id: string;
+  display_name: string;
+  platform_key: string;
+  architecture: string;
+}
+
+interface DevicesListResult {
+  devices: DeviceIdentity[];
+}
+
 interface EditorContextSnapshot {
   project?: string | null;
   audit_id: number;
@@ -77,6 +99,49 @@ interface EditorContextUpdateResult {
 interface EditorRestoreAckResult {
   accepted: boolean;
   audit_id: number;
+}
+
+interface CheckpointCreateResult {
+  checkpoint: {
+    snapshot_id: string;
+    project_id: string;
+    label?: string | null;
+  };
+  snapshot_repo: string;
+}
+
+interface StoredSnapshotSummary {
+  snapshot_id: string;
+  project_id: string;
+  label?: string | null;
+  created_at_unix_seconds: number;
+}
+
+interface RecoverListResult {
+  snapshots: StoredSnapshotSummary[];
+}
+
+interface TaskRunRecord {
+  task_run_id: string;
+  project_id: string;
+  state: string;
+  command?: string | null;
+  updated_at_unix_seconds: number;
+}
+
+interface RunsListResult {
+  runs: TaskRunRecord[];
+}
+
+interface HandoffMutationResult {
+  handoff: {
+    handoff_id: string;
+    lease_id: string;
+    project_id: string;
+    target_device_id: string;
+    source_generation: string;
+    state: string;
+  };
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -142,7 +207,13 @@ export function activate(context: vscode.ExtensionContext): void {
     return capsule;
   };
 
-  const captureContext = async () => {
+  const reportCommandError = (label: string, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    output.appendLine(`${label} failed: ${message}`);
+    void vscode.window.showErrorMessage(`DevRelay ${label.toLowerCase()} failed: ${message}`);
+  };
+
+  const captureContext = async (): Promise<EditorContextUpdateResult | undefined> => {
     try {
       const capsule = captureWorkspaceContext(vscode);
       const capsuleBytes = assertContextWithinLimit(capsule);
@@ -157,10 +228,12 @@ export function activate(context: vscode.ExtensionContext): void {
         await captureUnsavedBuffersToSecret();
       }
       void vscode.window.showInformationMessage("DevRelay captured editor context.");
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       output.appendLine(`Editor context capture failed: ${message}`);
       void vscode.window.showErrorMessage(`DevRelay context capture failed: ${message}`);
+      return undefined;
     }
   };
 
@@ -253,6 +326,144 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  const createCheckpoint = async () => {
+    const repo = currentWorkspacePath();
+    if (!repo) {
+      void vscode.window.showWarningMessage("Open a workspace folder before creating a checkpoint.");
+      return;
+    }
+    try {
+      const result = await client.call<CheckpointCreateResult>("checkpoint.create", {
+        repo,
+        manifest: null,
+        label: "VS Code checkpoint",
+        pin: false,
+      });
+      output.appendLine(
+        `Checkpoint created: ${result.checkpoint.snapshot_id} for ${result.checkpoint.project_id}`
+      );
+      void vscode.window.showInformationMessage("DevRelay checkpoint created.");
+      void refresh();
+    } catch (error) {
+      reportCommandError("Checkpoint", error);
+    }
+  };
+
+  const openRecoveryTimeline = async () => {
+    try {
+      const result = await client.call<RecoverListResult>("recover.list", {
+        project: null,
+      });
+      output.appendLine("Recovery timeline:");
+      if (result.snapshots.length === 0) {
+        output.appendLine("- No recovery snapshots available.");
+      }
+      for (const snapshot of result.snapshots.slice(0, 25)) {
+        output.appendLine(
+          `- ${snapshot.snapshot_id} project=${snapshot.project_id} label=${snapshot.label ?? "-"} created=${formatUnixSeconds(
+            snapshot.created_at_unix_seconds
+          )}`
+        );
+      }
+      output.show(true);
+      void vscode.window.showInformationMessage("DevRelay recovery timeline opened.");
+    } catch (error) {
+      reportCommandError("Open recovery timeline", error);
+    }
+  };
+
+  const runTask = async () => {
+    try {
+      const projects = await client.call<ProjectsListResult>("projects.list");
+      const project = await selectProjectForWorkspace(projects.projects, currentWorkspacePath());
+      if (!project) {
+        return;
+      }
+      const result = await client.call<RunsListResult>("runs.list", {
+        project: project.project_id,
+        limit: 10,
+      });
+      output.appendLine(`Recent task runs for ${project.display_name} (${project.project_id}):`);
+      if (result.runs.length === 0) {
+        output.appendLine("- No task runs recorded.");
+      }
+      for (const run of result.runs) {
+        output.appendLine(
+          `- ${run.task_run_id} state=${run.state} command=${run.command ?? "-"} updated=${formatUnixSeconds(
+            run.updated_at_unix_seconds
+          )}`
+        );
+      }
+      output.show(true);
+      void vscode.window.showWarningMessage(
+        "DevRelay task execution is not available from the local agent yet; opened recent runs."
+      );
+    } catch (error) {
+      reportCommandError("Run task", error);
+    }
+  };
+
+  const continueHere = async () => {
+    await restoreContext();
+    void refresh();
+  };
+
+  const continueElsewhere = async () => {
+    const workspacePath = currentWorkspacePath();
+    if (!workspacePath) {
+      void vscode.window.showWarningMessage("Open a workspace folder before continuing elsewhere.");
+      return;
+    }
+    try {
+      const [settings, projects, devices] = await Promise.all([
+        client.call<SettingsGetResult>("settings.get"),
+        client.call<ProjectsListResult>("projects.list"),
+        client.call<DevicesListResult>("devices.list"),
+      ]);
+      const project = await selectProjectForWorkspace(projects.projects, workspacePath);
+      if (!project) {
+        return;
+      }
+      const target = await selectTargetDevice(devices.devices, settings.device_id);
+      if (!target) {
+        return;
+      }
+      const leases = await client.call<LeasesListResult>("leases.list", {
+        project: project.project_id,
+      });
+      const lease = leases.leases.find(
+        (entry) =>
+          entry.project_id === project.project_id &&
+          entry.state === "active" &&
+          entry.holder_device_id === settings.device_id
+      );
+      if (!lease) {
+        void vscode.window.showWarningMessage(
+          "DevRelay cannot continue elsewhere because this device does not hold an active writer lease."
+        );
+        return;
+      }
+      const captured = await captureContext();
+      if (!captured) {
+        return;
+      }
+      const handoff = await client.call<HandoffMutationResult>("handoff.begin", {
+        project: project.project_id,
+        lease_id: lease.lease_id,
+        target_device_id: target.device_id,
+        source_generation: `vscode-context-${captured.audit_id}`,
+        ttl_seconds: null,
+      });
+      output.appendLine(
+        `Handoff started: ${handoff.handoff.handoff_id} to ${target.display_name} (${target.device_id})`
+      );
+      void vscode.window.showInformationMessage("DevRelay handoff started.");
+      void refresh();
+    } catch (error) {
+      reportCommandError("Continue elsewhere", error);
+    }
+  };
+
   const recordEditorEvent = async (params: EditorEventRecordParams) => {
     if (!shouldNotifyEditorEvent(params)) {
       return;
@@ -287,7 +498,12 @@ export function activate(context: vscode.ExtensionContext): void {
     output,
     statusBar,
     vscode.commands.registerCommand("devrelay.refreshConnection", refresh),
+    vscode.commands.registerCommand("devrelay.continueHere", continueHere),
+    vscode.commands.registerCommand("devrelay.continueElsewhere", continueElsewhere),
     vscode.commands.registerCommand("devrelay.captureContext", captureContext),
+    vscode.commands.registerCommand("devrelay.createCheckpoint", createCheckpoint),
+    vscode.commands.registerCommand("devrelay.runTask", runTask),
+    vscode.commands.registerCommand("devrelay.openRecoveryTimeline", openRecoveryTimeline),
     vscode.commands.registerCommand("devrelay.captureUnsavedBuffers", captureUnsavedBuffersCommand),
     vscode.commands.registerCommand("devrelay.restoreUnsavedBuffers", restoreUnsavedBuffersCommand),
     vscode.commands.registerCommand("devrelay.openDashboard", openDashboard),
@@ -326,6 +542,71 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   void refresh();
+}
+
+function currentWorkspacePath(): string | undefined {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
+async function selectProjectForWorkspace(
+  projects: ProjectRegistryEntry[],
+  workspacePath: string | undefined
+): Promise<ProjectRegistryEntry | undefined> {
+  if (projects.length === 0) {
+    void vscode.window.showWarningMessage("No DevRelay projects are registered with the agent.");
+    return undefined;
+  }
+  if (workspacePath) {
+    const matched = projects.find((project) => projectMatchesWorkspace(project, workspacePath));
+    if (matched) {
+      return matched;
+    }
+  }
+  if (projects.length === 1) {
+    return projects[0];
+  }
+  const selected = await vscode.window.showQuickPick(
+    projects.map((project) => ({
+      label: project.display_name,
+      description: project.project_id,
+      detail: project.local_path,
+      project,
+    })),
+    { placeHolder: "Select a DevRelay project" }
+  );
+  return selected?.project;
+}
+
+async function selectTargetDevice(
+  devices: DeviceIdentity[],
+  currentDeviceId: string
+): Promise<DeviceIdentity | undefined> {
+  const targets = devices.filter((device) => device.device_id !== currentDeviceId);
+  if (targets.length === 0) {
+    void vscode.window.showWarningMessage("No other DevRelay devices are available.");
+    return undefined;
+  }
+  if (targets.length === 1) {
+    return targets[0];
+  }
+  const selected = await vscode.window.showQuickPick(
+    targets.map((device) => ({
+      label: device.display_name,
+      description: device.device_id,
+      detail: `${device.platform_key} ${device.architecture}`,
+      device,
+    })),
+    { placeHolder: "Select a target device" }
+  );
+  return selected?.device;
+}
+
+function projectMatchesWorkspace(project: ProjectRegistryEntry, workspacePath: string): boolean {
+  return workspacePath === project.local_path || workspacePath.startsWith(`${project.local_path}/`);
+}
+
+function formatUnixSeconds(seconds: number): string {
+  return new Date(seconds * 1000).toISOString();
 }
 
 function createContextRestoreDriver(

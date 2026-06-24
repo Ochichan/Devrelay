@@ -16,42 +16,79 @@
     "onStartupFinished",
     "onCommand:devrelay.refreshConnection",
     "onCommand:devrelay.explainState",
+    "onCommand:devrelay.continueHere",
+    "onCommand:devrelay.continueElsewhere",
     "onCommand:devrelay.captureContext",
+    "onCommand:devrelay.restoreContext",
+    "onCommand:devrelay.createCheckpoint",
+    "onCommand:devrelay.runTask",
+    "onCommand:devrelay.openRecoveryTimeline",
     "onCommand:devrelay.captureUnsavedBuffers",
     "onCommand:devrelay.restoreUnsavedBuffers",
-    "onCommand:devrelay.openDashboard",
-    "onCommand:devrelay.restoreContext"
+    "onCommand:devrelay.openDashboard"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "devrelay.refreshConnection",
-        "title": "DevRelay: Refresh Connection"
+        "title": "Refresh Connection",
+        "category": "DevRelay"
       },
       {
         "command": "devrelay.explainState",
-        "title": "DevRelay: Explain Current State"
+        "title": "Explain Current State",
+        "category": "DevRelay"
+      },
+      {
+        "command": "devrelay.continueHere",
+        "title": "Continue Here",
+        "category": "DevRelay"
+      },
+      {
+        "command": "devrelay.continueElsewhere",
+        "title": "Continue Elsewhere",
+        "category": "DevRelay"
       },
       {
         "command": "devrelay.captureContext",
-        "title": "DevRelay: Capture Editor Context"
-      },
-      {
-        "command": "devrelay.captureUnsavedBuffers",
-        "title": "DevRelay: Capture Unsaved Buffers"
-      },
-      {
-        "command": "devrelay.restoreUnsavedBuffers",
-        "title": "DevRelay: Restore Unsaved Buffers"
-      },
-      {
-        "command": "devrelay.openDashboard",
-        "title": "DevRelay: Open Dashboard"
+        "title": "Capture Editor Context",
+        "category": "DevRelay"
       },
       {
         "command": "devrelay.restoreContext",
-        "title": "DevRelay: Restore Editor Context"
+        "title": "Restore Editor Context",
+        "category": "DevRelay"
+      },
+      {
+        "command": "devrelay.createCheckpoint",
+        "title": "Checkpoint",
+        "category": "DevRelay"
+      },
+      {
+        "command": "devrelay.runTask",
+        "title": "Run Task",
+        "category": "DevRelay"
+      },
+      {
+        "command": "devrelay.openRecoveryTimeline",
+        "title": "Open Recovery Timeline",
+        "category": "DevRelay"
+      },
+      {
+        "command": "devrelay.captureUnsavedBuffers",
+        "title": "Capture Unsaved Buffers",
+        "category": "DevRelay"
+      },
+      {
+        "command": "devrelay.restoreUnsavedBuffers",
+        "title": "Restore Unsaved Buffers",
+        "category": "DevRelay"
+      },
+      {
+        "command": "devrelay.openDashboard",
+        "title": "Open Dashboard",
+        "category": "DevRelay"
       }
     ],
     "configuration": {

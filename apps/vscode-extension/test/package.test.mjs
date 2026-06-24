@@ -12,11 +12,16 @@ test("package exposes the VS Code extension entrypoint", () => {
     "onStartupFinished",
     "onCommand:devrelay.refreshConnection",
     "onCommand:devrelay.explainState",
+    "onCommand:devrelay.continueHere",
+    "onCommand:devrelay.continueElsewhere",
     "onCommand:devrelay.captureContext",
+    "onCommand:devrelay.restoreContext",
+    "onCommand:devrelay.createCheckpoint",
+    "onCommand:devrelay.runTask",
+    "onCommand:devrelay.openRecoveryTimeline",
     "onCommand:devrelay.captureUnsavedBuffers",
     "onCommand:devrelay.restoreUnsavedBuffers",
     "onCommand:devrelay.openDashboard",
-    "onCommand:devrelay.restoreContext",
   ]);
 });
 
@@ -25,16 +30,25 @@ test("contributed commands are registered by the extension", () => {
   assert.deepEqual(commands, [
     "devrelay.refreshConnection",
     "devrelay.explainState",
+    "devrelay.continueHere",
+    "devrelay.continueElsewhere",
     "devrelay.captureContext",
+    "devrelay.restoreContext",
+    "devrelay.createCheckpoint",
+    "devrelay.runTask",
+    "devrelay.openRecoveryTimeline",
     "devrelay.captureUnsavedBuffers",
     "devrelay.restoreUnsavedBuffers",
     "devrelay.openDashboard",
-    "devrelay.restoreContext",
   ]);
 
   for (const command of commands) {
     assert.match(extensionSource, new RegExp(`registerCommand\\("${command}"`));
   }
+  assert.equal(
+    packageJson.contributes.commands.every((command) => command.category === "DevRelay"),
+    true
+  );
 });
 
 test("extension surfaces local agent connection state", () => {
@@ -43,6 +57,10 @@ test("extension surfaces local agent connection state", () => {
   assert.match(extensionSource, /client\.call<EditorContextUpdateResult>\(\s*"editor\.context\.update"/);
   assert.match(extensionSource, /client\.call<EditorContextLatestResult>\("editor\.context\.latest"/);
   assert.match(extensionSource, /client\.call<EditorRestoreAckResult>\("editor\.restore\.ack"/);
+  assert.match(extensionSource, /client\.call<CheckpointCreateResult>\("checkpoint\.create"/);
+  assert.match(extensionSource, /client\.call<RecoverListResult>\("recover\.list"/);
+  assert.match(extensionSource, /client\.call<RunsListResult>\("runs\.list"/);
+  assert.match(extensionSource, /client\.call<HandoffMutationResult>\("handoff\.begin"/);
   assert.match(extensionSource, /restoreWorkspaceContext/);
   assert.match(extensionSource, /client\.call<EditorEventRecordResult>\("editor\.event\.record"/);
   assert.match(extensionSource, /statusBar\.command = "devrelay\.explainState"/);

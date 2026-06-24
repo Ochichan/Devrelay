@@ -16,6 +16,13 @@ and delayed protection states. Edit, save, and active-editor changes are sent to
 the local agent through `editor.event.record`; meaningful edits increment source
 generation and abort pending source handoffs.
 
+Command Palette entries are grouped under DevRelay. Continue Here restores the
+latest context, Continue Elsewhere captures context and starts a guarded
+handoff when the local writer lease and a target device are available,
+Checkpoint calls `checkpoint.create`, Open Recovery Timeline lists
+`recover.list`, and Run Task opens recent `runs.list` history until an execution
+RPC exists.
+
 ```bash
 npm install
 npm run check

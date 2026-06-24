@@ -383,6 +383,13 @@ Completed capabilities:
   folder/file/tab-order reopening, active selections, split columns,
   breakpoints, local dirty-buffer restore, restore ACK audit, partial detail
   reporting, and Node/Rust coverage.
+- Command palette actions for continue here, continue elsewhere,
+  checkpoint, run task, recovery timeline, explain state, refresh,
+  dashboard, capture, restore, and unsaved-buffer commands. Continue
+  elsewhere captures context and starts `handoff.begin` only when a registered
+  project, active local writer lease, and target device are available. Run task
+  currently opens recent run history because the local agent has no task-start
+  RPC yet.
 
 Open work:
 

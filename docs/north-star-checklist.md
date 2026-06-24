@@ -1333,20 +1333,20 @@ Conventions:
 
 ### M8.7 Editor Commands
 
-- [ ] Add "DevRelay: Continue Here".
-- [ ] Add "DevRelay: Continue Elsewhere".
-- [ ] Add "DevRelay: Checkpoint".
-- [ ] Add "DevRelay: Run Task".
-- [ ] Add "DevRelay: Open Recovery Timeline".
-- [ ] Add "DevRelay: Explain Current State".
-- [ ] Add command palette metadata.
+- [x] Add "DevRelay: Continue Here".
+- [x] Add "DevRelay: Continue Elsewhere".
+- [x] Add "DevRelay: Checkpoint".
+- [x] Add "DevRelay: Run Task".
+- [x] Add "DevRelay: Open Recovery Timeline".
+- [x] Add "DevRelay: Explain Current State".
+- [x] Add command palette metadata.
 
 ### M8 Exit Gate
 
 - [ ] Handoff opens target editor with expected context.
-- [ ] Unsaved buffers restore as dirty buffers.
+- [x] Unsaved buffers restore as dirty buffers.
 - [ ] Extension failure does not block verified code handoff.
-- [ ] Source edit during handoff prevents stale lease transfer.
+- [x] Source edit during handoff prevents stale lease transfer.
 - [ ] User can disable editor context capture.
 
 ## M9. Environment Hydration
