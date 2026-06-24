@@ -309,6 +309,14 @@ enum DoctorCommand {
         #[arg(long)]
         json: bool,
     },
+    ProjectSafety {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, default_value = "devrelay.toml")]
+        manifest: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     Paths {
         #[arg(long, default_value = ".")]
         repo: PathBuf,
@@ -1361,6 +1369,29 @@ struct DeviceTrustIssue {
 }
 
 #[derive(Debug, Serialize)]
+struct ProjectSafetyDoctorReport {
+    repo: PathBuf,
+    project_id: String,
+    project_name: String,
+    status: StatusSummary,
+    operation_markers: Vec<ProjectOperationMarker>,
+    issues: Vec<ProjectSafetyIssue>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectOperationMarker {
+    name: &'static str,
+    path: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectSafetyIssue {
+    code: &'static str,
+    message: String,
+    safe_actions: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct AnchorStartupRecord {
     version: u32,
     role: AgentRole,
@@ -1687,6 +1718,23 @@ fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
             let report = run_git_performance_doctor(&repo, fix_safe)?;
             render_git_performance_doctor(&report, json)
         }
+        DoctorCommand::ProjectSafety {
+            repo,
+            manifest,
+            json,
+        } => {
+            let repo_root = resolve_git_root(&repo)?;
+            let manifest_path = if manifest.is_absolute() {
+                manifest
+            } else {
+                repo_root.join(manifest)
+            };
+            let manifest = Manifest::load(&manifest_path)
+                .with_context(|| format!("failed to load {}", manifest_path.display()))?;
+            let repo = GitRepo::new(repo_root);
+            let report = project_safety_doctor_report(&repo, &manifest)?;
+            render_project_safety_doctor(&report, json)
+        }
         DoctorCommand::Paths {
             repo,
             manifest,
@@ -1915,6 +1963,133 @@ fn render_environment_doctor(report: &EnvironmentDoctorReport, json: bool) -> an
         }
         for line in &report.selection_explanation {
             println!("  selection: {line}");
+        }
+    }
+    Ok(())
+}
+
+fn project_safety_doctor_report(
+    repo: &GitRepo,
+    manifest: &Manifest,
+) -> anyhow::Result<ProjectSafetyDoctorReport> {
+    let status = repo.status()?;
+    let operation_markers = project_operation_markers(repo)?;
+    let mut issues = Vec::new();
+    if status.is_initial() {
+        issues.push(ProjectSafetyIssue {
+            code: "unborn-repository",
+            message: "Repository has no committed HEAD yet.".to_string(),
+            safe_actions: vec![
+                "Create an initial commit before checkpointing or handoff.".to_string(),
+            ],
+        });
+    }
+    if status.counts.unmerged > 0 {
+        issues.push(ProjectSafetyIssue {
+            code: "unmerged-index",
+            message: format!(
+                "{} unmerged path(s) must be resolved before checkpointing.",
+                status.counts.unmerged
+            ),
+            safe_actions: vec![
+                "Resolve conflicts, then commit, stage, or remove unmerged paths.".to_string(),
+                "Run devrelay doctor project-safety again before handoff.".to_string(),
+            ],
+        });
+    }
+    if !operation_markers.is_empty() {
+        issues.push(ProjectSafetyIssue {
+            code: "unsupported-git-operation",
+            message: "Repository has an in-progress Git operation marker.".to_string(),
+            safe_actions: vec![
+                "Finish, abort, or recover the Git operation before checkpointing.".to_string(),
+                "Use git status for the operation-specific recovery command.".to_string(),
+            ],
+        });
+    }
+    if !status.is_clean() && status.counts.unmerged == 0 {
+        issues.push(ProjectSafetyIssue {
+            code: "pending-changes",
+            message: format!(
+                "Repository has pending changes: {}.",
+                status.short_summary()
+            ),
+            safe_actions: vec![
+                "Run devrelay checkpoint --repo . --manifest devrelay.toml before handoff."
+                    .to_string(),
+                "Review untracked files before relying on a checkpoint.".to_string(),
+            ],
+        });
+    }
+
+    Ok(ProjectSafetyDoctorReport {
+        repo: repo.path().to_path_buf(),
+        project_id: manifest.project_id.clone(),
+        project_name: manifest.name.clone(),
+        status: status.summary(),
+        operation_markers,
+        issues,
+    })
+}
+
+fn project_operation_markers(repo: &GitRepo) -> anyhow::Result<Vec<ProjectOperationMarker>> {
+    let mut markers = Vec::new();
+    for (git_path, name) in [
+        ("rebase-merge", "rebase-merge"),
+        ("rebase-apply", "rebase-apply"),
+        ("sequencer", "sequencer"),
+        ("MERGE_HEAD", "merge"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
+    ] {
+        let path = repo.run(&["rev-parse", "--git-path", git_path])?;
+        let path = repo.path().join(path.trim());
+        if path.exists() {
+            markers.push(ProjectOperationMarker { name, path });
+        }
+    }
+    Ok(markers)
+}
+
+fn render_project_safety_doctor(
+    report: &ProjectSafetyDoctorReport,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!(
+            "project safety doctor: {} ({})",
+            report.project_name, report.project_id
+        );
+        println!("  repo: {}", report.repo.display());
+        println!("  clean: {}", report.status.clean);
+        println!("  initial: {}", report.status.initial);
+        println!(
+            "  counts: {} staged, {} unstaged, {} untracked, {} unmerged",
+            report.status.counts.staged,
+            report.status.counts.unstaged,
+            report.status.counts.untracked,
+            report.status.counts.unmerged
+        );
+        if report.operation_markers.is_empty() {
+            println!("  operation markers: none");
+        } else {
+            println!("  operation markers: {}", report.operation_markers.len());
+            for marker in &report.operation_markers {
+                println!("  - {}: {}", marker.name, marker.path.display());
+            }
+        }
+        if report.issues.is_empty() {
+            println!("  issues: none");
+        } else {
+            println!("  issues: {}", report.issues.len());
+            for issue in &report.issues {
+                println!("  - {}: {}", issue.code, issue.message);
+                for action in &issue.safe_actions {
+                    println!("    action: {action}");
+                }
+            }
         }
     }
     Ok(())

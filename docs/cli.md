@@ -21,6 +21,7 @@ devrelay snapshot export <snapshot-id> --project <project-id> --out snapshot.jso
 devrelay recover list --json
 devrelay recover show <snapshot-id> --json
 devrelay recover open <snapshot-id> --path ../recovery --register --name review --json
+devrelay doctor project-safety --repo . --manifest devrelay.toml --json
 devrelay doctor environment --repo . --manifest devrelay.toml --json
 devrelay doctor environment --repo . --manifest devrelay.toml --run-healthcheck --json
 devrelay doctor secrets --repo . --manifest devrelay.toml --json
@@ -89,6 +90,10 @@ Git state. It checks declared profile compatibility, local adapter tools, local
 secret provider mappings, and existing command trust records. Healthchecks run
 only with `--run-healthcheck`; Dev Container image preparation also requires
 `--allow-devcontainer-prepare`.
+
+`doctor project-safety` is the read-only pre-handoff project check. It reports
+clean/dirty status, unmerged paths, unsupported Git operation markers such as
+rebase or cherry-pick state, and safe actions before checkpoint or handoff.
 
 `environment status` reports the persisted hydration state for registered
 projects and workspaces. It uses the local agent by default through

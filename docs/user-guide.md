@@ -259,6 +259,7 @@ Start with local state and doctors:
 devrelay agent status --json
 devrelay projects list --json
 devrelay status --repo . --manifest devrelay.toml --json
+devrelay doctor project-safety --repo . --manifest devrelay.toml --json
 devrelay doctor paths --repo . --manifest devrelay.toml --json
 devrelay doctor line-endings --repo . --json
 devrelay doctor git-performance --repo . --json

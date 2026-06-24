@@ -1895,7 +1895,7 @@ Conventions:
 
 ### M14.3 Guided Doctor
 
-- [ ] Add project safety doctor.
+- [x] Add project safety doctor.
 - [x] Add path portability doctor.
 - [x] Add environment doctor.
 - [x] Add secret mapping doctor.

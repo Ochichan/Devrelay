@@ -592,6 +592,52 @@ required = true
 }
 
 #[test]
+fn doctor_project_safety_reports_pending_changes() {
+    let repo = std::env::temp_dir().join(format!(
+        "devrelay-doctor-project-safety-test-{}",
+        std::process::id()
+    ));
+    let home = repo.join("home");
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    write_manifest(&repo, "safety-project", "Safety Project");
+    std::fs::write(repo.join("pending.txt"), "pending\n").unwrap();
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "doctor",
+            "project-safety",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["project_id"], "safety-project");
+    assert_eq!(value["status"]["clean"], false);
+    assert_eq!(value["status"]["counts"]["untracked"], 2);
+    assert!(value["issues"].as_array().unwrap().iter().any(|issue| {
+        issue["code"] == "pending-changes"
+            && issue["safe_actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|action| action.as_str().unwrap().contains("devrelay checkpoint"))
+    }));
+
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[test]
 fn doctor_secrets_reports_missing_required_secret() {
     let repo = std::env::temp_dir().join(format!(
         "devrelay-doctor-secrets-test-{}",
