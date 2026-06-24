@@ -540,13 +540,14 @@ Completed or started:
 - Fuzzing targets and corpus seeds.
 - Secret scanning primitives.
 - False-positive override and encrypted one-time sidecar designs.
+- Release channel, signing, provenance, schema support window, and rollback
+  policy.
 - Diagnostic bundle.
 - Fault injection.
 - Migration tests from old fixtures.
 
 Open work:
 
-- Release channel, signed release, and provenance strategy.
 - Backup anchor.
 - Opaque anchor research decision.
 - Independent security review.

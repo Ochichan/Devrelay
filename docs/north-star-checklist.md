@@ -1799,12 +1799,12 @@ Conventions:
 
 ### M13.4 Update And Migration
 
-- [ ] Define release channel model.
-- [ ] Define signed release strategy.
-- [ ] Define binary provenance strategy.
-- [ ] Define metadata schema migration support window.
-- [ ] Define snapshot schema migration support window.
-- [ ] Add rollback expectations.
+- [x] Define release channel model.
+- [x] Define signed release strategy.
+- [x] Define binary provenance strategy.
+- [x] Define metadata schema migration support window.
+- [x] Define snapshot schema migration support window.
+- [x] Add rollback expectations.
 - [x] Add migration tests from old fixtures.
 
 ### M13.5 Backup Anchor

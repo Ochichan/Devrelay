@@ -6,6 +6,9 @@ DevRelay metadata migrations are forward-only and run inside a SQLite
 transaction. A failed migration must leave the database at the previous applied
 version.
 
+Release channels, signing, provenance, schema support windows, and binary
+rollback expectations are defined in `docs/release-update-policy.md`.
+
 ## Rules
 
 - Every migration has a monotonically increasing version.
