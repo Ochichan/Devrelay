@@ -2920,7 +2920,8 @@ fn checkpoint_persists_snapshot_store_and_exports_json() {
 }
 
 #[test]
-fn recover_list_show_and_open_restores_snapshot_without_touching_source() {
+fn safety_recovery_defaults_new_workspace_for_cli_recover_open() {
+    // Invariant: safety/recovery_defaults_new_workspace.
     let root = std::env::temp_dir().join(format!(
         "devrelay-recover-test-{}-{}",
         std::process::id(),
@@ -3052,6 +3053,8 @@ fn recover_list_show_and_open_restores_snapshot_without_touching_source() {
     assert!(open.status.success());
     let open_json: serde_json::Value = serde_json::from_slice(&open.stdout).unwrap();
     assert_eq!(open_json["name"].as_str(), Some("review-copy"));
+    assert_eq!(open_json["path"].as_str(), Some(target.to_str().unwrap()));
+    assert_ne!(open_json["path"].as_str(), Some(root.to_str().unwrap()));
     assert!(
         open_json["registered"]["workspace_id"]
             .as_str()

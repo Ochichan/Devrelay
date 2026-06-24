@@ -731,7 +731,8 @@ fn foreground_serves_apply_snapshot_rpc() {
 
 #[cfg(unix)]
 #[test]
-fn foreground_serves_recover_open_rpc() {
+fn safety_recovery_defaults_new_workspace_for_agent_rpc() {
+    // Invariant: safety/recovery_defaults_new_workspace.
     use devrelay_core::{IpcLimits, UnixIpcConnection};
     use serde_json::json;
 
@@ -822,6 +823,14 @@ fn foreground_serves_recover_open_rpc() {
     assert_eq!(opened["id"], "recover-open");
     assert_eq!(opened["result"]["recovered"]["snapshot_id"], snapshot_id);
     assert_eq!(opened["result"]["name"], "Recovered copy");
+    assert_eq!(
+        opened["result"]["path"].as_str(),
+        Some(recovered.to_str().unwrap())
+    );
+    assert_ne!(
+        opened["result"]["path"].as_str(),
+        Some(source.to_str().unwrap())
+    );
     assert_eq!(opened["result"]["registered"]["project_id"], "66778899");
     assert_eq!(
         opened["result"]["verification"]["included_untracked"][0],
