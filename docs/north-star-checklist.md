@@ -1911,7 +1911,7 @@ Conventions:
 - [x] Track verified continuation successes.
 - [x] Track checkpoint success.
 - [x] Track checkpoint failure reasons.
-- [ ] Track apply verification failures.
+- [x] Track apply verification failures.
 - [x] Track handoff phase durations.
 - [ ] Track environment hydrate duration.
 - [ ] Track scheduler choice reason.

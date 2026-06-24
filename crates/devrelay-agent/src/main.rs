@@ -29,7 +29,7 @@ use devrelay_core::{
     plan_apply_snapshot, workspace_id_for,
 };
 use devrelay_core::{
-    AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, LogRedactor,
+    AgentRole, AnchorLayout, AnchorMode, DevRelayError, DevRelayHome, LocalConfig, LogRedactor,
     METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
     METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EDITOR_CONTEXT_LATEST,
     METHOD_EDITOR_CONTEXT_UPDATE, METHOD_EDITOR_EVENT_RECORD, METHOD_EDITOR_RESTORE_ACK,
@@ -919,7 +919,25 @@ fn handle_apply_snapshot(
                     verification: Some(verification),
                 }
             }
-            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+            Err(err) => {
+                let detail = err.to_string();
+                if let Err(audit_err) = record_agent_snapshot_apply_failure_audit(
+                    state,
+                    &snapshot,
+                    target.path(),
+                    target_workspace_id.as_deref(),
+                    "apply.snapshot",
+                    &err,
+                ) {
+                    return RpcResponse::error(
+                        Some(id),
+                        RpcError::internal(format!(
+                            "{detail}; additionally failed to record apply failure audit: {audit_err}"
+                        )),
+                    );
+                }
+                return RpcResponse::error(Some(id), RpcError::internal(detail));
+            }
         }
     };
 
@@ -1471,7 +1489,25 @@ fn handle_recover_open(
     let snapshot_source = GitRepo::new(store.snapshot_repo_path());
     let verification = match apply_snapshot(&target, &snapshot_source, &snapshot.metadata) {
         Ok(verification) => verification,
-        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        Err(err) => {
+            let detail = err.to_string();
+            if let Err(audit_err) = record_agent_snapshot_apply_failure_audit(
+                state,
+                &snapshot,
+                target.path(),
+                None,
+                "recover.open",
+                &err,
+            ) {
+                return RpcResponse::error(
+                    Some(id),
+                    RpcError::internal(format!(
+                        "{detail}; additionally failed to record apply failure audit: {audit_err}"
+                    )),
+                );
+            }
+            return RpcResponse::error(Some(id), RpcError::internal(detail));
+        }
     };
     if let Err(err) = record_agent_snapshot_apply_audit(
         state,
@@ -2858,6 +2894,51 @@ fn record_agent_snapshot_apply_audit(
     audit.snapshot_id = Some(snapshot.snapshot_id.clone());
     db.record_audit_event(audit)?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn record_agent_snapshot_apply_failure_audit(
+    state: &AgentState,
+    snapshot: &StoredSnapshot,
+    target_path: &Path,
+    target_workspace_id: Option<&str>,
+    operation: &str,
+    error: &DevRelayError,
+) -> anyhow::Result<()> {
+    let actor_device_id = state
+        .config
+        .lock()
+        .ok()
+        .map(|config| config.device_id.clone());
+    let db = MetadataDb::open(state.home.metadata_db_path(&snapshot.project_id))?;
+    let mut audit = AuditEventInput::new(
+        AuditEventType::SnapshotApplied,
+        AuditOutcome::Failed,
+        snapshot_apply_failure_summary(error),
+    )
+    .with_detail(serde_json::json!({
+        "operation": operation,
+        "target_path": target_path.to_string_lossy().to_string(),
+        "target_workspace_id": target_workspace_id,
+        "error_code": error.code(),
+        "error": error.to_string(),
+        "verification_failure": matches!(error, DevRelayError::Verification(_)),
+    }));
+    audit.project_id = Some(snapshot.project_id.clone());
+    audit.actor_device_id = actor_device_id;
+    audit.session_id = snapshot.session_id.clone();
+    audit.snapshot_id = Some(snapshot.snapshot_id.clone());
+    db.record_audit_event(audit)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn snapshot_apply_failure_summary(error: &DevRelayError) -> &'static str {
+    if matches!(error, DevRelayError::Verification(_)) {
+        "snapshot apply verification failed"
+    } else {
+        "snapshot apply failed"
+    }
 }
 
 #[cfg(unix)]

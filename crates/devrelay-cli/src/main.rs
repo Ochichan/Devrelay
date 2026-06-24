@@ -3152,7 +3152,20 @@ fn recover_open_direct(
     let source_path = recovery_source_path(&project_entry)?;
     let target = prepare_recovery_workspace(&path, &source_path)?;
     let snapshot_source = GitRepo::new(store.snapshot_repo_path());
-    let verification = apply_snapshot(&target, &snapshot_source, &snapshot.metadata)?;
+    let verification = match apply_snapshot(&target, &snapshot_source, &snapshot.metadata) {
+        Ok(verification) => verification,
+        Err(err) => {
+            let audit_result = record_snapshot_apply_failure_audit(
+                &snapshot.metadata,
+                target.path(),
+                "recover.open",
+                DirtyPolicy::Block,
+                &None,
+                &err,
+            );
+            return Err(apply_failure_error(err, audit_result));
+        }
+    };
     record_snapshot_apply_audit(
         &snapshot.metadata,
         target.path(),
@@ -3315,7 +3328,20 @@ fn apply_direct(
         render_apply_dry_run(&plan, json)
     } else {
         let prepared = prepare_apply_target(&target, &snapshot, dirty_policy)?;
-        let verification = apply_snapshot(&prepared.repo, &source, &snapshot)?;
+        let verification = match apply_snapshot(&prepared.repo, &source, &snapshot) {
+            Ok(verification) => verification,
+            Err(err) => {
+                let audit_result = record_snapshot_apply_failure_audit(
+                    &snapshot,
+                    prepared.repo.path(),
+                    "apply",
+                    dirty_policy,
+                    &prepared.backup,
+                    &err,
+                );
+                return Err(apply_failure_error(err, audit_result));
+            }
+        };
         record_snapshot_apply_audit(
             &snapshot,
             prepared.repo.path(),
@@ -3366,6 +3392,54 @@ fn record_snapshot_apply_audit(
     audit.snapshot_id = Some(snapshot.snapshot_id.clone());
     db.record_audit_event(audit)?;
     Ok(())
+}
+
+fn record_snapshot_apply_failure_audit(
+    snapshot: &SnapshotMetadata,
+    target_path: &Path,
+    operation: &str,
+    dirty_policy: DirtyPolicy,
+    backup: &Option<StoredSnapshot>,
+    error: &DevRelayError,
+) -> anyhow::Result<()> {
+    let home = DevRelayHome::resolve()?;
+    let db = MetadataDb::open(home.metadata_db_path(&snapshot.project_id))?;
+    let mut audit = AuditEventInput::new(
+        AuditEventType::SnapshotApplied,
+        AuditOutcome::Failed,
+        snapshot_apply_failure_summary(error),
+    )
+    .with_detail(serde_json::json!({
+        "operation": operation,
+        "target_path": target_path.to_string_lossy().to_string(),
+        "dirty_policy": dirty_policy.label(),
+        "backup_snapshot_id": backup.as_ref().map(|snapshot| snapshot.snapshot_id.as_str()),
+        "error_code": error.code(),
+        "error": error.to_string(),
+        "verification_failure": matches!(error, DevRelayError::Verification(_)),
+    }));
+    audit.project_id = Some(snapshot.project_id.clone());
+    audit.session_id = snapshot.session_id.clone();
+    audit.snapshot_id = Some(snapshot.snapshot_id.clone());
+    db.record_audit_event(audit)?;
+    Ok(())
+}
+
+fn snapshot_apply_failure_summary(error: &DevRelayError) -> &'static str {
+    if matches!(error, DevRelayError::Verification(_)) {
+        "snapshot apply verification failed"
+    } else {
+        "snapshot apply failed"
+    }
+}
+
+fn apply_failure_error(error: DevRelayError, audit_result: anyhow::Result<()>) -> Error {
+    match audit_result {
+        Ok(()) => error.into(),
+        Err(audit_err) => Error::msg(format!(
+            "{error}; additionally failed to record apply failure audit: {audit_err}"
+        )),
+    }
 }
 
 fn apply_via_agent(

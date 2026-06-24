@@ -776,6 +776,8 @@ fn metrics_export_is_local_and_redacted_by_default() {
     let home = std::env::temp_dir().join(format!("devrelay-metrics-test-{}", std::process::id()));
     let repo = home.join("repo");
     let out = home.join("metrics-export.json");
+    let snapshot_out = home.join("snapshot.json");
+    let bad_snapshot = home.join("bad-snapshot.json");
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&repo).unwrap();
     init_git_repo(&repo);
@@ -809,6 +811,8 @@ fn metrics_export_is_local_and_redacted_by_default() {
             repo.to_str().unwrap(),
             "--manifest",
             repo.join("devrelay.toml").to_str().unwrap(),
+            "--out",
+            snapshot_out.to_str().unwrap(),
             "--json",
         ])
         .output()
@@ -817,6 +821,45 @@ fn metrics_export_is_local_and_redacted_by_default() {
         checkpoint.status.success(),
         "stderr={}",
         String::from_utf8_lossy(&checkpoint.stderr)
+    );
+    let checkpoint_json: serde_json::Value = serde_json::from_slice(&checkpoint.stdout).unwrap();
+    let snapshot_repo = checkpoint_json["snapshot_repo"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut snapshot_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&snapshot_out).unwrap()).unwrap();
+    snapshot_json["state_hash"] = serde_json::json!("bad-state-hash");
+    std::fs::write(
+        &bad_snapshot,
+        serde_json::to_vec_pretty(&snapshot_json).unwrap(),
+    )
+    .unwrap();
+
+    let failed_apply = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "--json-errors",
+            "--direct",
+            "apply",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--source",
+            &snapshot_repo,
+            "--snapshot",
+            bad_snapshot.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !failed_apply.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&failed_apply.stdout),
+        String::from_utf8_lossy(&failed_apply.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&failed_apply.stderr).contains("DR-APPLY-VERIFICATION-MISMATCH")
     );
 
     let devrelay_home = DevRelayHome::new(&home);
@@ -831,13 +874,6 @@ fn metrics_export_is_local_and_redacted_by_default() {
     );
     checkpoint_failure.project_id = Some("metrics-project".to_string());
     db.record_audit_event_at(checkpoint_failure, 123).unwrap();
-    let mut apply_failure = AuditEventInput::new(
-        AuditEventType::SnapshotApplied,
-        AuditOutcome::Failed,
-        format!("apply verification failed at {}", repo.to_str().unwrap()),
-    );
-    apply_failure.project_id = Some("metrics-project".to_string());
-    db.record_audit_event_at(apply_failure, 124).unwrap();
     db.record_task_run_at(
         TaskRunInput {
             task_run_id: "tr_metrics".to_string(),
