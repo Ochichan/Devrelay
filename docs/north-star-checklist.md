@@ -1345,7 +1345,7 @@ Conventions:
 
 - [ ] Handoff opens target editor with expected context.
 - [x] Unsaved buffers restore as dirty buffers.
-- [ ] Extension failure does not block verified code handoff.
+- [x] Extension failure does not block verified code handoff.
 - [x] Source edit during handoff prevents stale lease transfer.
 - [x] User can disable editor context capture.
 

@@ -61,6 +61,8 @@ test("extension surfaces local agent connection state", () => {
   assert.match(extensionSource, /client\.call<RecoverListResult>\("recover\.list"/);
   assert.match(extensionSource, /client\.call<RunsListResult>\("runs\.list"/);
   assert.match(extensionSource, /client\.call<HandoffMutationResult>\("handoff\.begin"/);
+  assert.match(extensionSource, /const captured = await captureContext\(\);[\s\S]+client\.call<HandoffMutationResult>\("handoff\.begin"/);
+  assert.match(extensionSource, /source_generation: captured[\s\S]+vscode-context-skipped/);
   assert.match(extensionSource, /restoreWorkspaceContext/);
   assert.match(extensionSource, /client\.call<EditorEventRecordResult>\("editor\.event\.record"/);
   assert.match(extensionSource, /statusBar\.command = "devrelay\.explainState"/);
