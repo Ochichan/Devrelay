@@ -82,9 +82,9 @@ These methods are local metadata-control commands. They do not implement the
 remote M4.5 Control API, advertise file transfer completion, or allow UI clients
 to decide handoff success before target apply and verification have completed.
 `handoff.begin` requires a registered target device and uses the agent's local
-device identity as the source device. The desktop app may use it to enter
-target-preparation state, but must still present target apply and verification
-as pending work.
+device identity as the source device. The desktop app may use `handoff.begin`
+and `handoff.abort` to control target-preparation state, but must still present
+target apply and verification as pending work.
 
 ## UI Boundary
 

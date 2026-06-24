@@ -40,6 +40,7 @@ const icons = {
   settings: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z" stroke="currentColor" stroke-width="2"/><path d="M19 12a7.4 7.4 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7.3 7.3 0 0 0-1.8-1L14.4 3h-4.8l-.3 3.1a7.3 7.3 0 0 0-1.8 1l-2.4-1-2 3.4 2 1.5a7.4 7.4 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7.3 7.3 0 0 0 1.8 1l.3 3.1h4.8l.3-3.1a7.3 7.3 0 0 0 1.8-1l2.4 1 2-3.4-2-1.5c.1-.3.1-.7.1-1Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
   refresh: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 12a8 8 0 0 1-13.7 5.7M4 12A8 8 0 0 1 17.7 6.3M18 3v4h-4M6 21v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   check: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 12 4 4 10-9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  x: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   box: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm0 9 8-4.5M12 12 4 7.5m8 4.5v9" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
   external: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 4h6v6M10 14 20 4M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   download: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -250,7 +251,10 @@ function handoffRow(handoff) {
   const target = record.target_device_id ? `to ${record.target_device_id}` : "target pending";
   const remaining = formatUntil(record.expires_at_unix_seconds);
   const expires = remaining === "expired" ? "expired" : `expires in ${remaining}`;
-  return `<div class="status-row"><span class="dot ${tone}"></span><div><strong>${escapeHtml(titleize(record.state))}</strong><span>${escapeHtml(target)} - ${escapeHtml(expires)}</span></div><span class="badge ${tone}">${escapeHtml(shortId(record.handoff_id))}</span></div>`;
+  const action = handoffIsOpen(handoff)
+    ? `<button class="button danger" data-action="handoff-abort" data-project-id="${escapeHtml(record.project_id)}" data-handoff-id="${escapeHtml(record.handoff_id)}" ${state.operation ? "disabled" : ""}>${icons.x}<span>Abort handoff</span></button>`
+    : `<span class="badge ${tone}">${escapeHtml(shortId(record.handoff_id))}</span>`;
+  return `<div class="status-row"><span class="dot ${tone}"></span><div><strong>${escapeHtml(titleize(record.state))}</strong><span>${escapeHtml(target)} - ${escapeHtml(expires)}</span></div>${action}</div>`;
 }
 
 function recentlySeen(device) {
@@ -893,6 +897,7 @@ async function handleAction(button) {
   const action = button.dataset.action;
   const projectId = button.dataset.projectId;
   const targetDeviceId = button.dataset.targetDeviceId;
+  const handoffId = button.dataset.handoffId;
   if (action === "refresh") {
     await refresh();
     return;
@@ -922,6 +927,15 @@ async function handleAction(button) {
       const result = await invoke("handoff_prepare", { projectId, targetDeviceId });
       if (!result.ok) throw new Error(result.message);
       toast("Handoff preparation started");
+      await refresh();
+    }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    return;
+  }
+  if (action === "handoff-abort") {
+    await runOperation("Aborting handoff", async () => {
+      const result = await invoke("handoff_abort", { projectId, handoffId });
+      if (!result.ok) throw new Error(result.message);
+      toast("Handoff aborted");
       await refresh();
     }).catch((error) => toast(String(error?.message ?? error), "bad"));
     return;

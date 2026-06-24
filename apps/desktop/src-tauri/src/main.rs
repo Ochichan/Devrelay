@@ -2,18 +2,18 @@ use devrelay_core::{
     ActivityListParams, ActivityListResult, AgentRpcClient, CheckpointCreateParams,
     CheckpointCreateResult, DevRelayHome, DevicesListResult, DiagnosticsExportParams,
     DiagnosticsExportResult, EventReplayCursor, EventStreamMessage, EventsSubscribeParams,
-    EventsSubscribeResult, HandoffBeginParams, HandoffMutationResult, HandoffStatus,
-    HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, LeaseRecord, LeaseState,
-    LeasesListParams, LeasesListResult, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH,
+    EventsSubscribeResult, HandoffBeginParams, HandoffIdParams, HandoffMutationResult,
+    HandoffStatus, HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, LeaseRecord,
+    LeaseState, LeasesListParams, LeasesListResult, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH,
     METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT,
-    METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_BEGIN, METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST,
-    METHOD_PROJECTS_LIST, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
-    METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, ProjectRegistryEntry,
-    ProjectsListResult, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcId, RpcRequest, RpcResponse,
-    RpcVersionNegotiationParams, RpcVersionNegotiationResult, RunsListParams, RunsListResult,
-    SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult, SnapshotsListParams,
-    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection,
-    detect_platform_identity,
+    METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN, METHOD_HANDOFFS_LIST,
+    METHOD_LEASES_LIST, METHOD_PROJECTS_LIST, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST,
+    METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
+    ProjectRegistryEntry, ProjectsListResult, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcId,
+    RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
+    RunsListParams, RunsListResult, SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult,
+    SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot,
+    UnixIpcConnection, detect_platform_identity,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -178,6 +178,26 @@ fn handoff_prepare(
             data: Some(result),
         },
         Err(err) => operation_error(format!("handoff preparation failed: {err}")),
+    }
+}
+
+#[tauri::command]
+fn handoff_abort(
+    project_id: String,
+    handoff_id: String,
+) -> UiOperationResult<HandoffMutationResult> {
+    let socket = resolved_home().agent_socket_path();
+    let params = HandoffIdParams {
+        project: project_id,
+        handoff_id,
+    };
+    match call_agent(&socket, METHOD_HANDOFF_ABORT, params) {
+        Ok(result) => UiOperationResult {
+            ok: true,
+            message: "handoff aborted".to_string(),
+            data: Some(result),
+        },
+        Err(err) => operation_error(format!("handoff abort failed: {err}")),
     }
 }
 
@@ -570,6 +590,7 @@ fn main() {
             ui_bootstrap,
             checkpoint_create,
             handoff_prepare,
+            handoff_abort,
             project_status,
             open_project,
             settings_update,

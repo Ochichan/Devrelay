@@ -524,6 +524,11 @@ select:focus-visible {
   justify-self: start;
 }
 
+.status-row > .button {
+  grid-column: 2;
+  justify-self: start;
+}
+
 .badge {
   min-width: 0;
   max-width: 100%;

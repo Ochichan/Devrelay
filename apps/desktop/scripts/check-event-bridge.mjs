@@ -144,6 +144,25 @@ assert.match(
   /target apply and verification remain pending/,
   "handoff panel did not keep verification pending"
 );
+vm.runInContext(
+  `
+state.bootstrap.leases[0].state = "handoff-pending";
+state.bootstrap.handoffs = [{
+  record: {
+    handoff_id: "handoff-1",
+    project_id: "project-1",
+    state: "target-prepare",
+    target_device_id: "target-device",
+    expires_at_unix_seconds: ${nowSeconds + 300},
+  },
+  journal: [],
+}];
+render();
+`,
+  context
+);
+assert.match(app.innerHTML, /Abort handoff/, "open handoff did not render abort action");
+assert.doesNotMatch(app.innerHTML, /Prepare handoff/, "open handoff still rendered prepare action");
 
 for (const eventName of [
   "devrelay-tray-refresh",

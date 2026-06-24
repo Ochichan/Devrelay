@@ -1147,6 +1147,7 @@ Conventions:
 - [ ] Show environment warmth.
 - [ ] Add primary "Continue here" action.
 - [x] Add "Continue elsewhere" action.
+- [x] Add "Abort handoff" action.
 - [x] Add "Checkpoint" action.
 - [ ] Add "Run elsewhere" action placeholder.
 - [x] Add empty state.
