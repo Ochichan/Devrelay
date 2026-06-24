@@ -59,8 +59,34 @@ const bootstrap = {
         },
       },
     },
+    {
+      project_id: "project-2",
+      display_name: "Project Two",
+      local_path: "/tmp/project-two",
+      manifest_path: "/tmp/project-two/devrelay.toml",
+      workspaces: {
+        main: {
+          workspace_id: "session-2",
+          state: "inactive",
+          device_id: "target-device",
+          local_path: "/tmp/project-two",
+        },
+      },
+    },
   ],
-  snapshots: [],
+  snapshots: [
+    {
+      snapshot_id: "s1_projectonecheckpoint",
+      project_id: "project-1",
+      session_id: "session-1",
+      sequence_number: 1,
+      label: "desktop",
+      created_at_unix_seconds: nowSeconds,
+      metadata: {
+        state_hash: "state-project-1",
+      },
+    },
+  ],
   leases: [
     {
       lease_id: "lease-1",
@@ -165,6 +191,23 @@ assert.match(
   /target apply and verification remain pending/,
   "handoff panel did not keep verification pending"
 );
+vm.runInContext('state.view = "projects"; render();', context);
+assert.match(app.innerHTML, /Active session/, "projects view did not render session column");
+assert.match(app.innerHTML, /Writer/, "projects view did not render writer column");
+assert.match(app.innerHTML, /Checkpoint/, "projects view did not render checkpoint column");
+assert.match(app.innerHTML, /1\/1 ready/, "projects view did not render target availability");
+assert.match(app.innerHTML, /Needs attention \(1\)/, "projects view did not render attention group");
+assert.match(app.innerHTML, /Ready \(1\)/, "projects view did not render ready group");
+assert.match(app.innerHTML, /Filter projects/, "projects view did not render filter");
+assert.match(app.innerHTML, /Details/, "projects view did not render project detail action");
+vm.runInContext('state.projectFilter = "two"; render();', context);
+assert.match(app.innerHTML, /Project Two/, "project filter did not keep matching project");
+assert.doesNotMatch(
+  app.innerHTML,
+  /data-project-id="project-1"/,
+  "project filter did not hide non-matching table action"
+);
+vm.runInContext('state.projectFilter = ""; state.view = "continue"; render();', context);
 vm.runInContext(
   `
 state.bootstrap.leases[0].state = "handoff-pending";

@@ -1157,15 +1157,15 @@ Conventions:
 
 ### M7.4 Projects View
 
-- [ ] List registered projects.
-- [ ] Show active session per project.
-- [ ] Show writer device.
-- [ ] Show checkpoint status.
-- [ ] Show availability per target.
-- [ ] Add project filter.
+- [x] List registered projects.
+- [x] Show active session per project.
+- [x] Show writer device.
+- [x] Show checkpoint status.
+- [x] Show availability per target.
+- [x] Add project filter.
 - [ ] Add project add action.
-- [ ] Add project detail link.
-- [ ] Add needs-attention grouping.
+- [x] Add project detail link.
+- [x] Add needs-attention grouping.
 - [ ] Add recovery entry point.
 
 ### M7.5 Devices View

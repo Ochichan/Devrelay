@@ -14,6 +14,7 @@ const state = {
   loading: true,
   operation: null,
   selectedProjectId: null,
+  projectFilter: "",
   bootstrap: null,
   projectStatus: new Map(),
   runtimeError: null,
@@ -183,6 +184,11 @@ function activeLease(projectId) {
     entries[0] ??
     null
   );
+}
+
+function targetDevices() {
+  const currentDeviceId = state.bootstrap?.settings?.device_id;
+  return devices().filter((device) => device.device_id !== currentDeviceId);
 }
 
 function currentDevice() {
@@ -355,6 +361,143 @@ function targetReadiness(device, context) {
     label: "Ready",
     detail: "Fresh checkpoint and target preparation can start.",
   };
+}
+
+function projectTargetAvailability(project) {
+  const targets = targetDevices();
+  const lease = activeLease(project.project_id);
+  const openHandoff = handoffIsOpen(latestHandoff(project.project_id));
+  const handoffReady = methods().has("handoff.begin");
+  const entries = targets.map((device) => ({
+    device,
+    readiness: targetReadiness(device, { handoffReady, lease, openHandoff }),
+  }));
+  const readyCount = entries.filter((entry) => entry.readiness.ready).length;
+  const label = targets.length === 0 ? "No targets" : `${readyCount}/${targets.length} ready`;
+  const detail =
+    entries.length === 0
+      ? "Pair another device before starting a desktop handoff."
+      : entries.map((entry) => `${entry.device.display_name}: ${entry.readiness.label}`).join("; ");
+  return {
+    entries,
+    readyCount,
+    total: targets.length,
+    tone: readyCount > 0 ? "good" : "warn",
+    label,
+    detail,
+  };
+}
+
+function projectSession(project) {
+  const workspace = activeWorkspace(project);
+  const checkpoint = latestSnapshot(project.project_id);
+  return {
+    workspace,
+    label: workspace?.workspace_id ?? checkpoint?.session_id ?? "No session recorded",
+    detail: workspace?.local_path ?? project.local_path,
+    state: workspace?.state ?? "unknown",
+  };
+}
+
+function projectWriter(project) {
+  const lease = activeLease(project.project_id);
+  const workspace = activeWorkspace(project);
+  const workspaceWriter = workspace?.state === "active" ? workspace.device_id : null;
+  const writerId = lease?.holder_device_id ?? workspaceWriter;
+  return {
+    label: deviceName(writerId),
+    detail: lease ? `${titleize(lease.state)} writer` : workspaceWriter ? "Active workspace" : "No active writer",
+    tone: lease?.state === "active" ? "good" : "warn",
+  };
+}
+
+function projectCheckpoint(project) {
+  const checkpoint = latestSnapshot(project.project_id);
+  if (!checkpoint) {
+    return {
+      label: "No checkpoint",
+      detail: "Create a checkpoint before handoff.",
+      tone: "warn",
+    };
+  }
+  return {
+    label: shortId(checkpoint.snapshot_id),
+    detail: `${formatAge(checkpoint.created_at_unix_seconds)} - ${checkpoint.label ?? "unlabeled"}`,
+    tone: "good",
+  };
+}
+
+function projectAttention(project) {
+  const status = projectStatus(project.project_id);
+  const counts = statusCounts(status?.data);
+  const availability = projectTargetAvailability(project);
+  if (status?.error) {
+    return { needsAttention: true, tone: "bad", label: "Status error", detail: status.error };
+  }
+  if (counts.unmerged > 0) {
+    return {
+      needsAttention: true,
+      tone: "bad",
+      label: "Conflicts",
+      detail: "Resolve conflicts before handoff.",
+    };
+  }
+  if (handoffIsOpen(latestHandoff(project.project_id))) {
+    return {
+      needsAttention: true,
+      tone: "warn",
+      label: "Handoff open",
+      detail: "Finish or abort the active handoff.",
+    };
+  }
+  if (!latestSnapshot(project.project_id)) {
+    return {
+      needsAttention: true,
+      tone: "warn",
+      label: "No checkpoint",
+      detail: "Checkpoint status is empty.",
+    };
+  }
+  const lease = activeLease(project.project_id);
+  if (!lease || lease.state !== "active") {
+    return {
+      needsAttention: true,
+      tone: "warn",
+      label: "No active writer",
+      detail: "Writer state is not active.",
+    };
+  }
+  if (availability.total > 0 && availability.readyCount === 0) {
+    return {
+      needsAttention: true,
+      tone: "warn",
+      label: "No ready target",
+      detail: availability.detail,
+    };
+  }
+  return { needsAttention: false, tone: "good", label: "Ready", detail: "No immediate action needed." };
+}
+
+function projectSearchText(project) {
+  const session = projectSession(project);
+  const writer = projectWriter(project);
+  return [
+    project.display_name,
+    project.local_path,
+    project.project_id,
+    session.label,
+    session.detail,
+    writer.label,
+    writer.detail,
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function filteredProjects() {
+  const query = state.projectFilter.trim().toLowerCase();
+  if (!query) return projects();
+  return projects().filter((project) => projectSearchText(project).includes(query));
 }
 
 function continueHereReadiness(handoff) {
@@ -668,7 +811,7 @@ function renderContinue() {
   const incoming = incomingHandoff(project.project_id);
   const continueReadiness = continueHereReadiness(incoming);
   const openHandoff = handoffIsOpen(handoff);
-  const targetDevices = devices().filter((device) => device.device_id !== state.bootstrap?.settings?.device_id);
+  const availableTargets = targetDevices();
   const handoffReady = methods().has("handoff.begin");
   const suggestedSession = workspace?.workspace_id ?? checkpoint?.session_id ?? project.project_id;
   const handoffPanelCopy = openHandoff
@@ -724,9 +867,9 @@ function renderContinue() {
         </div>
         <div class="panel-body">
           ${
-            targetDevices.length === 0
+            availableTargets.length === 0
               ? '<div class="empty"><strong>No paired target devices</strong><p>Pair another device before starting a desktop handoff.</p></div>'
-              : `<div class="list">${targetDevices
+              : `<div class="list">${availableTargets
                   .map((device) => {
                     const readiness = targetReadiness(device, { handoffReady, lease, openHandoff });
                     const disabled = !readiness.ready || Boolean(state.operation);
@@ -747,34 +890,55 @@ function renderContinue() {
 }
 
 function renderProjects() {
-  const rows = projects()
-    .map((project) => {
-      const status = projectStatus(project.project_id);
-      const counts = statusCounts(status?.data);
-      return `<tr>
-        <td><div class="cell-main"><strong>${escapeHtml(project.display_name)}</strong><span>${escapeHtml(project.local_path)}</span></div></td>
-        <td>${Object.keys(project.workspaces ?? {}).length}</td>
-        <td>${statusBadge(status?.data, status?.loading, status?.error)}</td>
-        <td>${counts.staged} staged, ${counts.unstaged} modified, ${counts.untracked} untracked</td>
-        <td>
-          <div class="button-row">
-            <button class="button" data-action="select-project" data-project-id="${escapeHtml(project.project_id)}">${icons.play}<span>Continue</span></button>
-            <button class="button icon-only" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" title="Status" aria-label="Status">${icons.refresh}</button>
-          </div>
-        </td>
-      </tr>`;
-    })
-    .join("");
+  const visibleProjects = filteredProjects();
+  const decorated = visibleProjects.map((project) => ({
+    project,
+    attention: projectAttention(project),
+  }));
+  const needsAttention = decorated.filter((entry) => entry.attention.needsAttention);
+  const ready = decorated.filter((entry) => !entry.attention.needsAttention);
+  const rowForProject = ({ project, attention }) => {
+    const status = projectStatus(project.project_id);
+    const counts = statusCounts(status?.data);
+    const session = projectSession(project);
+    const writer = projectWriter(project);
+    const checkpoint = projectCheckpoint(project);
+    const availability = projectTargetAvailability(project);
+    return `<tr>
+      <td><div class="cell-main"><strong>${escapeHtml(project.display_name)}</strong><span>${escapeHtml(project.local_path)}</span></div></td>
+      <td><div class="cell-main"><strong>${escapeHtml(session.label)}</strong><span>${escapeHtml(session.state)} - ${escapeHtml(session.detail)}</span></div></td>
+      <td><div class="cell-main"><strong>${escapeHtml(writer.label)}</strong><span>${escapeHtml(writer.detail)}</span></div></td>
+      <td><div class="cell-main"><strong>${escapeHtml(checkpoint.label)}</strong><span>${escapeHtml(checkpoint.detail)}</span></div></td>
+      <td><div class="cell-main"><strong><span class="badge ${availability.tone}">${escapeHtml(availability.label)}</span></strong><span>${escapeHtml(availability.detail)}</span></div></td>
+      <td><div class="cell-main"><strong><span class="badge ${attention.tone}">${escapeHtml(attention.label)}</span></strong><span>${escapeHtml(attention.detail)}</span><span>${counts.staged} staged, ${counts.unstaged} modified, ${counts.untracked} untracked</span></div></td>
+      <td>
+        <div class="button-row">
+          <button class="button" data-action="select-project" data-project-id="${escapeHtml(project.project_id)}">${icons.play}<span>Details</span></button>
+          <button class="button icon-only" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" title="Status" aria-label="Status">${icons.refresh}</button>
+        </div>
+      </td>
+    </tr>`;
+  };
+  const groupRows = (label, entries) =>
+    entries.length === 0
+      ? ""
+      : `<tr class="table-group-row"><td colspan="7">${escapeHtml(label)} (${entries.length})</td></tr>${entries.map(rowForProject).join("")}`;
+  const rows = `${groupRows("Needs attention", needsAttention)}${groupRows("Ready", ready)}`;
   return `
     <section class="screen">
       ${agentErrors()}
       <div class="panel">
-        <div class="panel-head"><div><h3>Projects</h3><p>${projects().length} registered</p></div></div>
+        <div class="panel-head">
+          <div><h3>Projects</h3><p>${visibleProjects.length} of ${projects().length} registered - ${needsAttention.length} need attention</p></div>
+          <div class="filter-field"><label class="visually-hidden" for="project_filter">Filter projects</label><input id="project_filter" data-project-filter value="${escapeHtml(state.projectFilter)}" placeholder="Filter projects" aria-label="Filter projects" /></div>
+        </div>
         <div class="panel-body">
           ${
             projects().length === 0
               ? '<div class="empty"><strong>No projects</strong><p>Use the local CLI to register a repository.</p></div>'
-              : `<div class="table-scroll" data-scroll-container><table><thead><tr><th>Project</th><th>Workspaces</th><th>Status</th><th>Changes</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
+              : visibleProjects.length === 0
+                ? '<div class="empty"><strong>No matching projects</strong><p>Clear the filter to show all registered projects.</p></div>'
+                : `<div class="table-scroll" data-scroll-container><table class="projects-table"><thead><tr><th>Project</th><th>Active session</th><th>Writer</th><th>Checkpoint</th><th>Target availability</th><th>Needs attention</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
           }
         </div>
       </div>
@@ -993,6 +1157,18 @@ function attachHandlers() {
         toast("Settings saved");
         await refresh();
       }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    });
+  }
+  const projectFilter = app.querySelector("[data-project-filter]");
+  if (projectFilter) {
+    projectFilter.addEventListener("input", () => {
+      state.projectFilter = projectFilter.value;
+      render();
+      const nextFilter = app.querySelector("[data-project-filter]");
+      if (nextFilter) {
+        nextFilter.focus?.();
+        nextFilter.setSelectionRange?.(nextFilter.value.length, nextFilter.value.length);
+      }
     });
   }
 }
