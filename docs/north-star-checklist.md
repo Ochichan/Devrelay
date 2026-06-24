@@ -1133,20 +1133,20 @@ Conventions:
 
 ### M7.3 Continue View
 
-- [ ] Show current device.
-- [ ] Show most likely continuation session.
-- [ ] Show active writer.
-- [ ] Show latest checkpoint age.
-- [ ] Show Git state summary.
-- [ ] Show target readiness.
+- [x] Show current device.
+- [x] Show most likely continuation session.
+- [x] Show active writer.
+- [x] Show latest checkpoint age.
+- [x] Show Git state summary.
+- [x] Show target readiness.
 - [ ] Show environment warmth.
 - [ ] Add primary "Continue here" action.
 - [ ] Add "Continue elsewhere" action.
-- [ ] Add "Checkpoint" action.
+- [x] Add "Checkpoint" action.
 - [ ] Add "Run elsewhere" action placeholder.
-- [ ] Add empty state.
-- [ ] Add error state.
-- [ ] Add loading state.
+- [x] Add empty state.
+- [x] Add error state.
+- [x] Add loading state.
 
 ### M7.4 Projects View
 
@@ -2088,7 +2088,7 @@ Conventions:
 ## Immediate Next 10 Checklist
 
 - [x] Fix README, roadmap, API surface, and M4 gate documentation drift.
-- [ ] Decide macOS/Linux-first dogfood versus Windows IPC first.
+- [x] Decide macOS/Linux-first dogfood versus Windows IPC first.
 - [ ] Finish Windows named pipe transport and pipe ACL if 3-OS UI is required.
 - [x] Implement resource benchmark harness and record idle CPU/RSS plus checkpoint burst results.
 - [x] Add first safety suites: `no_silent_overwrite`, `no_unverified_handoff`, `stale_publish_is_fork`, and `no_plaintext_secret_snapshot`.

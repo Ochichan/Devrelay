@@ -120,6 +120,10 @@ function activity() {
   return state.bootstrap?.activity ?? [];
 }
 
+function snapshots() {
+  return state.bootstrap?.snapshots ?? [];
+}
+
 function selectedProject() {
   const all = projects();
   if (!state.selectedProjectId && all.length > 0) {
@@ -141,6 +145,65 @@ function activeWorkspace(project) {
     entries[0] ??
     null
   );
+}
+
+function currentDevice() {
+  const settings = state.bootstrap?.settings;
+  const runtime = state.bootstrap?.runtime;
+  const deviceId = settings?.device_id;
+  return (
+    devices().find((device) => device.device_id === deviceId) ?? {
+      device_id: deviceId ?? "local",
+      display_name: settings?.device_name ?? "Local device",
+      platform_key: runtime?.platform_key ?? "unknown",
+      architecture: runtime?.architecture ?? "",
+      last_seen_unix_seconds: null,
+    }
+  );
+}
+
+function latestSnapshot(projectId) {
+  return snapshots()
+    .filter((snapshot) => snapshot.project_id === projectId)
+    .sort((left, right) => (right.sequence_number ?? 0) - (left.sequence_number ?? 0))[0];
+}
+
+function recentlySeen(device) {
+  return Math.floor(Date.now() / 1000) - (device?.last_seen_unix_seconds ?? 0) < 300;
+}
+
+function macLinuxTarget(device) {
+  const platform = String(device?.platform_key ?? "");
+  return platform.startsWith("darwin-") || platform.startsWith("linux-gnu-");
+}
+
+function targetReadiness(device, handoffReady) {
+  if (!macLinuxTarget(device)) {
+    return {
+      tone: "warn",
+      label: "Later OS",
+      detail: "Windows and WSL UI wait for named pipe IPC hardening.",
+    };
+  }
+  if (!recentlySeen(device)) {
+    return {
+      tone: "warn",
+      label: "Offline",
+      detail: `Last seen ${formatAge(device.last_seen_unix_seconds)}`,
+    };
+  }
+  if (!handoffReady) {
+    return {
+      tone: "warn",
+      label: "RPC missing",
+      detail: "This agent build does not expose handoff.begin yet.",
+    };
+  }
+  return {
+    tone: "good",
+    label: "Ready",
+    detail: "macOS/Linux target is online and handoff RPC is exposed.",
+  };
 }
 
 function statusCounts(statusResult) {
@@ -397,9 +460,12 @@ function renderContinue() {
   const status = projectStatus(project.project_id);
   const counts = statusCounts(status?.data);
   const workspace = activeWorkspace(project);
+  const device = currentDevice();
   const latest = activity().find((event) => event.project_id === project.project_id);
+  const checkpoint = latestSnapshot(project.project_id);
   const targetDevices = devices().filter((device) => device.device_id !== state.bootstrap?.settings?.device_id);
   const handoffReady = methods().has("handoff.begin");
+  const suggestedSession = workspace?.workspace_id ?? checkpoint?.session_id ?? project.project_id;
   return `
     <section class="screen">
       ${agentErrors()}
@@ -428,9 +494,12 @@ function renderContinue() {
           </div>
         </div>
         <div class="panel flat">
-          <div class="panel-head"><div><h3>Writer</h3><p>${escapeHtml(workspace?.workspace_id ?? "No active workspace recorded")}</p></div></div>
+          <div class="panel-head"><div><h3>Continuation state</h3><p>${escapeHtml(suggestedSession)}</p></div></div>
           <div class="panel-body status-stack">
+            <div class="status-row"><span class="dot good"></span><div><strong>${escapeHtml(device.display_name ?? "Local device")}</strong><span>${escapeHtml(device.platform_key ?? "unknown")} ${escapeHtml(device.architecture ?? "")}</span></div><span class="badge good">This device</span></div>
+            <div class="status-row"><span class="dot ${suggestedSession ? "good" : "warn"}"></span><div><strong>Suggested session</strong><span>${escapeHtml(suggestedSession ?? "No continuation session recorded")}</span></div><span class="badge">${workspace?.state ? escapeHtml(workspace.state) : "selected"}</span></div>
             <div class="status-row"><span class="dot ${workspace?.state === "active" ? "good" : "warn"}"></span><div><strong>${escapeHtml(workspace?.device_id ?? "No device")}</strong><span>${escapeHtml(workspace?.local_path ?? "No workspace path")}</span></div><span class="badge">${escapeHtml(workspace?.state ?? "unknown")}</span></div>
+            <div class="status-row"><span class="dot ${checkpoint ? "good" : "warn"}"></span><div><strong>${checkpoint ? escapeHtml(shortId(checkpoint.snapshot_id)) : "No checkpoint recorded"}</strong><span>${checkpoint ? `${formatAge(checkpoint.created_at_unix_seconds)} - ${escapeHtml(checkpoint.label ?? "unlabeled")}` : "Create a checkpoint before cross-device handoff."}</span></div><span class="badge">${checkpoint ? `#${checkpoint.sequence_number}` : "empty"}</span></div>
             <div class="status-row"><span class="dot ${latest ? "good" : "warn"}"></span><div><strong>${latest ? escapeHtml(latest.summary) : "No activity recorded"}</strong><span>${latest ? formatAge(latest.created_at_unix_seconds) : "waiting for agent events"}</span></div><span class="badge">${latest ? escapeHtml(latest.outcome) : "empty"}</span></div>
           </div>
         </div>
@@ -445,11 +514,11 @@ function renderContinue() {
               ? '<div class="empty"><strong>No paired target devices</strong><p>Pair another device before starting a desktop handoff.</p></div>'
               : `<div class="list">${targetDevices
                   .map((device) => {
-                    const online = Math.floor(Date.now() / 1000) - (device.last_seen_unix_seconds ?? 0) < 300;
+                    const readiness = targetReadiness(device, handoffReady);
                     return `<div class="list-item">
                       <div class="list-item-row">
-                        <div><strong>${escapeHtml(device.display_name)}</strong><span>${escapeHtml(device.platform_key)} ${escapeHtml(device.architecture)}</span></div>
-                        <span class="badge ${online ? "good" : ""}">${formatAge(device.last_seen_unix_seconds)}</span>
+                        <div><strong>${escapeHtml(device.display_name)}</strong><span>${escapeHtml(device.platform_key)} ${escapeHtml(device.architecture)} - ${escapeHtml(readiness.detail)}</span></div>
+                        <span class="badge ${readiness.tone}">${escapeHtml(readiness.label)}</span>
                       </div>
                       <button class="button" disabled>${icons.play}<span>${handoffReady ? "Handoff unavailable in UI adapter" : "Handoff API unavailable"}</span></button>
                     </div>`;

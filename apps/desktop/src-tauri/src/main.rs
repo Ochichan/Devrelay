@@ -5,11 +5,12 @@ use devrelay_core::{
     EventsSubscribeResult, IpcConnection, IpcLimits, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH,
     METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT,
     METHOD_EVENTS_SUBSCRIBE, METHOD_PROJECTS_LIST, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST,
-    METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_STATUS_GET, ProjectRegistryEntry,
-    ProjectsListResult, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcId, RpcRequest, RpcResponse,
-    RpcVersionNegotiationParams, RpcVersionNegotiationResult, RunsListParams, RunsListResult,
-    SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult, StatusGetParams,
-    StatusGetResult, UnixIpcConnection, detect_platform_identity,
+    METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
+    ProjectRegistryEntry, ProjectsListResult, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcId,
+    RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
+    RunsListParams, RunsListResult, SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult,
+    SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot,
+    UnixIpcConnection, detect_platform_identity,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -45,6 +46,7 @@ struct UiBootstrap {
     runtime: RuntimeStatus,
     agent: AgentUiStatus,
     projects: Vec<ProjectRegistryEntry>,
+    snapshots: Vec<StoredSnapshot>,
     devices: Vec<devrelay_core::DeviceIdentity>,
     runs: Vec<devrelay_core::TaskRunRecord>,
     activity: Vec<devrelay_core::AuditEventRecord>,
@@ -180,6 +182,7 @@ fn build_ui_bootstrap() -> UiBootstrap {
     let mut methods = Vec::new();
     let mut health = None;
     let mut projects = Vec::new();
+    let mut snapshots = Vec::new();
     let mut devices = Vec::new();
     let mut runs = Vec::new();
     let mut activity = Vec::new();
@@ -203,6 +206,18 @@ fn build_ui_bootstrap() -> UiBootstrap {
         match call_agent::<_, ProjectsListResult>(&socket, METHOD_PROJECTS_LIST, json!({})) {
             Ok(result) => projects = result.projects,
             Err(err) => errors.push(format!("projects.list: {err}")),
+        }
+        for project in &projects {
+            match call_agent::<_, SnapshotsListResult>(
+                &socket,
+                METHOD_SNAPSHOTS_LIST,
+                SnapshotsListParams {
+                    project: project.project_id.clone(),
+                },
+            ) {
+                Ok(result) => snapshots.extend(result.snapshots),
+                Err(err) => errors.push(format!("snapshots.list {}: {err}", project.project_id)),
+            }
         }
         match call_agent::<_, DevicesListResult>(&socket, METHOD_DEVICES_LIST, json!({})) {
             Ok(result) => devices = result.devices,
@@ -248,6 +263,7 @@ fn build_ui_bootstrap() -> UiBootstrap {
             errors,
         },
         projects,
+        snapshots,
         devices,
         runs,
         activity,
