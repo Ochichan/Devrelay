@@ -263,13 +263,15 @@ pub use policy::{
     normalize_workspace_relative_path,
 };
 pub use remote_rpc::{
+    DEFAULT_REMOTE_SNAPSHOT_LIST_LIMIT, MAX_REMOTE_SNAPSHOT_LIST_LIMIT,
     METHOD_REMOTE_RECOVERY_LIST, METHOD_REMOTE_RECOVERY_OPEN,
     METHOD_REMOTE_SESSIONS_SNAPSHOTS_LIST, METHOD_REMOTE_WORKSPACES_LIST, REMOTE_RPC_METHODS,
     RemoteProjectSummary, RemoteProjectsListResult, RemoteRpcRequestContext,
+    RemoteSessionsSnapshotsListParams, RemoteSessionsSnapshotsListResult, RemoteSnapshotSummary,
     RemoteWorkspaceSummary, RemoteWorkspacesListParams, RemoteWorkspacesListResult,
     is_remote_rpc_method_allowed, preflight_remote_rpc_request, remote_devices_list,
     remote_projects_list, remote_rpc_error_from_devrelay, remote_rpc_negotiate,
-    remote_workspaces_list,
+    remote_sessions_snapshots_list, remote_workspaces_list,
 };
 pub use retention::{
     HandoffSnapshotProtection, PruningDecision, PruningDecisionAction, PruningPlan,

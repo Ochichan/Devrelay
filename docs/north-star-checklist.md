@@ -837,7 +837,7 @@ Conventions:
 - [x] Add remote `devices.list`.
 - [x] Add remote `projects.list`.
 - [x] Add remote `workspaces.list`.
-- [ ] Add remote `sessions.snapshots.list`.
+- [x] Add remote `sessions.snapshots.list`.
 - [ ] Add remote handoff methods.
 - [ ] Add remote recovery methods.
 - [x] Add API auth middleware.

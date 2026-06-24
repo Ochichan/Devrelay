@@ -8,7 +8,7 @@ use crate::{
     AuthenticatedControlPlanePeer, ControlPlaneReplayCache, ControlPlaneRequestEnvelope,
     ControlPlaneTransportPolicy, DevRelayError, DevicesListResult, MetadataDb,
     ProjectRegistryIndex, Result, RpcError, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
-    RpcVersionNegotiationResult, ValidatedDeviceCertificate, WorkspaceState,
+    RpcVersionNegotiationResult, StoredSnapshot, ValidatedDeviceCertificate, WorkspaceState,
     require_authenticated_control_channel, validate_control_request_envelope,
 };
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,8 @@ pub const METHOD_REMOTE_WORKSPACES_LIST: &str = "workspaces.list";
 pub const METHOD_REMOTE_SESSIONS_SNAPSHOTS_LIST: &str = "sessions.snapshots.list";
 pub const METHOD_REMOTE_RECOVERY_LIST: &str = "recovery.list";
 pub const METHOD_REMOTE_RECOVERY_OPEN: &str = "recovery.open";
+pub const DEFAULT_REMOTE_SNAPSHOT_LIST_LIMIT: usize = 100;
+pub const MAX_REMOTE_SNAPSHOT_LIST_LIMIT: usize = 500;
 
 pub const REMOTE_RPC_METHODS: &[&str] = &[
     METHOD_RPC_NEGOTIATE,
@@ -83,6 +85,30 @@ pub struct RemoteWorkspaceSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteWorkspacesListResult {
     pub workspaces: Vec<RemoteWorkspaceSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSessionsSnapshotsListParams {
+    pub project: String,
+    pub session_id: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSnapshotSummary {
+    pub snapshot_id: String,
+    pub project_id: String,
+    pub session_id: Option<String>,
+    pub parent_snapshot_id: Option<String>,
+    pub sequence_number: i64,
+    pub pinned: bool,
+    pub label: Option<String>,
+    pub created_at_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteSessionsSnapshotsListResult {
+    pub snapshots: Vec<RemoteSnapshotSummary>,
 }
 
 pub fn is_remote_rpc_method_allowed(method: &str) -> bool {
@@ -153,6 +179,52 @@ pub fn remote_workspaces_list(
     })
 }
 
+pub fn remote_sessions_snapshots_list(
+    metadata: &MetadataDb,
+    params: RemoteSessionsSnapshotsListParams,
+) -> Result<RemoteSessionsSnapshotsListResult> {
+    let mut snapshots = metadata.list_stored_snapshots(Some(&params.project))?;
+    if let Some(session_id) = params.session_id.as_deref() {
+        snapshots.retain(|snapshot| snapshot.session_id.as_deref() == Some(session_id));
+    }
+    snapshots.sort_by(|left, right| {
+        right
+            .sequence_number
+            .cmp(&left.sequence_number)
+            .then(
+                right
+                    .created_at_unix_seconds
+                    .cmp(&left.created_at_unix_seconds),
+            )
+            .then(right.snapshot_id.cmp(&left.snapshot_id))
+    });
+    snapshots.truncate(
+        params
+            .limit
+            .unwrap_or(DEFAULT_REMOTE_SNAPSHOT_LIST_LIMIT)
+            .min(MAX_REMOTE_SNAPSHOT_LIST_LIMIT),
+    );
+    Ok(RemoteSessionsSnapshotsListResult {
+        snapshots: snapshots
+            .into_iter()
+            .map(remote_snapshot_summary_from)
+            .collect(),
+    })
+}
+
+fn remote_snapshot_summary_from(snapshot: StoredSnapshot) -> RemoteSnapshotSummary {
+    RemoteSnapshotSummary {
+        snapshot_id: snapshot.snapshot_id,
+        project_id: snapshot.project_id,
+        session_id: snapshot.session_id,
+        parent_snapshot_id: snapshot.parent_snapshot_id,
+        sequence_number: snapshot.sequence_number,
+        pinned: snapshot.pinned,
+        label: snapshot.label,
+        created_at_unix_seconds: snapshot.created_at_unix_seconds,
+    }
+}
+
 pub fn preflight_remote_rpc_request(
     peer: Option<ValidatedDeviceCertificate>,
     control_envelope: &ControlPlaneRequestEnvelope,
@@ -197,7 +269,7 @@ mod tests {
     use crate::rpc::{RPC_INVALID_REQUEST, RPC_METHOD_NOT_FOUND};
     use crate::{
         CONTROL_PROTOCOL_VERSION, ControlPlaneTransportSecurity, DeviceIdentity,
-        ProjectRegistryEntry, WorkspaceRegistryEntry,
+        ProjectRegistryEntry, SessionState, SnapshotMetadata, WorkspaceRegistryEntry,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -393,6 +465,106 @@ mod tests {
         assert!(err.to_string().contains("unknown project missing"));
     }
 
+    #[test]
+    fn remote_sessions_snapshots_list_returns_redacted_summaries() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = MetadataDb::open(temp.path().join("metadata.db")).unwrap();
+        let default_session = db
+            .ensure_default_session("project-a", "Demo", None)
+            .unwrap();
+        let fork_session = db
+            .insert_session(
+                "project-a",
+                "Experiment",
+                Some(&default_session.session_id),
+                None,
+                SessionState::Fork,
+            )
+            .unwrap();
+        insert_snapshot(
+            &db,
+            "s1_000000000000000000000001",
+            &default_session.session_id,
+            1,
+            false,
+            Some("default checkpoint"),
+            1_700_000_000,
+        );
+        insert_snapshot(
+            &db,
+            "s1_000000000000000000000002",
+            &fork_session.session_id,
+            2,
+            true,
+            Some("fork checkpoint"),
+            1_700_000_100,
+        );
+
+        let result = remote_sessions_snapshots_list(
+            &db,
+            RemoteSessionsSnapshotsListParams {
+                project: "project-a".to_string(),
+                session_id: Some(fork_session.session_id.clone()),
+                limit: Some(10),
+            },
+        )
+        .unwrap();
+        let encoded = serde_json::to_string(&result).unwrap();
+
+        assert_eq!(result.snapshots.len(), 1);
+        assert_eq!(
+            result.snapshots[0].snapshot_id,
+            "s1_000000000000000000000002"
+        );
+        assert_eq!(
+            result.snapshots[0].session_id.as_deref(),
+            Some(fork_session.session_id.as_str())
+        );
+        assert!(result.snapshots[0].pinned);
+        assert!(!encoded.contains("metadata"));
+        assert!(!encoded.contains("head_oid"));
+        assert!(!encoded.contains("index_tree_oid"));
+    }
+
+    #[test]
+    fn remote_sessions_snapshots_list_limits_newest_first() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = MetadataDb::open(temp.path().join("metadata.db")).unwrap();
+        let session = db
+            .ensure_default_session("project-a", "Demo", None)
+            .unwrap();
+        for sequence in 1..=3 {
+            insert_snapshot(
+                &db,
+                &format!("s1_00000000000000000000000{sequence}"),
+                &session.session_id,
+                sequence,
+                false,
+                None,
+                1_700_000_000 + sequence as u64,
+            );
+        }
+
+        let result = remote_sessions_snapshots_list(
+            &db,
+            RemoteSessionsSnapshotsListParams {
+                project: "project-a".to_string(),
+                session_id: None,
+                limit: Some(2),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            result
+                .snapshots
+                .iter()
+                .map(|snapshot| snapshot.sequence_number)
+                .collect::<Vec<_>>(),
+            vec![3, 2]
+        );
+    }
+
     fn envelope(nonce: &str) -> ControlPlaneRequestEnvelope {
         ControlPlaneRequestEnvelope {
             protocol_version: CONTROL_PROTOCOL_VERSION,
@@ -437,5 +609,53 @@ mod tests {
                 },
             )]),
         }
+    }
+
+    fn insert_snapshot(
+        db: &MetadataDb,
+        snapshot_id: &str,
+        session_id: &str,
+        sequence_number: i64,
+        pinned: bool,
+        label: Option<&str>,
+        created_at_unix_seconds: u64,
+    ) {
+        let mut metadata: SnapshotMetadata =
+            serde_json::from_str(include_str!("../tests/fixtures/snapshot_metadata_v1.json"))
+                .unwrap();
+        metadata.snapshot_id = snapshot_id.to_string();
+        metadata.project_id = "project-a".to_string();
+        metadata.project_name = "Demo".to_string();
+        metadata.session_id = Some(session_id.to_string());
+        metadata.created_at_unix_seconds = created_at_unix_seconds;
+        let metadata_json = serde_json::to_string(&metadata).unwrap();
+        db.connection()
+            .execute(
+                r#"
+INSERT INTO snapshots (
+    snapshot_id,
+    project_id,
+    session_id,
+    parent_snapshot_id,
+    sequence_number,
+    pinned,
+    label,
+    metadata_json,
+    created_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+"#,
+                (
+                    snapshot_id,
+                    "project-a",
+                    session_id,
+                    Option::<&str>::None,
+                    sequence_number,
+                    pinned,
+                    label,
+                    metadata_json.as_str(),
+                    created_at_unix_seconds as i64,
+                ),
+            )
+            .unwrap();
     }
 }

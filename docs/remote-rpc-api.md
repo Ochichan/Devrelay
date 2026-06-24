@@ -3,8 +3,8 @@
 Last updated: 2026-06-24
 
 Status: schema plan, core pre-dispatch policy, and core read handlers for
-`devices.list`, `projects.list`, and `workspaces.list` accepted; server not
-implemented.
+`devices.list`, `projects.list`, `workspaces.list`, and
+`sessions.snapshots.list` accepted; server not implemented.
 
 ADR 0005 selects JSON-RPC 2.0 over mTLS for the remote Control API. This
 document defines the first remote method allowlist and schema rules required
@@ -15,9 +15,10 @@ peer requirement, control-envelope validation, request ID requirement, and JSON
 error mapping. A remote socket server still has to call that helper before
 method dispatch.
 
-The core read handlers for `devices.list`, `projects.list`, and
-`workspaces.list` return remote-safe data only. Project and workspace responses
-do not serialize local filesystem paths.
+The core read handlers for `devices.list`, `projects.list`,
+`workspaces.list`, and `sessions.snapshots.list` return remote-safe data only.
+Project and workspace responses do not serialize local filesystem paths, and
+snapshot list responses do not serialize full snapshot metadata.
 
 ## Transport And Auth
 
@@ -208,6 +209,9 @@ Result:
 
 The control method lists metadata. Git object, CAS, and sidecar transfer remain
 data-plane operations.
+
+When `limit` is omitted, the core handler returns up to 100 snapshots. Explicit
+limits are capped at 500 and applied after sorting newest sequence first.
 
 ## Handoffs
 
