@@ -1,6 +1,6 @@
 # DevRelay API Surface
 
-Last reviewed: 2026-06-23
+Last reviewed: 2026-06-24
 
 This document records which DevRelay interfaces are stable enough for other
 repo components to depend on. It intentionally separates product contracts from
@@ -70,6 +70,19 @@ The project must choose one of these before M4 can close:
 Until that decision is complete, do not claim that a remote Control API rejects
 unauthenticated requests. The mTLS transport primitives reject invalid peers,
 but that is not the same as an implemented API boundary.
+
+## Local Agent Handoff RPC
+
+The local agent JSON-RPC surface now exposes the handoff state-machine methods
+`handoffs.list`, `handoff.begin`, `handoff.target.verify`,
+`handoff.source.ready`, `handoff.commit`, `handoff.abort`, and
+`handoff.recover`.
+
+These methods are local metadata-control commands. They do not implement the
+remote M4.5 Control API, advertise file transfer completion, or allow UI clients
+to decide handoff success before target apply and verification have completed.
+`handoff.begin` requires a registered target device and uses the agent's local
+device identity as the source device.
 
 ## UI Boundary
 

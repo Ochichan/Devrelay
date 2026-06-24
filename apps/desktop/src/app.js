@@ -200,9 +200,9 @@ function targetReadiness(device, handoffReady) {
     };
   }
   return {
-    tone: "good",
-    label: "Ready",
-    detail: "macOS/Linux target is online and handoff RPC is exposed.",
+    tone: "warn",
+    label: "UI pending",
+    detail: "Metadata handoff RPC exists; target apply wiring is disabled.",
   };
 }
 
@@ -506,7 +506,7 @@ function renderContinue() {
       </div>
       <div class="panel">
         <div class="panel-head">
-          <div><h3>Continue on another device</h3><p>${handoffReady ? "Handoff RPC available" : "Handoff RPC is not exposed by this agent build"}</p></div>
+          <div><h3>Continue on another device</h3><p>${handoffReady ? "Metadata handoff RPC available; target apply wiring is disabled" : "Handoff RPC is not exposed by this agent build"}</p></div>
         </div>
         <div class="panel-body">
           ${
@@ -520,7 +520,7 @@ function renderContinue() {
                         <div><strong>${escapeHtml(device.display_name)}</strong><span>${escapeHtml(device.platform_key)} ${escapeHtml(device.architecture)} - ${escapeHtml(readiness.detail)}</span></div>
                         <span class="badge ${readiness.tone}">${escapeHtml(readiness.label)}</span>
                       </div>
-                      <button class="button" disabled>${icons.play}<span>${handoffReady ? "Handoff unavailable in UI adapter" : "Handoff API unavailable"}</span></button>
+                      <button class="button" disabled>${icons.play}<span>${handoffReady ? "UI adapter pending" : "Handoff API unavailable"}</span></button>
                     </div>`;
                   })
                   .join("")}</div>`

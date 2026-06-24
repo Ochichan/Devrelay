@@ -6,8 +6,10 @@ use devrelay_core::{
     ApplySnapshotResult, AuditEventInput, AuditEventType, AuditOutcome, CheckpointCreateParams,
     CheckpointCreateResult, DevicesListResult, DiagnosticsExportParams, DiagnosticsExportResult,
     EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage, EventsSubscribeParams,
-    EventsSubscribeResult, GitRepo, IpcConnection, IpcLimits, IpcTransport, Manifest,
-    ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
+    EventsSubscribeResult, GitRepo, HandoffBeginParams, HandoffCommitParams, HandoffIdParams,
+    HandoffMutationResult, HandoffRecord, HandoffRecoverParams, HandoffRecoverResult,
+    HandoffStatus, HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, IpcTransport,
+    Manifest, ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
     ProjectsRemoveParams, ProjectsShowParams, RPC_PROTOCOL_VERSION, RecoverListParams,
     RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
     RpcError, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
@@ -22,11 +24,13 @@ use devrelay_core::{
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, LogRedactor,
     METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
-    METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_PROJECTS_ADD,
-    METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST,
-    METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST,
-    METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
-    MetadataDb, StructuredLogLevel, current_platform_key,
+    METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT,
+    METHOD_HANDOFF_BEGIN, METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_RECOVER,
+    METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY, METHOD_HANDOFFS_LIST,
+    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
+    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE,
+    METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST,
+    METHOD_STATUS_GET, MetadataDb, StructuredLogLevel, current_platform_key,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -69,6 +73,11 @@ enum LogLevel {
     Debug,
     Trace,
 }
+
+#[cfg(unix)]
+const DEFAULT_HANDOFF_TTL_SECONDS: u64 = 10 * 60;
+#[cfg(unix)]
+const MAX_HANDOFF_TTL_SECONDS: u64 = 24 * 60 * 60;
 
 impl LogLevel {
     fn structured(self) -> StructuredLogLevel {
@@ -207,6 +216,13 @@ impl AgentState {
             METHOD_CHECKPOINT_CREATE.to_string(),
             METHOD_SNAPSHOTS_LIST.to_string(),
             METHOD_APPLY_SNAPSHOT.to_string(),
+            METHOD_HANDOFFS_LIST.to_string(),
+            METHOD_HANDOFF_BEGIN.to_string(),
+            METHOD_HANDOFF_TARGET_VERIFY.to_string(),
+            METHOD_HANDOFF_SOURCE_READY.to_string(),
+            METHOD_HANDOFF_COMMIT.to_string(),
+            METHOD_HANDOFF_ABORT.to_string(),
+            METHOD_HANDOFF_RECOVER.to_string(),
             METHOD_RECOVER_LIST.to_string(),
             METHOD_RECOVER_SHOW.to_string(),
             METHOD_RECOVER_OPEN.to_string(),
@@ -663,6 +679,13 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_CHECKPOINT_CREATE => handle_checkpoint_create(id, request.params, state),
         METHOD_SNAPSHOTS_LIST => handle_snapshots_list(id, request.params, state),
         METHOD_APPLY_SNAPSHOT => handle_apply_snapshot(id, request.params, state),
+        METHOD_HANDOFFS_LIST => handle_handoffs_list(id, request.params, state),
+        METHOD_HANDOFF_BEGIN => handle_handoff_begin(id, request.params, state),
+        METHOD_HANDOFF_TARGET_VERIFY => handle_handoff_target_verify(id, request.params, state),
+        METHOD_HANDOFF_SOURCE_READY => handle_handoff_source_ready(id, request.params, state),
+        METHOD_HANDOFF_COMMIT => handle_handoff_commit(id, request.params, state),
+        METHOD_HANDOFF_ABORT => handle_handoff_abort(id, request.params, state),
+        METHOD_HANDOFF_RECOVER => handle_handoff_recover(id, request.params, state),
         METHOD_RECOVER_LIST => handle_recover_list(id, request.params, state),
         METHOD_RECOVER_SHOW => handle_recover_show(id, request.params, state),
         METHOD_RECOVER_OPEN => handle_recover_open(id, request.params, state),
@@ -875,6 +898,293 @@ fn handle_apply_snapshot(
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }
+}
+
+#[cfg(unix)]
+fn handle_handoffs_list(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: HandoffsListParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let project_ids = match handoff_project_ids_for_query(state, params.project.as_deref()) {
+        Ok(project_ids) => project_ids,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let mut handoffs = Vec::new();
+    for project_id in project_ids {
+        let db = match open_registered_project_db(state, &project_id) {
+            Ok(db) => db,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+        let records = match db.list_handoffs(Some(&project_id)) {
+            Ok(records) => records,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+        for record in records {
+            let journal = if params.include_journal {
+                match db.list_handoff_journal(&record.handoff_id) {
+                    Ok(journal) => journal,
+                    Err(err) => {
+                        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+            handoffs.push(HandoffStatus { record, journal });
+        }
+    }
+
+    match serde_json::to_value(HandoffsListResult { handoffs }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_handoff_begin(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: HandoffBeginParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let source_device_id = match state.config.lock() {
+        Ok(config) => config.device_id.clone(),
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let ttl_seconds = params
+        .ttl_seconds
+        .unwrap_or(DEFAULT_HANDOFF_TTL_SECONDS)
+        .clamp(1, MAX_HANDOFF_TTL_SECONDS);
+    if let Err(err) = ensure_known_target_device(state, &params.target_device_id) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    let mut db = match open_registered_project_db(state, &params.project) {
+        Ok(db) => db,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let handoff = match db.begin_handoff(
+        &params.lease_id,
+        &source_device_id,
+        &params.target_device_id,
+        &params.source_generation,
+        ttl_seconds,
+    ) {
+        Ok(handoff) => handoff,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let result = match handoff_mutation_result(&db, handoff) {
+        Ok(result) => result,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_handoff_target_verify(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    handle_handoff_id_mutation(id, params, state, |db, handoff_id| {
+        db.mark_handoff_target_verified(handoff_id)
+    })
+}
+
+#[cfg(unix)]
+fn handle_handoff_source_ready(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    handle_handoff_id_mutation(id, params, state, |db, handoff_id| {
+        db.mark_handoff_source_ready(handoff_id)
+    })
+}
+
+#[cfg(unix)]
+fn handle_handoff_abort(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    handle_handoff_id_mutation(id, params, state, |db, handoff_id| {
+        db.abort_handoff(handoff_id)
+    })
+}
+
+#[cfg(unix)]
+fn handle_handoff_commit(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: HandoffCommitParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let mut db = match open_registered_project_db(state, &params.project) {
+        Ok(db) => db,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let handoff = match db.commit_handoff(
+        &params.handoff_id,
+        &params.observed_source_generation,
+        unix_seconds(),
+    ) {
+        Ok(handoff) => handoff,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let result = match handoff_mutation_result(&db, handoff) {
+        Ok(result) => result,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_handoff_recover(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: HandoffRecoverParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let mut db = match open_registered_project_db(state, &params.project) {
+        Ok(db) => db,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let outcome = match db.recover_handoff(
+        &params.handoff_id,
+        &params.observed_source_generation,
+        unix_seconds(),
+    ) {
+        Ok(outcome) => outcome,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let handoff = match db.get_handoff(&params.handoff_id) {
+        Ok(Some(handoff)) => handoff,
+        Ok(None) => {
+            return RpcResponse::error(
+                Some(id),
+                RpcError::internal(format!("handoff {} disappeared", params.handoff_id)),
+            );
+        }
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let journal = match db.list_handoff_journal(&params.handoff_id) {
+        Ok(journal) => journal,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let result = HandoffRecoverResult {
+        outcome,
+        handoff,
+        journal,
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_handoff_id_mutation(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+    mutate: impl FnOnce(&mut MetadataDb, &str) -> devrelay_core::Result<HandoffRecord>,
+) -> RpcResponse {
+    let params: HandoffIdParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let mut db = match open_registered_project_db(state, &params.project) {
+        Ok(db) => db,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let handoff = match mutate(&mut db, &params.handoff_id) {
+        Ok(handoff) => handoff,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let result = match handoff_mutation_result(&db, handoff) {
+        Ok(result) => result,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handoff_project_ids_for_query(
+    state: &AgentState,
+    project: Option<&str>,
+) -> anyhow::Result<Vec<String>> {
+    let config = state
+        .config
+        .lock()
+        .map_err(|err| anyhow::anyhow!("config lock poisoned: {err}"))?;
+    if let Some(project) = project {
+        if !config.project_registry.projects.contains_key(project) {
+            anyhow::bail!("unknown project {project}");
+        }
+        return Ok(vec![project.to_string()]);
+    }
+    Ok(config.project_registry.projects.keys().cloned().collect())
+}
+
+#[cfg(unix)]
+fn open_registered_project_db(state: &AgentState, project_id: &str) -> anyhow::Result<MetadataDb> {
+    let is_registered = state
+        .config
+        .lock()
+        .map_err(|err| anyhow::anyhow!("config lock poisoned: {err}"))?
+        .project_registry
+        .projects
+        .contains_key(project_id);
+    if !is_registered {
+        anyhow::bail!("unknown project {project_id}");
+    }
+    Ok(MetadataDb::open(state.home.metadata_db_path(project_id))?)
+}
+
+#[cfg(unix)]
+fn ensure_known_target_device(state: &AgentState, target_device_id: &str) -> anyhow::Result<()> {
+    let db = MetadataDb::open(&state.database_path)?;
+    if db.get_device(target_device_id)?.is_none() {
+        anyhow::bail!("unknown target device {target_device_id}");
+    }
+    db.ensure_device_not_revoked(target_device_id, "begin handoff")?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn handoff_mutation_result(
+    db: &MetadataDb,
+    handoff: HandoffRecord,
+) -> anyhow::Result<HandoffMutationResult> {
+    let journal = db.list_handoff_journal(&handoff.handoff_id)?;
+    Ok(HandoffMutationResult { handoff, journal })
 }
 
 #[cfg(unix)]

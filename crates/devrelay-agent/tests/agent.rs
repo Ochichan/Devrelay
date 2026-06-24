@@ -1072,6 +1072,8 @@ INSERT INTO task_runs (
         "runs.list",
         "settings.get",
         "settings.update",
+        "handoffs.list",
+        "handoff.begin",
     ] {
         assert!(
             negotiate["result"]["methods"]
@@ -1152,6 +1154,213 @@ INSERT INTO task_runs (
     assert_eq!(updated["result"]["settings"]["resource_profile"], "eco");
     assert_eq!(updated["result"]["settings"]["mdns_enabled"], false);
     assert_eq!(updated["result"]["settings"]["editor_command"], "system");
+
+    running.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn foreground_serves_handoff_state_machine_rpc_methods() {
+    use devrelay_core::{
+        DeviceIdentity, IpcLimits, LeaseRecord, LeaseState, MetadataDb, UnixIpcConnection,
+    };
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-handoff-rpc-test");
+    let repo = running.root.join("handoff-project");
+    create_manifest_repo(&repo, "24681357", "Handoff Project");
+
+    let added = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "handoff-project-add",
+            "method": "projects.add",
+            "params": {
+                "path": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+    assert_eq!(added["result"]["project"]["project_id"], "24681357");
+
+    let settings = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "handoff-settings",
+            "method": "settings.get"
+        }),
+    );
+    let source_device_id = settings["result"]["device_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let global_db = MetadataDb::open(running.root.join("agent.sqlite")).unwrap();
+    global_db
+        .upsert_device_identity(&DeviceIdentity {
+            device_id: "device-target".to_string(),
+            display_name: "Target Device".to_string(),
+            platform_key: "linux-gnu-x86_64".to_string(),
+            architecture: "x86_64".to_string(),
+            capabilities_json: "{}".to_string(),
+            paired_at_unix_seconds: Some(100),
+            last_seen_unix_seconds: 200,
+        })
+        .unwrap();
+
+    let project_db =
+        MetadataDb::open(running.root.join("projects/24681357/metadata.sqlite")).unwrap();
+    let session = project_db
+        .list_sessions(Some("24681357"))
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    project_db
+        .upsert_lease(&LeaseRecord {
+            lease_id: "lease-handoff-rpc".to_string(),
+            project_id: "24681357".to_string(),
+            session_id: session.session_id,
+            state: LeaseState::Active,
+            epoch: 7,
+            holder_device_id: Some(source_device_id.clone()),
+            latest_snapshot_id: None,
+            handoff_id: None,
+        })
+        .unwrap();
+
+    let negotiate = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "handoff-negotiate",
+            "method": "rpc.negotiate",
+            "params": { "client_protocol_version": 1 }
+        }),
+    );
+    for method in [
+        "handoffs.list",
+        "handoff.begin",
+        "handoff.target.verify",
+        "handoff.source.ready",
+        "handoff.commit",
+        "handoff.abort",
+        "handoff.recover",
+    ] {
+        assert!(
+            negotiate["result"]["methods"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == method),
+            "missing method {method}"
+        );
+    }
+
+    let begin = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "handoff-begin",
+            "method": "handoff.begin",
+            "params": {
+                "project": "24681357",
+                "lease_id": "lease-handoff-rpc",
+                "target_device_id": "device-target",
+                "source_generation": "gen-rpc",
+                "ttl_seconds": 300
+            }
+        }),
+    );
+    assert_eq!(begin["result"]["handoff"]["state"], "target-prepare");
+    assert_eq!(
+        begin["result"]["handoff"]["source_device_id"],
+        source_device_id
+    );
+    let handoff_id = begin["result"]["handoff"]["handoff_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        begin["result"]["journal"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["phase"] == "begin")
+    );
+
+    let listed = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "handoffs-list",
+            "method": "handoffs.list",
+            "params": { "project": "24681357" }
+        }),
+    );
+    assert_eq!(
+        listed["result"]["handoffs"][0]["record"]["handoff_id"],
+        handoff_id
+    );
+    assert!(
+        listed["result"]["handoffs"][0]["journal"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["phase"] == "target-prepare")
+    );
+
+    let target_verified = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "handoff-target-verify",
+            "method": "handoff.target.verify",
+            "params": {
+                "project": "24681357",
+                "handoff_id": handoff_id
+            }
+        }),
+    );
+    assert_eq!(
+        target_verified["result"]["handoff"]["state"],
+        "target-verified"
+    );
+
+    let source_ready = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "handoff-source-ready",
+            "method": "handoff.source.ready",
+            "params": {
+                "project": "24681357",
+                "handoff_id": handoff_id
+            }
+        }),
+    );
+    assert_eq!(source_ready["result"]["handoff"]["state"], "source-ready");
+
+    let committed = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "handoff-commit",
+            "method": "handoff.commit",
+            "params": {
+                "project": "24681357",
+                "handoff_id": handoff_id,
+                "observed_source_generation": "gen-rpc"
+            }
+        }),
+    );
+    assert_eq!(committed["result"]["handoff"]["state"], "committed");
+
+    let lease = project_db.get_lease("lease-handoff-rpc").unwrap().unwrap();
+    assert_eq!(lease.holder_device_id.as_deref(), Some("device-target"));
+    assert_eq!(lease.epoch, 8);
+    assert_eq!(lease.handoff_id, None);
 
     running.stop();
 }

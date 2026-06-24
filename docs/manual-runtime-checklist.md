@@ -295,8 +295,8 @@ Pass:
 - [ ] Modified/staged/untracked/conflict counts match `git status`.
 - [ ] If status fails, the error is visible and the rest of the app remains
   usable.
-- [ ] "Continue on another device" does not fake a handoff when no handoff RPC
-  exists.
+- [ ] "Continue on another device" does not fake a handoff before the UI has
+  target apply and verification wiring.
 - [ ] Unsupported handoff state is explicit and disabled.
 
 ### manual/runtime/ui-003 - Project Status Action
@@ -571,10 +571,10 @@ Pass:
 
 ### manual/runtime/safety-003 - Inactive Or Unsupported Remote Work
 
-Until real handoff RPC exists:
+Until real handoff UI adapter and target apply wiring exist:
 
 - [ ] Remote continuation controls remain disabled.
-- [ ] UI explains that handoff API is unavailable.
+- [ ] UI explains that remote handoff is not available from this build.
 - [ ] No target device is marked as writer because of a local UI guess.
 - [ ] No lease, epoch, Git OID, CAS, or certificate details are shown in the
   first-slice UI.
@@ -629,4 +629,3 @@ The desktop runtime is acceptable for local dogfood only when:
 - [ ] Unsupported handoff behavior is explicit and disabled.
 - [ ] No fake prototype data appears.
 - [ ] No data-loss-looking behavior occurs in the disposable repository.
-

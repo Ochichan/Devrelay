@@ -525,6 +525,9 @@ Conventions:
 - [x] Add `snapshots.list`.
 - [x] Add `recover.open`.
 - [x] Add `apply.snapshot`.
+- [x] Add `handoffs.list`.
+- [x] Add `handoff.begin`.
+- [x] Add handoff target-verified/source-ready/commit/abort/recover RPC methods.
 - [x] Add `diagnostics.export`.
 - [x] Add RPC schema tests.
 - [x] Add backwards compatibility policy.

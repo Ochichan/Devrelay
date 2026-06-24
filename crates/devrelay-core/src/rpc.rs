@@ -13,9 +13,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
-    AnchorMode, ApplyPlan, AuditEventRecord, ClassifiedPath, DeviceIdentity, ProjectRegistryEntry,
-    ResourceProfile, StatusEntry, StatusSummary, StoredSnapshot, TaskRunRecord,
-    VerificationDetails, WorkspaceRegistryEntry,
+    AnchorMode, ApplyPlan, AuditEventRecord, ClassifiedPath, DeviceIdentity, HandoffJournalRecord,
+    HandoffRecord, HandoffRecoveryOutcome, ProjectRegistryEntry, ResourceProfile, StatusEntry,
+    StatusSummary, StoredSnapshot, TaskRunRecord, VerificationDetails, WorkspaceRegistryEntry,
 };
 #[cfg(unix)]
 use crate::{DevRelayError, IpcConnection, IpcLimits, Result, UnixIpcConnection};
@@ -33,6 +33,13 @@ pub const METHOD_PROJECTS_REMOVE: &str = "projects.remove";
 pub const METHOD_CHECKPOINT_CREATE: &str = "checkpoint.create";
 pub const METHOD_SNAPSHOTS_LIST: &str = "snapshots.list";
 pub const METHOD_APPLY_SNAPSHOT: &str = "apply.snapshot";
+pub const METHOD_HANDOFFS_LIST: &str = "handoffs.list";
+pub const METHOD_HANDOFF_BEGIN: &str = "handoff.begin";
+pub const METHOD_HANDOFF_TARGET_VERIFY: &str = "handoff.target.verify";
+pub const METHOD_HANDOFF_SOURCE_READY: &str = "handoff.source.ready";
+pub const METHOD_HANDOFF_COMMIT: &str = "handoff.commit";
+pub const METHOD_HANDOFF_ABORT: &str = "handoff.abort";
+pub const METHOD_HANDOFF_RECOVER: &str = "handoff.recover";
 pub const METHOD_RECOVER_LIST: &str = "recover.list";
 pub const METHOD_RECOVER_SHOW: &str = "recover.show";
 pub const METHOD_RECOVER_OPEN: &str = "recover.open";
@@ -50,6 +57,10 @@ pub const RPC_METHOD_NOT_FOUND: i64 = -32601;
 pub const RPC_INVALID_PARAMS: i64 = -32602;
 pub const RPC_INTERNAL_ERROR: i64 = -32603;
 pub const RPC_VERSION_MISMATCH: i64 = -32001;
+
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -273,6 +284,66 @@ pub struct ApplySnapshotResult {
     pub snapshot: StoredSnapshot,
     pub plan: Option<ApplyPlan>,
     pub verification: Option<VerificationDetails>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffsListParams {
+    pub project: Option<String>,
+    #[serde(default = "default_true")]
+    pub include_journal: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffStatus {
+    pub record: HandoffRecord,
+    pub journal: Vec<HandoffJournalRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffsListResult {
+    pub handoffs: Vec<HandoffStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffBeginParams {
+    pub project: String,
+    pub lease_id: String,
+    pub target_device_id: String,
+    pub source_generation: String,
+    pub ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffIdParams {
+    pub project: String,
+    pub handoff_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffCommitParams {
+    pub project: String,
+    pub handoff_id: String,
+    pub observed_source_generation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffRecoverParams {
+    pub project: String,
+    pub handoff_id: String,
+    pub observed_source_generation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffMutationResult {
+    pub handoff: HandoffRecord,
+    pub journal: Vec<HandoffJournalRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffRecoverResult {
+    pub outcome: HandoffRecoveryOutcome,
+    pub handoff: HandoffRecord,
+    pub journal: Vec<HandoffJournalRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -596,6 +667,51 @@ mod tests {
 
         assert!(!params.dry_run);
         assert_eq!(params.project, "12345678");
+    }
+
+    #[test]
+    fn handoff_params_use_stable_field_names_and_defaults() {
+        let list: HandoffsListParams = serde_json::from_value(json!({
+            "project": "12345678"
+        }))
+        .unwrap();
+        assert_eq!(list.project.as_deref(), Some("12345678"));
+        assert!(list.include_journal);
+
+        let begin: HandoffBeginParams = serde_json::from_value(json!({
+            "project": "12345678",
+            "lease_id": "lease-1",
+            "target_device_id": "device-b",
+            "source_generation": "gen-1",
+            "ttl_seconds": 300
+        }))
+        .unwrap();
+        assert_eq!(begin.lease_id, "lease-1");
+        assert_eq!(begin.target_device_id, "device-b");
+        assert_eq!(begin.ttl_seconds, Some(300));
+
+        let transition: HandoffIdParams = serde_json::from_value(json!({
+            "project": "12345678",
+            "handoff_id": "ho_abc"
+        }))
+        .unwrap();
+        assert_eq!(transition.handoff_id, "ho_abc");
+
+        let commit: HandoffCommitParams = serde_json::from_value(json!({
+            "project": "12345678",
+            "handoff_id": "ho_abc",
+            "observed_source_generation": "gen-1"
+        }))
+        .unwrap();
+        assert_eq!(commit.observed_source_generation, "gen-1");
+
+        let recover: HandoffRecoverParams = serde_json::from_value(json!({
+            "project": "12345678",
+            "handoff_id": "ho_abc",
+            "observed_source_generation": "gen-1"
+        }))
+        .unwrap();
+        assert_eq!(recover.handoff_id, "ho_abc");
     }
 
     #[test]
