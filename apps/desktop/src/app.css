@@ -178,8 +178,13 @@ select:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.agent-pill {
+.brand-status {
   margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.agent-pill {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -731,6 +736,28 @@ code,
   background: color-mix(in srgb, var(--danger) 9%, var(--surface));
   overflow: auto;
   scrollbar-gutter: stable;
+}
+
+.warning-box {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--line));
+  border-radius: var(--radius);
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 9%, var(--surface));
+  overflow-wrap: anywhere;
+}
+
+.warning-box strong {
+  color: var(--text);
+}
+
+.warning-box span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .form-grid {

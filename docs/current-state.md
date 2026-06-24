@@ -26,7 +26,7 @@ or anxiety around dirty target preservation.
 | M4 Pairing, mTLS, revocation | Mostly complete | Identity, pairing, discovery, mTLS transport, revocation, and audit are present. M4.5 Control API remains unimplemented, so the M4 exit gate is open. |
 | M5 Git object and CAS data plane | Complete | Per-project bare repo strategy, route selection, CAS, sidecars, materialization, and partial upload safety are implemented. |
 | M6 Background protection | Nearly complete | Debounce, checkpoint, resource policy, retention, quota, and crash journal exist. Initial macOS resource smoke evidence exists; Linux/Windows watcher coverage and representative resource evidence remain open. |
-| M7 Desktop UX | Started | A Tauri shell exists with agent-backed bootstrap, project status, checkpoint, diagnostics, settings, and overflow-tested screens. Real cross-device handoff UI remains open. |
+| M7 Desktop UX | Started | A Tauri shell exists with agent-backed bootstrap, event subscription status/gap recovery, project status, checkpoint, diagnostics, settings, and overflow-tested screens. Real cross-device handoff UI remains open. |
 | M8 Editor context | Not started | Keep out of the first UI slice. |
 | M9 Environment hydration | Partial | Trust hashes, profile selection, Nix, and Dev Container paths exist. Native bootstrap, secrets, hydration state, and doctor remain open. |
 | M10 Compute fabric | Not started | Keep out of the first UI slice. |

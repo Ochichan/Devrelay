@@ -99,6 +99,12 @@ Manual runtime checks for the current desktop shell live in
 [manual-runtime-checklist.md](manual-runtime-checklist.md). Run them before
 claiming a build is ready for dogfood.
 
+`npm run check:ui --prefix apps/desktop` also runs a lightweight frontend VM
+smoke test for `devrelay-agent-connected`, `devrelay-agent-event`,
+`devrelay-agent-gap`, and `devrelay-agent-disconnected`. This guards the
+desktop event bridge state, stale-data indicator, and bootstrap refresh path
+without launching Tauri.
+
 ## Local Commands
 
 ```bash

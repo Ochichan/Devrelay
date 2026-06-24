@@ -17,6 +17,17 @@ const state = {
   bootstrap: null,
   projectStatus: new Map(),
   runtimeError: null,
+  eventBridge: {
+    connected: false,
+    refreshing: false,
+    stale: false,
+    lastConnectedAt: null,
+    lastDisconnectedAt: null,
+    lastEvent: null,
+    lastGap: null,
+    lastError: null,
+    subscription: null,
+  },
   toasts: [],
 };
 
@@ -65,6 +76,15 @@ function formatAge(seconds) {
   if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
   if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
   return `${Math.floor(delta / 86400)}d ago`;
+}
+
+function formatClock(milliseconds) {
+  if (!milliseconds) return "never";
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(milliseconds));
 }
 
 function shortId(value) {
@@ -142,6 +162,28 @@ function statusBadge(statusResult, loading, error) {
     : '<span class="badge warn">Local changes</span>';
 }
 
+function sequenceLabel(value) {
+  return value === null || value === undefined ? "none" : `#${value}`;
+}
+
+function eventBridgeStatus() {
+  const bridge = state.eventBridge;
+  if (bridge.stale) return { tone: "warn", label: "Event gap", detail: "Refreshing from agent state" };
+  if (bridge.connected) {
+    return {
+      tone: "good",
+      label: bridge.refreshing ? "Events syncing" : "Events live",
+      detail: bridge.lastEvent
+        ? `${bridge.lastEvent.type} ${sequenceLabel(bridge.lastEvent.sequence)}`
+        : `Subscribed at ${formatClock(bridge.lastConnectedAt)}`,
+    };
+  }
+  if (bridge.lastError) {
+    return { tone: "bad", label: "Events reconnecting", detail: bridge.lastError };
+  }
+  return { tone: "warn", label: "Events connecting", detail: "Waiting for the local agent stream" };
+}
+
 function currentTitle() {
   const view = views.find(([id]) => id === state.view);
   if (!view) return "DevRelay";
@@ -176,11 +218,13 @@ async function refresh() {
     render();
     const project = selectedProject();
     if (project) await refreshProjectStatus(project.project_id, false);
+    return true;
   } catch (error) {
     state.bootstrap = null;
     state.runtimeError = String(error?.message ?? error);
     state.loading = false;
     render();
+    return false;
   }
 }
 
@@ -220,6 +264,7 @@ function shell() {
   const agent = bootstrap?.agent;
   const settings = bootstrap?.settings;
   const connected = Boolean(agent?.connected);
+  const eventStatus = eventBridgeStatus();
   const projectCount = projects().length;
   return `
     <div class="app-shell">
@@ -232,9 +277,15 @@ function shell() {
               <p>${escapeHtml(settings?.fabric_name ?? "Local fabric")}</p>
             </div>
           </div>
-          <div class="agent-pill">
-            <span class="dot ${connected ? "good" : state.runtimeError ? "bad" : "warn"}"></span>
-            <span>${connected ? "Agent connected" : state.runtimeError ? "Runtime unavailable" : "Agent unavailable"}</span>
+          <div class="brand-status">
+            <div class="agent-pill">
+              <span class="dot ${connected ? "good" : state.runtimeError ? "bad" : "warn"}"></span>
+              <span>${connected ? "Agent connected" : state.runtimeError ? "Runtime unavailable" : "Agent unavailable"}</span>
+            </div>
+            <div class="agent-pill" title="${escapeHtml(eventStatus.detail)}">
+              <span class="dot ${eventStatus.tone}"></span>
+              <span>${escapeHtml(eventStatus.label)}</span>
+            </div>
           </div>
         </div>
         <div class="sidebar-scroll" data-scroll-container>
@@ -549,6 +600,7 @@ function renderSettings() {
           <div class="panel-head"><div><h3>Runtime</h3><p>${escapeHtml(state.bootstrap?.runtime?.platform_key)} ${escapeHtml(state.bootstrap?.runtime?.architecture)}</p></div></div>
           <div class="panel-body status-stack">
             <div class="status-row"><span class="dot ${state.bootstrap?.runtime?.agent_socket_exists ? "good" : "bad"}"></span><div><strong>Agent socket</strong><span>${escapeHtml(state.bootstrap?.runtime?.agent_socket_path)}</span></div><span class="badge">${state.bootstrap?.runtime?.agent_socket_exists ? "Found" : "Missing"}</span></div>
+            ${renderEventBridgeRow()}
             <div class="status-row"><span class="dot good"></span><div><strong>Anchor mode</strong><span>${escapeHtml(settings.anchor_mode)}</span></div><span class="badge">${escapeHtml(settings.resource_profile)}</span></div>
             <div class="status-row"><span class="dot good"></span><div><strong>Projects</strong><span>${settings.project_count}</span></div><span class="badge">${escapeHtml(settings.device_name)}</span></div>
           </div>
@@ -559,9 +611,34 @@ function renderSettings() {
 }
 
 function agentErrors() {
+  const bridge = state.eventBridge;
+  const notices = [];
+  if (bridge.stale && bridge.lastGap) {
+    notices.push(
+      `<div class="warning-box"><strong>Event stream gap</strong><span>Expected after ${escapeHtml(sequenceLabel(bridge.lastGap.expected_after))}, received ${escapeHtml(sequenceLabel(bridge.lastGap.actual_next))}. The UI is refreshing from the agent snapshot.</span></div>`
+    );
+  } else if (!bridge.connected && bridge.lastError) {
+    notices.push(
+      `<div class="warning-box"><strong>Event stream reconnecting</strong><span>${escapeHtml(bridge.lastError)}</span></div>`
+    );
+  }
   const errors = state.bootstrap?.agent?.errors ?? [];
-  if (errors.length === 0) return "";
-  return `<div class="error-box" data-scroll-container>${errors.map(escapeHtml).join("<br>")}</div>`;
+  if (errors.length > 0) {
+    notices.push(`<div class="error-box" data-scroll-container>${errors.map(escapeHtml).join("<br>")}</div>`);
+  }
+  return notices.join("");
+}
+
+function renderEventBridgeRow() {
+  const bridge = state.eventBridge;
+  const status = eventBridgeStatus();
+  const lastEvent = bridge.lastEvent
+    ? `${bridge.lastEvent.type} ${sequenceLabel(bridge.lastEvent.sequence)} at ${formatClock(bridge.lastEvent.receivedAt)}`
+    : "No event received in this app session";
+  const subscription = bridge.subscription
+    ? `cursor ${sequenceLabel(bridge.subscription.cursorSequence)}, current ${sequenceLabel(bridge.subscription.currentSequence)}, replayed ${bridge.subscription.replayed}`
+    : "Subscription pending";
+  return `<div class="status-row"><span class="dot ${status.tone}"></span><div><strong>Event stream</strong><span>${escapeHtml(lastEvent)}</span><span>${escapeHtml(subscription)}</span></div><span class="badge ${status.tone}">${escapeHtml(status.label)}</span></div>`;
 }
 
 function renderToasts() {
@@ -661,18 +738,72 @@ async function handleAction(button) {
 
 let pendingEventRefresh = null;
 
+function queueEventRefresh(delay) {
+  window.clearTimeout(pendingEventRefresh);
+  state.eventBridge.refreshing = true;
+  render();
+  pendingEventRefresh = window.setTimeout(async () => {
+    pendingEventRefresh = null;
+    const synced = await refresh();
+    state.eventBridge.refreshing = false;
+    if (synced) state.eventBridge.stale = false;
+    render();
+  }, delay);
+}
+
+function markEventBridgeConnected(payload) {
+  state.eventBridge.connected = true;
+  state.eventBridge.lastConnectedAt = Date.now();
+  state.eventBridge.lastError = null;
+  state.eventBridge.subscription = {
+    replayed: payload?.replayed ?? 0,
+    currentSequence: payload?.current_sequence ?? null,
+    cursorSequence: payload?.cursor?.after_sequence ?? null,
+  };
+}
+
+function markEventBridgeEvent(payload) {
+  state.eventBridge.connected = true;
+  state.eventBridge.lastError = null;
+  state.eventBridge.lastEvent = {
+    sequence: payload?.sequence ?? null,
+    type: payload?.type ?? "event",
+    receivedAt: Date.now(),
+  };
+}
+
+function markEventBridgeGap(payload) {
+  state.eventBridge.connected = true;
+  state.eventBridge.stale = true;
+  state.eventBridge.lastGap = {
+    expected_after: payload?.expected_after ?? null,
+    actual_next: payload?.actual_next ?? null,
+  };
+}
+
+function markEventBridgeDisconnected(payload) {
+  state.eventBridge.connected = false;
+  state.eventBridge.refreshing = false;
+  state.eventBridge.lastDisconnectedAt = Date.now();
+  state.eventBridge.lastError = payload ? String(payload) : "Agent event stream disconnected";
+}
+
 async function installEventListeners() {
-  await listen("devrelay-agent-event", () => {
-    window.clearTimeout(pendingEventRefresh);
-    pendingEventRefresh = window.setTimeout(refresh, 400);
+  await listen("devrelay-agent-event", (event) => {
+    markEventBridgeEvent(event?.payload);
+    queueEventRefresh(400);
   });
-  await listen("devrelay-agent-connected", () => {
-    window.clearTimeout(pendingEventRefresh);
-    pendingEventRefresh = window.setTimeout(refresh, 250);
+  await listen("devrelay-agent-connected", (event) => {
+    markEventBridgeConnected(event?.payload);
+    queueEventRefresh(250);
+  });
+  await listen("devrelay-agent-gap", (event) => {
+    markEventBridgeGap(event?.payload);
+    queueEventRefresh(0);
   });
   await listen("devrelay-agent-disconnected", (event) => {
-    state.runtimeError = event?.payload ? String(event.payload) : null;
-    render();
+    markEventBridgeDisconnected(event?.payload);
+    queueEventRefresh(0);
   });
 }
 

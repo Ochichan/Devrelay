@@ -1107,29 +1107,29 @@ Conventions:
 
 ### M7.1 Tauri Shell
 
-- [ ] Create desktop app package.
-- [ ] Wire Rust backend to local agent client.
-- [ ] Add frontend build setup.
+- [x] Create desktop app package.
+- [x] Wire Rust backend to local agent client.
+- [x] Add frontend build setup.
 - [ ] Import visual direction from prototype.
-- [ ] Add dark theme.
-- [ ] Add light theme.
-- [ ] Add responsive layout.
+- [x] Add dark theme.
+- [x] Add light theme.
+- [x] Add responsive layout.
 - [ ] Add keyboard navigation baseline.
 - [ ] Add reduced motion mode.
 - [ ] Add accessibility labels.
 - [ ] Add app icon placeholder.
-- [ ] Add development run script.
+- [x] Add development run script.
 
 ### M7.2 Agent State Binding
 
-- [ ] Subscribe to agent event stream.
-- [ ] Load initial status from agent.
-- [ ] Keep UI state read-only from agent events.
-- [ ] Add reconnection state.
-- [ ] Add offline agent state.
-- [ ] Add stale data indicator.
-- [ ] Add event gap recovery.
-- [ ] Add frontend state tests.
+- [x] Subscribe to agent event stream.
+- [x] Load initial status from agent.
+- [x] Keep UI state read-only from agent events.
+- [x] Add reconnection state.
+- [x] Add offline agent state.
+- [x] Add stale data indicator.
+- [x] Add event gap recovery.
+- [x] Add frontend state tests.
 
 ### M7.3 Continue View
 
@@ -2092,7 +2092,7 @@ Conventions:
 - [ ] Finish Windows named pipe transport and pipe ACL if 3-OS UI is required.
 - [x] Implement resource benchmark harness and record idle CPU/RSS plus checkpoint burst results.
 - [x] Add first safety suites: `no_silent_overwrite`, `no_unverified_handoff`, `stale_publish_is_fork`, and `no_plaintext_secret_snapshot`.
-- [ ] Start Tauri shell with agent event subscription.
+- [x] Start Tauri shell with agent event subscription.
 - [ ] Implement tray and Continue screen for macOS/Linux handoff.
 - [ ] Dogfood clean-target handoff on real macOS/Linux devices.
 - [ ] Dogfood dirty-target and inactive-edit preservation.
