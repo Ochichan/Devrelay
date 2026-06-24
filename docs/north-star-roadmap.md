@@ -456,12 +456,16 @@ Completed capabilities:
   snapshot store, gate the task environment profile, materialize required
   sidecars/secrets only when permitted, stay non-canonical, and clean up through
   a retention policy.
+- Host task execution can run inside the prepared workspace with working
+  directory and environment handling, timeout enforcement, stdout/stderr capture,
+  live log sink events, process-tree cancellation on timeout, and explicit
+  sandbox/container/VM placeholders.
 - Task run metadata can be recorded and listed from the per-project metadata
   database.
 
 Open work:
 
-- Task command execution, remote runner, logs, artifacts, and cache.
+- Remote runner, durable logs, artifacts, and cache.
 
 ### M11. Cross-Platform Hardening
 

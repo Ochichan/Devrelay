@@ -5,7 +5,8 @@ Last updated: 2026-06-24
 Compute fabric task execution must not take writer ownership of an active
 workspace. The current implementation covers task definitions, immutable
 execution snapshots, task run metadata, scheduler constraint filtering, and
-explainable scheduler scoring, and isolated runner workspace preparation.
+explainable scheduler scoring, isolated runner workspace preparation, and host
+task execution.
 
 ## Task Model
 
@@ -78,4 +79,18 @@ local mappings, and a provider; otherwise the workspace records skipped required
 secret names without writing secret files. Cleanup follows the runner workspace
 retention policy, with delete-on-cleanup as the default.
 
-Executing the task command inside the prepared workspace remains M10.5 work.
+## Runner Execution
+
+Host task execution runs the task command inside the prepared runner workspace.
+It resolves the working directory inside that workspace, combines explicit
+environment variables with permitted secret environment variables, applies the
+task timeout, captures exit code/stdout/stderr, and forwards stdout/stderr chunks
+to a live log sink while retaining the same chunks on the execution result.
+
+Timeouts cancel the process tree on Unix by starting the command in its own
+process group and killing that group. Sandbox, container, and VM execution modes
+are explicit placeholders that fail closed rather than silently running on the
+host.
+
+Durable log storage, artifacts, remote execution, and result cache integration
+remain later M10 work.

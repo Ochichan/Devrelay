@@ -1527,18 +1527,18 @@ Conventions:
 
 ### M10.5 Runner Execution
 
-- [ ] Run host task.
-- [ ] Add sandbox placeholder.
-- [ ] Add container runner placeholder.
-- [ ] Add VM runner placeholder.
-- [ ] Set working directory.
-- [ ] Set environment variables.
-- [ ] Enforce timeout.
-- [ ] Capture exit code.
-- [ ] Capture stdout/stderr.
-- [ ] Stream logs live.
-- [ ] Cancel process tree.
-- [ ] Add execution tests with fake commands.
+- [x] Run host task.
+- [x] Add sandbox placeholder.
+- [x] Add container runner placeholder.
+- [x] Add VM runner placeholder.
+- [x] Set working directory.
+- [x] Set environment variables.
+- [x] Enforce timeout.
+- [x] Capture exit code.
+- [x] Capture stdout/stderr.
+- [x] Stream logs live.
+- [x] Cancel process tree.
+- [x] Add execution tests with fake commands.
 
 ### M10.6 Logs
 

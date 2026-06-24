@@ -83,6 +83,7 @@ mod sparse;
 mod storage;
 mod submodule;
 mod task_model;
+mod task_runner_execution;
 mod task_runner_workspace;
 mod transport_security;
 mod watcher;
@@ -331,6 +332,12 @@ pub use task_model::{
     TASK_RUN_ID_PREFIX, TaskDefinition, TaskExecutionSnapshot, TaskRunInput, TaskRunState,
     create_task_execution_snapshot, generate_task_run_id, task_command_definition_hash,
     task_definition, task_definitions_from_manifest, task_execution_snapshot_label,
+};
+pub use task_runner_execution::{
+    NoopTaskExecutionLogSink, SystemTaskCommandRunner, TaskCommandOutput, TaskCommandRunner,
+    TaskExecutionBackend, TaskExecutionLogEvent, TaskExecutionLogSink, TaskExecutionLogStream,
+    TaskExecutionOptions, TaskExecutionResult, VecTaskExecutionLogSink,
+    execute_task_in_runner_workspace, task_execution_backend,
 };
 pub use task_runner_workspace::{
     TaskRunnerEnvironmentState, TaskRunnerSecretPolicy, TaskRunnerSecretState,
