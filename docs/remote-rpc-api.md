@@ -2,11 +2,17 @@
 
 Last updated: 2026-06-24
 
-Status: schema plan accepted; server not implemented.
+Status: schema plan and core pre-dispatch policy accepted; server not
+implemented.
 
 ADR 0005 selects JSON-RPC 2.0 over mTLS for the remote Control API. This
 document defines the first remote method allowlist and schema rules required
 before M4.5 can close.
+
+The core pre-dispatch helper enforces the method allowlist, authenticated mTLS
+peer requirement, control-envelope validation, request ID requirement, and JSON
+error mapping. A remote socket server still has to call that helper before
+method dispatch.
 
 ## Transport And Auth
 

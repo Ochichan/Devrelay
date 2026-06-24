@@ -840,9 +840,9 @@ Conventions:
 - [ ] Add remote `sessions.snapshots.list`.
 - [ ] Add remote handoff methods.
 - [ ] Add remote recovery methods.
-- [ ] Add API auth middleware.
-- [ ] Add request ID middleware.
-- [ ] Add JSON error mapping.
+- [x] Add API auth middleware.
+- [x] Add request ID middleware.
+- [x] Add JSON error mapping.
 - [x] Add remote RPC schema documentation.
 - [ ] Add API integration tests.
 

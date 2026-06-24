@@ -69,6 +69,7 @@ mod pairing;
 mod path_doctor;
 mod platform;
 mod policy;
+mod remote_rpc;
 mod retention;
 mod route_selection;
 mod rpc;
@@ -260,6 +261,12 @@ pub use platform::{
 pub use policy::{
     ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths,
     normalize_workspace_relative_path,
+};
+pub use remote_rpc::{
+    METHOD_REMOTE_RECOVERY_LIST, METHOD_REMOTE_RECOVERY_OPEN,
+    METHOD_REMOTE_SESSIONS_SNAPSHOTS_LIST, METHOD_REMOTE_WORKSPACES_LIST, REMOTE_RPC_METHODS,
+    RemoteRpcRequestContext, is_remote_rpc_method_allowed, preflight_remote_rpc_request,
+    remote_rpc_error_from_devrelay,
 };
 pub use retention::{
     HandoffSnapshotProtection, PruningDecision, PruningDecisionAction, PruningPlan,

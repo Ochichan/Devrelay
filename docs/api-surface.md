@@ -63,10 +63,10 @@ ADR 0005 selects a versioned remote JSON-RPC 2.0 boundary over mTLS for M4.5.
 DevRelay will not implement a separate HTTP `/v1` REST API for the first remote
 Control API.
 
-M4.5 is still not implemented. The project still needs a remote RPC server over
-mTLS, an explicit remote method allowlist, auth checks before dispatch, schema
-coverage in [remote-rpc-api.md](remote-rpc-api.md), JSON error mapping, request
-ID behavior, and integration tests.
+M4.5 is still not implemented. The core now has pre-dispatch helpers for the
+remote method allowlist, mTLS peer requirement, control-envelope validation,
+JSON error mapping, and request ID behavior, but the project still needs a
+remote RPC server over mTLS and integration tests around that server.
 
 Until that implementation exists, do not claim that a remote Control API
 rejects unauthenticated requests. The mTLS transport primitives reject invalid
