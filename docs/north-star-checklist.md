@@ -1479,23 +1479,23 @@ Conventions:
 
 ### M10.2 Scheduler Constraints
 
-- [ ] Collect static device OS.
-- [ ] Collect static architecture.
-- [ ] Collect CPU core count.
-- [ ] Collect memory capacity.
-- [ ] Collect disk capacity.
-- [ ] Collect dynamic CPU load.
-- [ ] Collect dynamic free memory.
-- [ ] Collect dynamic free disk.
-- [ ] Collect AC/battery state.
-- [ ] Collect foreground activity.
-- [ ] Collect network route quality placeholder.
-- [ ] Filter incompatible platforms.
-- [ ] Filter missing features.
-- [ ] Filter insufficient memory.
-- [ ] Filter insufficient disk.
-- [ ] Filter disallowed policy.
-- [ ] Add constraints tests.
+- [x] Collect static device OS.
+- [x] Collect static architecture.
+- [x] Collect CPU core count.
+- [x] Collect memory capacity.
+- [x] Collect disk capacity.
+- [x] Collect dynamic CPU load.
+- [x] Collect dynamic free memory.
+- [x] Collect dynamic free disk.
+- [x] Collect AC/battery state.
+- [x] Collect foreground activity.
+- [x] Collect network route quality placeholder.
+- [x] Filter incompatible platforms.
+- [x] Filter missing features.
+- [x] Filter insufficient memory.
+- [x] Filter insufficient disk.
+- [x] Filter disallowed policy.
+- [x] Add constraints tests.
 
 ### M10.3 Scheduler Score
 

@@ -3,7 +3,8 @@
 Last updated: 2026-06-24
 
 Compute fabric task execution must not take writer ownership of an active
-workspace. The current implementation covers the task definition layer only.
+workspace. The current implementation covers task definitions, immutable
+execution snapshots, task run metadata, and scheduler constraint filtering.
 
 ## Task Model
 
@@ -29,3 +30,18 @@ refs and metadata for later scheduling or audit.
 
 Applying execution snapshots to remote workers, collecting logs/artifacts, and
 cache reuse are still open.
+
+## Scheduler Constraints
+
+Scheduler constraint filtering starts with a device resource snapshot:
+
+- static OS, architecture, CPU cores, memory capacity, disk capacity, and
+  platform capability-derived features;
+- dynamic CPU load, free memory, free disk, power state, low-power mode,
+  foreground load, and an explicit network route quality placeholder;
+- local policy that can disallow task execution before scoring.
+
+The filter rejects incompatible task platform globs, missing task features,
+insufficient CPU, memory, or disk, unknown required resource metrics, and devices
+paused by local policy. Later M10 scheduler scoring can rank only the eligible
+candidate set.

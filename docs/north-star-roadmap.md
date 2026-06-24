@@ -445,12 +445,15 @@ Completed capabilities:
   constraints, resource hints, and selected environment profile definition.
 - Immutable task execution snapshots can be created as pinned snapshots tied to
   the task definition hash.
+- Scheduler constraint filtering can collect static/dynamic device resources and
+  reject incompatible platforms, missing features, insufficient resources, or
+  locally disallowed devices.
 - Task run metadata can be recorded and listed from the per-project metadata
   database.
 
 Open work:
 
-- Scheduler constraints and scoring.
+- Scheduler scoring.
 - Remote runner, logs, artifacts, and cache.
 
 ### M11. Cross-Platform Hardening

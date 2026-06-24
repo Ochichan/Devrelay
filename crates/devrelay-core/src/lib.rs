@@ -69,6 +69,7 @@ mod policy;
 mod retention;
 mod route_selection;
 mod rpc;
+mod scheduler_constraints;
 mod secret_provider;
 mod service;
 mod session;
@@ -263,6 +264,11 @@ pub use rpc::{
     RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
     RunsListParams, RunsListResult, SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult,
     SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult,
+};
+pub use scheduler_constraints::{
+    SchedulerConstraintDecision, SchedulerConstraintRejection, SchedulerDevicePolicy,
+    SchedulerDeviceSnapshot, SchedulerDynamicResources, SchedulerNetworkRouteQuality,
+    collect_local_scheduler_device, evaluate_scheduler_constraints, filter_scheduler_candidates,
 };
 pub use secret_provider::{
     RedactedSecretMaterializationReport, SecretFileMaterialization, SecretMaterializationReport,
