@@ -83,6 +83,7 @@ mod sparse;
 mod storage;
 mod submodule;
 mod task_model;
+mod task_runner_workspace;
 mod transport_security;
 mod watcher;
 mod wsl_doctor;
@@ -330,6 +331,12 @@ pub use task_model::{
     TASK_RUN_ID_PREFIX, TaskDefinition, TaskExecutionSnapshot, TaskRunInput, TaskRunState,
     create_task_execution_snapshot, generate_task_run_id, task_command_definition_hash,
     task_definition, task_definitions_from_manifest, task_execution_snapshot_label,
+};
+pub use task_runner_workspace::{
+    TaskRunnerEnvironmentState, TaskRunnerSecretPolicy, TaskRunnerSecretState,
+    TaskRunnerSidecarState, TaskRunnerWorkspace, TaskRunnerWorkspaceCleanup,
+    TaskRunnerWorkspaceOptions, TaskRunnerWorkspaceRetentionPolicy, cleanup_task_runner_workspace,
+    prepare_task_runner_workspace, task_runner_workspace_path,
 };
 pub use transport_security::{
     AuthenticatedControlPlanePeer, CONTROL_ALPN_PROTOCOL, CONTROL_PROTOCOL_VERSION,

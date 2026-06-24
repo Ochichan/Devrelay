@@ -5,7 +5,7 @@ Last updated: 2026-06-24
 Compute fabric task execution must not take writer ownership of an active
 workspace. The current implementation covers task definitions, immutable
 execution snapshots, task run metadata, scheduler constraint filtering, and
-explainable scheduler scoring.
+explainable scheduler scoring, and isolated runner workspace preparation.
 
 ## Task Model
 
@@ -62,3 +62,20 @@ with constraint rejection details. Eligible devices receive an explainable
 Unknown signals are neutral rather than silently treated as ideal. The score
 output includes every component, its normalized score, its weight, weighted
 points, and a short explanation string.
+
+## Runner Workspace
+
+Runner workspace preparation creates a disposable Git repository under the
+project's DevRelay data directory, applies the immutable task execution snapshot
+from the snapshot store, and marks the workspace as non-canonical so it cannot
+be treated as a writer session. The task's declared environment profile is
+validated against the runner platform and available environment kind before the
+workspace is returned.
+
+Sidecars are materialized through CAS when the snapshot requires them. Required
+secrets are materialized only when the caller provides explicit permission,
+local mappings, and a provider; otherwise the workspace records skipped required
+secret names without writing secret files. Cleanup follows the runner workspace
+retention policy, with delete-on-cleanup as the default.
+
+Executing the task command inside the prepared workspace remains M10.5 work.

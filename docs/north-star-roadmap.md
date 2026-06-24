@@ -452,12 +452,16 @@ Completed capabilities:
   data locality, network quality, historical speed, user affinity, transfer
   cost, foreground load, and thermal placeholder signals with task-class
   weights.
+- Isolated runner workspaces apply immutable task execution snapshots from the
+  snapshot store, gate the task environment profile, materialize required
+  sidecars/secrets only when permitted, stay non-canonical, and clean up through
+  a retention policy.
 - Task run metadata can be recorded and listed from the per-project metadata
   database.
 
 Open work:
 
-- Remote runner, logs, artifacts, and cache.
+- Task command execution, remote runner, logs, artifacts, and cache.
 
 ### M11. Cross-Platform Hardening
 

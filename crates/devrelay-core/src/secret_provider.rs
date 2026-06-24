@@ -102,13 +102,13 @@ pub trait SecretProvider {
     fn resolve_secret(&self, request: &SecretProviderRequest) -> Result<Option<SecretValue>>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretFileMaterialization {
     pub secret_name: String,
     pub target: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretMaterializationReport {
     pub files: Vec<SecretFileMaterialization>,
     pub environment_variables: BTreeMap<String, String>,
@@ -116,7 +116,7 @@ pub struct SecretMaterializationReport {
     pub hard_exclude_patterns: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RedactedSecretMaterializationReport {
     pub files: Vec<SecretFileMaterialization>,
     pub environment_variables: BTreeMap<String, String>,
@@ -144,7 +144,7 @@ pub fn materialize_project_secrets(
     root: &Path,
     manifest: &Manifest,
     local_config: &SecretProviderLocalConfig,
-    provider: &impl SecretProvider,
+    provider: &(impl SecretProvider + ?Sized),
 ) -> Result<SecretMaterializationReport> {
     let mut report = SecretMaterializationReport {
         files: Vec::new(),

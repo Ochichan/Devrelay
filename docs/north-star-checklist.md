@@ -1516,14 +1516,14 @@ Conventions:
 
 ### M10.4 Runner Workspace
 
-- [ ] Create isolated task workspace.
-- [ ] Apply execution snapshot.
-- [ ] Hydrate environment.
-- [ ] Materialize required sidecars.
-- [ ] Materialize required secrets only when permitted.
-- [ ] Prevent task workspace from being canonical session.
-- [ ] Clean up workspace by retention policy.
-- [ ] Add runner workspace tests.
+- [x] Create isolated task workspace.
+- [x] Apply execution snapshot.
+- [x] Hydrate environment.
+- [x] Materialize required sidecars.
+- [x] Materialize required secrets only when permitted.
+- [x] Prevent task workspace from being canonical session.
+- [x] Clean up workspace by retention policy.
+- [x] Add runner workspace tests.
 
 ### M10.5 Runner Execution
 
