@@ -1119,10 +1119,10 @@ Conventions:
 - [x] Add dark theme.
 - [x] Add light theme.
 - [x] Add responsive layout.
-- [ ] Add keyboard navigation baseline.
-- [ ] Add reduced motion mode.
-- [ ] Add accessibility labels.
-- [ ] Add app icon placeholder.
+- [x] Add keyboard navigation baseline.
+- [x] Add reduced motion mode.
+- [x] Add accessibility labels.
+- [x] Add app icon placeholder.
 - [x] Add development run script.
 
 ### M7.2 Agent State Binding

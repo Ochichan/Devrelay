@@ -54,6 +54,21 @@ for (const root of roots) {
   }
 }
 
+const css = await readFile(resolve(appDir, "src/app.css"), "utf8");
+if (!css.includes("@media (prefers-reduced-motion: reduce)")) {
+  failures.push("src/app.css is missing reduced motion handling");
+}
+
+const tauriConfig = JSON.parse(await readFile(resolve(appDir, "src-tauri/tauri.conf.json"), "utf8"));
+if (!tauriConfig.bundle?.icon?.includes("icons/icon.icns")) {
+  failures.push("src-tauri/tauri.conf.json is missing the macOS app icon placeholder");
+}
+
+const buildRs = await readFile(resolve(appDir, "src-tauri/build.rs"), "utf8");
+if (!buildRs.includes("ensure_icon()") || !buildRs.includes("render_icon_icns()")) {
+  failures.push("src-tauri/build.rs is missing generated app icon placeholder support");
+}
+
 if (failures.length > 0) {
   console.error(failures.join("\n"));
   process.exit(1);
