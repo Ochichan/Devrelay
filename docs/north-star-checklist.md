@@ -1403,15 +1403,15 @@ Conventions:
 
 ### M9.5 Native Bootstrap Adapter
 
-- [ ] Support PowerShell command profile.
-- [ ] Support POSIX shell command profile.
-- [ ] Require trust approval before execution.
-- [ ] Enforce timeout.
-- [ ] Capture stdout/stderr with redaction.
-- [ ] Store bootstrap result.
-- [ ] Run health check.
-- [ ] Add idempotency warning in docs.
-- [ ] Add native adapter tests with mocked commands.
+- [x] Support PowerShell command profile.
+- [x] Support POSIX shell command profile.
+- [x] Require trust approval before execution.
+- [x] Enforce timeout.
+- [x] Capture stdout/stderr with redaction.
+- [x] Store bootstrap result.
+- [x] Run health check.
+- [x] Add idempotency warning in docs.
+- [x] Add native adapter tests with mocked commands.
 
 ### M9.6 Secret Providers
 

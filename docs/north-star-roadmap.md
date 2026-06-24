@@ -412,10 +412,12 @@ Completed capabilities:
 - Profile selection.
 - Nix adapter.
 - Dev Container adapter.
+- Native bootstrap adapter with POSIX/PowerShell command classification, trust
+  approval gate, timeout, redacted output capture, healthcheck reporting, and
+  idempotency guidance.
 
 Open work:
 
-- Native PowerShell/POSIX adapter.
 - Secret providers.
 - Hydration state machine.
 - Environment doctor.

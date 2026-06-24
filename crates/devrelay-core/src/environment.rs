@@ -4,7 +4,10 @@
 //! that a runner should hydrate after checking platform targets, adapter
 //! availability, and bootstrap trust state.
 
-use crate::{DevRelayError, EnvironmentKind, Manifest, Result, current_platform_key};
+use crate::{
+    DevRelayError, EnvironmentKind, EnvironmentProfile, LogRedactor, Manifest, Result,
+    current_platform_key,
+};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -718,6 +721,179 @@ pub fn run_devcontainer_healthcheck(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeBootstrapShell {
+    Posix,
+    PowerShell,
+    Direct,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeBootstrapState {
+    ApprovalRequired,
+    Succeeded,
+    Failed,
+    TimedOut,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeHealthState {
+    NotReady,
+    ShellReady,
+    Failed,
+    TimedOut,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeBootstrapRun {
+    pub state: NativeBootstrapState,
+    pub shell: NativeBootstrapShell,
+    pub command: Vec<String>,
+    pub timeout_seconds: Option<u64>,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub logs: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeHealthcheck {
+    pub state: NativeHealthState,
+    pub command: Vec<String>,
+    pub shell_ready: bool,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub failure_logs: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeBootstrapAdapterReport {
+    pub bootstrap: NativeBootstrapRun,
+    pub healthcheck: NativeHealthcheck,
+}
+
+pub fn inspect_native_environment(
+    root: &Path,
+    profile: &EnvironmentProfile,
+    trust_approved: bool,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<NativeBootstrapAdapterReport> {
+    let bootstrap = run_native_bootstrap(root, profile, trust_approved, runner)?;
+    let healthcheck = run_native_healthcheck(root, profile, bootstrap.state, runner)?;
+    Ok(NativeBootstrapAdapterReport {
+        bootstrap,
+        healthcheck,
+    })
+}
+
+pub fn run_native_bootstrap(
+    root: &Path,
+    profile: &EnvironmentProfile,
+    trust_approved: bool,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<NativeBootstrapRun> {
+    let shell = classify_native_command(&profile.command);
+    if !trust_approved {
+        return Ok(NativeBootstrapRun {
+            state: NativeBootstrapState::ApprovalRequired,
+            shell,
+            command: profile.command.clone(),
+            timeout_seconds: profile.timeout_seconds,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: "native bootstrap requires trust approval".to_string(),
+            logs: "native bootstrap requires trust approval".to_string(),
+        });
+    }
+
+    let output = run_environment_values(root, &profile.command, profile.timeout_seconds, runner)?;
+    let stdout = LogRedactor::new().redact_text(&output.stdout);
+    let stderr = LogRedactor::new().redact_text(&output.stderr);
+    let succeeded = output.succeeded();
+    Ok(NativeBootstrapRun {
+        state: if output.timed_out {
+            NativeBootstrapState::TimedOut
+        } else if succeeded {
+            NativeBootstrapState::Succeeded
+        } else {
+            NativeBootstrapState::Failed
+        },
+        shell,
+        command: profile.command.clone(),
+        timeout_seconds: profile.timeout_seconds,
+        exit_code: output.status_code,
+        logs: if succeeded {
+            String::new()
+        } else {
+            join_logs(&stdout, &stderr)
+        },
+        stdout,
+        stderr,
+    })
+}
+
+pub fn run_native_healthcheck(
+    root: &Path,
+    profile: &EnvironmentProfile,
+    bootstrap_state: NativeBootstrapState,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<NativeHealthcheck> {
+    let shell = classify_native_command(&profile.command);
+    let command = native_healthcheck_command(profile, shell);
+    if bootstrap_state != NativeBootstrapState::Succeeded {
+        return Ok(NativeHealthcheck {
+            state: NativeHealthState::NotReady,
+            command,
+            shell_ready: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: "native bootstrap is not ready".to_string(),
+            failure_logs: "native bootstrap is not ready".to_string(),
+        });
+    }
+
+    let output = run_environment_values(root, &command, profile.timeout_seconds, runner)?;
+    let stdout = LogRedactor::new().redact_text(&output.stdout);
+    let stderr = LogRedactor::new().redact_text(&output.stderr);
+    let shell_ready = output.succeeded();
+    Ok(NativeHealthcheck {
+        state: if output.timed_out {
+            NativeHealthState::TimedOut
+        } else if shell_ready {
+            NativeHealthState::ShellReady
+        } else {
+            NativeHealthState::Failed
+        },
+        command,
+        shell_ready,
+        exit_code: output.status_code,
+        failure_logs: if shell_ready {
+            String::new()
+        } else {
+            join_logs(&stdout, &stderr)
+        },
+        stdout,
+        stderr,
+    })
+}
+
+pub fn classify_native_command(command: &[String]) -> NativeBootstrapShell {
+    let Some(program) = command.first() else {
+        return NativeBootstrapShell::Direct;
+    };
+    let name = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program)
+        .to_ascii_lowercase();
+    match name.as_str() {
+        "sh" | "bash" | "zsh" => NativeBootstrapShell::Posix,
+        "pwsh" | "powershell" | "powershell.exe" | "pwsh.exe" => NativeBootstrapShell::PowerShell,
+        _ => NativeBootstrapShell::Direct,
+    }
+}
+
 fn devcontainer_fingerprint_files(root: &Path) -> Vec<PathBuf> {
     [
         ".devcontainer/devcontainer.json",
@@ -751,6 +927,50 @@ fn devcontainer_exec_command(root: &Path, healthcheck: &[String]) -> Vec<String>
         command.extend(healthcheck.iter().cloned());
     }
     command
+}
+
+fn run_environment_values(
+    root: &Path,
+    values: &[String],
+    timeout_seconds: Option<u64>,
+    runner: &impl EnvironmentCommandRunner,
+) -> Result<EnvironmentCommandOutput> {
+    let Some((program, args)) = values.split_first() else {
+        return Err(DevRelayError::Manifest(
+            "environment command must contain at least one argument".to_string(),
+        ));
+    };
+    runner.run(
+        root,
+        &EnvironmentCommand::new(program.clone(), args.iter().cloned())
+            .with_timeout_seconds(timeout_seconds),
+    )
+}
+
+fn native_healthcheck_command(
+    profile: &EnvironmentProfile,
+    shell: NativeBootstrapShell,
+) -> Vec<String> {
+    if let Some(healthcheck) = &profile.healthcheck {
+        return healthcheck.clone();
+    }
+    match shell {
+        NativeBootstrapShell::Posix => {
+            vec!["sh".to_string(), "-lc".to_string(), "true".to_string()]
+        }
+        NativeBootstrapShell::PowerShell => vec![
+            profile
+                .command
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "pwsh".to_string()),
+            "-NoProfile".to_string(),
+            "-NonInteractive".to_string(),
+            "-Command".to_string(),
+            "$true".to_string(),
+        ],
+        NativeBootstrapShell::Direct => vec!["true".to_string()],
+    }
 }
 
 fn devcontainer_prepare_terminal(
@@ -1009,6 +1229,102 @@ portable_paths = "strict"
                 .cloned()
                 .unwrap_or_else(|| EnvironmentCommandOutput::failure(127, "command not found")))
         }
+    }
+
+    fn native_profile(
+        command: Vec<&str>,
+        healthcheck: Option<Vec<&str>>,
+        timeout_seconds: Option<u64>,
+    ) -> EnvironmentProfile {
+        EnvironmentProfile {
+            kind: EnvironmentKind::Native,
+            targets: vec!["local".to_string()],
+            command: command.into_iter().map(str::to_string).collect(),
+            fingerprint_files: Vec::new(),
+            healthcheck: healthcheck.map(|values| values.into_iter().map(str::to_string).collect()),
+            working_directory: None,
+            timeout_seconds,
+        }
+    }
+
+    #[test]
+    fn native_bootstrap_requires_trust_before_execution() {
+        let temp = tempfile::tempdir().unwrap();
+        let profile = native_profile(
+            vec!["sh", "-lc", "./bootstrap.sh"],
+            Some(vec!["sh", "-lc", "test -f .ready"]),
+            Some(30),
+        );
+        let report = inspect_native_environment(
+            temp.path(),
+            &profile,
+            false,
+            &FakeRunner::default().with_output(
+                "sh",
+                &["-lc", "./bootstrap.sh"],
+                EnvironmentCommandOutput::success("should not run\n"),
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(report.bootstrap.shell, NativeBootstrapShell::Posix);
+        assert_eq!(
+            report.bootstrap.state,
+            NativeBootstrapState::ApprovalRequired
+        );
+        assert_eq!(report.bootstrap.timeout_seconds, Some(30));
+        assert_eq!(report.healthcheck.state, NativeHealthState::NotReady);
+    }
+
+    #[test]
+    fn native_bootstrap_runs_posix_command_and_healthcheck_with_redacted_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        let profile = native_profile(
+            vec!["sh", "-lc", "./bootstrap.sh"],
+            Some(vec!["sh", "-lc", "test -f .ready"]),
+            Some(30),
+        );
+        let runner = FakeRunner::default()
+            .with_output(
+                "sh",
+                &["-lc", "./bootstrap.sh"],
+                EnvironmentCommandOutput::success("token: abc123\n"),
+            )
+            .with_output(
+                "sh",
+                &["-lc", "test -f .ready"],
+                EnvironmentCommandOutput::success("ready\n"),
+            );
+
+        let report = inspect_native_environment(temp.path(), &profile, true, &runner).unwrap();
+
+        assert_eq!(report.bootstrap.shell, NativeBootstrapShell::Posix);
+        assert_eq!(report.bootstrap.state, NativeBootstrapState::Succeeded);
+        assert_eq!(report.bootstrap.stdout, "token: <redacted>\n");
+        assert_eq!(report.healthcheck.state, NativeHealthState::ShellReady);
+        assert!(report.healthcheck.shell_ready);
+    }
+
+    #[test]
+    fn native_bootstrap_detects_powershell_and_timeout() {
+        let temp = tempfile::tempdir().unwrap();
+        let profile = native_profile(
+            vec!["pwsh", "-NoProfile", "-Command", "./bootstrap.ps1"],
+            None,
+            Some(1),
+        );
+        let runner = FakeRunner::default().with_output(
+            "pwsh",
+            &["-NoProfile", "-Command", "./bootstrap.ps1"],
+            EnvironmentCommandOutput::timed_out("timed out with password=hunter2\n"),
+        );
+
+        let report = inspect_native_environment(temp.path(), &profile, true, &runner).unwrap();
+
+        assert_eq!(report.bootstrap.shell, NativeBootstrapShell::PowerShell);
+        assert_eq!(report.bootstrap.state, NativeBootstrapState::TimedOut);
+        assert!(report.bootstrap.logs.contains("password=<redacted>"));
+        assert_eq!(report.healthcheck.state, NativeHealthState::NotReady);
     }
 
     #[test]
