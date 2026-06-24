@@ -592,6 +592,63 @@ required = true
 }
 
 #[test]
+fn doctor_secrets_reports_missing_required_secret() {
+    let repo = std::env::temp_dir().join(format!(
+        "devrelay-doctor-secrets-test-{}",
+        std::process::id()
+    ));
+    let home = repo.join("home");
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    std::fs::write(
+        repo.join("devrelay.toml"),
+        r#"
+schema = 1
+project_id = "12345678"
+name = "demo"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+
+[secrets.api_token]
+target = "API_TOKEN"
+mode = "environment"
+required = true
+"#,
+    )
+    .unwrap();
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "doctor",
+            "secrets",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["required_secret_count"], 1);
+    assert_eq!(value["mapped_required_secret_count"], 0);
+    assert_eq!(value["missing_required_secret_count"], 1);
+    assert!(value["issues"].as_array().unwrap().iter().any(|issue| {
+        issue["code"] == "missing-required-secret" && issue["secret_name"] == "api_token"
+    }));
+
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[test]
 fn environment_status_reports_persisted_hydration_state() {
     use devrelay_core::{DevRelayHome, HydrationState, HydrationStateRecord, save_hydration_state};
 

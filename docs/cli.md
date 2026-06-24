@@ -23,6 +23,7 @@ devrelay recover show <snapshot-id> --json
 devrelay recover open <snapshot-id> --path ../recovery --register --name review --json
 devrelay doctor environment --repo . --manifest devrelay.toml --json
 devrelay doctor environment --repo . --manifest devrelay.toml --run-healthcheck --json
+devrelay doctor secrets --repo . --manifest devrelay.toml --json
 devrelay environment status --project <project-id> --json
 devrelay metrics export --project <project-id> --out metrics.json --json
 devrelay continue --source ../source --target ../target --config devrelay.local.toml --json
@@ -90,6 +91,10 @@ only with `--run-healthcheck`; Dev Container image preparation also requires
 projects and workspaces. It uses the local agent by default through
 `environment.status`; `--direct` reads the same state files from
 `$DEVRELAY_HOME/projects/<project-id>/hydration/`.
+
+`doctor secrets` is the narrow secret mapping check. It reports required
+manifest secrets, local provider mappings, and missing required mappings without
+running environment healthchecks or materializing secret values.
 
 ## Local Metrics
 

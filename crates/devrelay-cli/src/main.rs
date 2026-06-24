@@ -25,16 +25,16 @@ use devrelay_core::{
     PathPortabilityDoctorReport, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
     ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
     RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
-    RecoverShowResult, SecretProviderLocalConfig, SecretScannerConfig, ServiceTemplate,
-    ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetParams,
-    StatusGetResult, StatusSummary, StoredSession, StoredSnapshot, SystemEnvironmentCommandRunner,
-    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
-    WslFilesystemDoctorReport, apply_snapshot, build_discovery_advertisement,
+    RecoverShowResult, SecretMappingDoctorReport, SecretProviderLocalConfig, SecretScannerConfig,
+    ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore,
+    StatusGetParams, StatusGetResult, StatusSummary, StoredSession, StoredSnapshot,
+    SystemEnvironmentCommandRunner, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
+    WorkspaceState, WslFilesystemDoctorReport, apply_snapshot, build_discovery_advertisement,
     classify_untracked_paths, collect_local_metrics_report, create_snapshot, current_platform_key,
     linux_systemd_user_template, load_hydration_state, macos_launch_agent_template,
     plan_apply_snapshot, read_snapshot_file, run_environment_doctor, run_git_performance_doctor,
-    run_line_ending_doctor, run_path_portability_doctor, run_wsl_filesystem_doctor,
-    workspace_id_for, write_snapshot_file,
+    run_line_ending_doctor, run_path_portability_doctor, run_secret_mapping_doctor,
+    run_wsl_filesystem_doctor, workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -341,6 +341,16 @@ enum DoctorCommand {
         run_healthcheck: bool,
         #[arg(long)]
         allow_devcontainer_prepare: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Secrets {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, default_value = "devrelay.toml")]
+        manifest: PathBuf,
+        #[arg(long)]
+        secrets_config: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -1679,6 +1689,24 @@ fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
                 run_environment_doctor(&repo_root, &manifest, &local_secrets, &options, &runner)?;
             render_environment_doctor(&report, json)
         }
+        DoctorCommand::Secrets {
+            repo,
+            manifest,
+            secrets_config,
+            json,
+        } => {
+            let repo_root = resolve_git_root(&repo)?;
+            let manifest_path = if manifest.is_absolute() {
+                manifest
+            } else {
+                repo_root.join(manifest)
+            };
+            let manifest = Manifest::load(&manifest_path)
+                .with_context(|| format!("failed to load {}", manifest_path.display()))?;
+            let local_secrets = load_secret_provider_config(secrets_config.as_deref())?;
+            let report = run_secret_mapping_doctor(&repo_root, &manifest, &local_secrets);
+            render_secret_mapping_doctor(&report, json)
+        }
         DoctorCommand::WslFilesystem {
             repo,
             platform_key,
@@ -1809,6 +1837,37 @@ fn render_environment_doctor(report: &EnvironmentDoctorReport, json: bool) -> an
         }
         for line in &report.selection_explanation {
             println!("  selection: {line}");
+        }
+    }
+    Ok(())
+}
+
+fn render_secret_mapping_doctor(
+    report: &SecretMappingDoctorReport,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!("secret mapping doctor: {}", report.repo.display());
+        println!(
+            "  required secrets: {}/{} mapped",
+            report.mapped_required_secret_count, report.required_secret_count
+        );
+        println!(
+            "  missing required secrets: {}",
+            report.missing_required_secret_count
+        );
+        if report.issues.is_empty() {
+            println!("  issues: none");
+        } else {
+            println!("  issues: {}", report.issues.len());
+            for issue in &report.issues {
+                println!("  - {:?}: {}", issue.code, issue.message);
+                for action in &issue.safe_actions {
+                    println!("    action: {action}");
+                }
+            }
         }
     }
     Ok(())

@@ -262,6 +262,7 @@ devrelay status --repo . --manifest devrelay.toml --json
 devrelay doctor paths --repo . --manifest devrelay.toml --json
 devrelay doctor line-endings --repo . --json
 devrelay doctor git-performance --repo . --json
+devrelay doctor secrets --repo . --manifest devrelay.toml --json
 devrelay doctor environment --repo . --manifest devrelay.toml --json
 devrelay environment status --project <project-id> --json
 ```

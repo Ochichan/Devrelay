@@ -68,6 +68,15 @@ pub struct EnvironmentDoctorReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SecretMappingDoctorReport {
+    pub repo: PathBuf,
+    pub required_secret_count: usize,
+    pub mapped_required_secret_count: usize,
+    pub missing_required_secret_count: usize,
+    pub issues: Vec<EnvironmentDoctorIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EnvironmentDoctorIssue {
     pub code: EnvironmentDoctorIssueCode,
     pub profile_name: Option<String>,
@@ -166,6 +175,24 @@ pub fn run_environment_doctor(
         mapped_required_secret_count,
         issues,
     })
+}
+
+pub fn run_secret_mapping_doctor(
+    root: &Path,
+    manifest: &Manifest,
+    local_secrets: &SecretProviderLocalConfig,
+) -> SecretMappingDoctorReport {
+    let mut issues = Vec::new();
+    let (required_secret_count, mapped_required_secret_count) =
+        collect_secret_issues(manifest, local_secrets, &mut issues);
+    SecretMappingDoctorReport {
+        repo: root.to_path_buf(),
+        required_secret_count,
+        mapped_required_secret_count,
+        missing_required_secret_count: required_secret_count
+            .saturating_sub(mapped_required_secret_count),
+        issues,
+    }
 }
 
 fn collect_profile_issues(
@@ -729,5 +756,33 @@ portable_paths = "strict"
                 .iter()
                 .any(|issue| { issue.code == EnvironmentDoctorIssueCode::MissingRequiredSecret })
         );
+    }
+
+    #[test]
+    fn secret_mapping_doctor_reports_missing_required_secret() {
+        let mut manifest = manifest_with_profiles([]);
+        manifest.secrets.insert(
+            "api_token".to_string(),
+            SecretConfig {
+                target: "API_TOKEN".to_string(),
+                required: true,
+                mode: SecretMode::Environment,
+                environment_variable: Some("API_TOKEN".to_string()),
+            },
+        );
+
+        let report = run_secret_mapping_doctor(
+            Path::new("/repo"),
+            &manifest,
+            &SecretProviderLocalConfig::default(),
+        );
+
+        assert_eq!(report.required_secret_count, 1);
+        assert_eq!(report.mapped_required_secret_count, 0);
+        assert_eq!(report.missing_required_secret_count, 1);
+        assert!(report.issues.iter().any(|issue| {
+            issue.code == EnvironmentDoctorIssueCode::MissingRequiredSecret
+                && issue.secret_name.as_deref() == Some("api_token")
+        }));
     }
 }

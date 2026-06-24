@@ -1898,7 +1898,7 @@ Conventions:
 - [ ] Add project safety doctor.
 - [x] Add path portability doctor.
 - [x] Add environment doctor.
-- [ ] Add secret mapping doctor.
+- [x] Add secret mapping doctor.
 - [ ] Add resource policy doctor.
 - [ ] Add anchor health doctor.
 - [ ] Add device trust doctor.

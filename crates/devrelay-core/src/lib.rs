@@ -161,7 +161,8 @@ pub use environment::{
 };
 pub use environment_doctor::{
     EnvironmentDoctorIssue, EnvironmentDoctorIssueCode, EnvironmentDoctorOptions,
-    EnvironmentDoctorReport, run_environment_doctor,
+    EnvironmentDoctorReport, SecretMappingDoctorReport, run_environment_doctor,
+    run_secret_mapping_doctor,
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{
