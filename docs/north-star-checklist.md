@@ -1229,15 +1229,15 @@ Conventions:
 
 ### M7.10 Tray/Menu Bar
 
-- [ ] Add tray icon.
+- [x] Add tray icon.
 - [ ] Show active project.
 - [ ] Show latest checkpoint age.
 - [ ] Show protection state.
 - [ ] Add continue target list.
 - [ ] Add run elsewhere shortcuts.
-- [ ] Add open dashboard.
+- [x] Add open dashboard.
 - [ ] Add pause background work.
-- [ ] Add quit.
+- [x] Add quit.
 - [ ] Add two-click handoff path.
 
 ### M7 Exit Gate

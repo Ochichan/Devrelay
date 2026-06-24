@@ -13,4 +13,4 @@ tauri-build.workspace = true
 devrelay-core = { path = "../../../crates/devrelay-core" }
 serde.workspace = true
 serde_json.workspace = true
-tauri.workspace = true
+tauri = { workspace = true, features = ["tray-icon"] }

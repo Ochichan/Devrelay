@@ -79,6 +79,7 @@ vm.runInContext(source, context, { filename: "app.js" });
 await new Promise((resolve) => setTimeout(resolve, 20));
 
 for (const eventName of [
+  "devrelay-tray-refresh",
   "devrelay-agent-connected",
   "devrelay-agent-event",
   "devrelay-agent-gap",
@@ -109,6 +110,7 @@ handlers.get("devrelay-agent-gap")({
 handlers.get("devrelay-agent-disconnected")({
   payload: "socket closed",
 });
+handlers.get("devrelay-tray-refresh")({});
 await new Promise((resolve) => setTimeout(resolve, 30));
 
 assert(invoked.includes("ui_bootstrap"), "event bridge flow did not refresh bootstrap state");

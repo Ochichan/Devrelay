@@ -858,6 +858,9 @@ function markEventBridgeDisconnected(payload) {
 }
 
 async function installEventListeners() {
+  await listen("devrelay-tray-refresh", () => {
+    refresh();
+  });
   await listen("devrelay-agent-event", (event) => {
     markEventBridgeEvent(event?.payload);
     queueEventRefresh(400);

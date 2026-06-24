@@ -19,9 +19,15 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{
+    Emitter, Manager,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::TrayIconBuilder,
+};
 
 static EVENT_BRIDGE_RPC_ID: AtomicU64 = AtomicU64::new(1);
+const TRAY_OPEN_ID: &str = "open-devrelay";
+const TRAY_REFRESH_ID: &str = "refresh-state";
 
 #[derive(Debug, Serialize)]
 struct RuntimeStatus {
@@ -362,6 +368,39 @@ fn spawn_agent_event_bridge(app: tauri::AppHandle) {
         .expect("failed to spawn DevRelay event bridge");
 }
 
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open DevRelay", true, None::<&str>)?;
+    let refresh = MenuItem::with_id(app, TRAY_REFRESH_ID, "Refresh State", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = PredefinedMenuItem::quit(app, Some("Quit DevRelay"))?;
+    let menu = Menu::with_items(app, &[&open, &refresh, &separator, &quit])?;
+
+    let mut tray = TrayIconBuilder::with_id("main")
+        .menu(&menu)
+        .tooltip("DevRelay")
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| {
+            if event.id() == TRAY_OPEN_ID {
+                show_main_window(app);
+            } else if event.id() == TRAY_REFRESH_ID {
+                let _ = app.emit("devrelay-tray-refresh", ());
+                show_main_window(app);
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 fn run_event_bridge_once(
     app: &tauri::AppHandle,
     cursor: &mut EventReplayCursor,
@@ -427,6 +466,7 @@ fn run_event_bridge_once(
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
+            setup_tray(app)?;
             spawn_agent_event_bridge(app.handle().clone());
             Ok(())
         })
