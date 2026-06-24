@@ -1260,14 +1260,14 @@ Conventions:
 
 ### M8.1 Extension Skeleton
 
-- [ ] Create VS Code extension package.
-- [ ] Add TypeScript build.
-- [ ] Add linting.
-- [ ] Add extension activation events.
-- [ ] Add local agent client.
-- [ ] Add connection status.
-- [ ] Add command registration.
-- [ ] Add extension tests.
+- [x] Create VS Code extension package.
+- [x] Add TypeScript build.
+- [x] Add linting.
+- [x] Add extension activation events.
+- [x] Add local agent client.
+- [x] Add connection status.
+- [x] Add command registration.
+- [x] Add extension tests.
 
 ### M8.2 Workspace Context Capture
 

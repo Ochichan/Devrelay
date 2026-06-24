@@ -1,0 +1,44 @@
+{
+  "name": "devrelay-vscode",
+  "displayName": "DevRelay",
+  "description": "Editor context bridge for the local DevRelay agent.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "devrelay",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:devrelay.refreshConnection",
+    "onCommand:devrelay.explainState"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "devrelay.refreshConnection",
+        "title": "DevRelay: Refresh Connection"
+      },
+      {
+        "command": "devrelay.explainState",
+        "title": "DevRelay: Explain Current State"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "lint": "node scripts/lint.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "check": "npm run lint && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "@types/vscode": "1.90.0",
+    "typescript": "5.5.4"
+  }
+}

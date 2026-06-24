@@ -353,13 +353,28 @@ See [ui-vertical-slice.md](ui-vertical-slice.md).
 
 ### M8. Editor Context: VS Code First
 
-Status: not started.
+Status: started.
 
 Goal: restore human context after handoff without pretending process state can
 move across operating systems.
 
 Keep this after verified code handoff. Editor context is valuable, but it must
 not block the first proof that code and writer authority move safely.
+
+Completed capabilities:
+
+- VS Code extension package skeleton.
+- TypeScript build, local lint, and Node test scripts.
+- Local agent IPC client using length-prefixed JSON-RPC.
+- Status bar connection state and refresh/explain commands.
+- Package metadata and client protocol tests.
+
+Open work:
+
+- Workspace context capture.
+- Unsaved buffer handling.
+- Context restore UX.
+- Extension-host validation inside VS Code.
 
 ### M9. Environment Hydration
 
