@@ -21,6 +21,18 @@ helpers. The agent or UI layer owns where that JSON record lives on disk.
 Progress updates can be wrapped in the stable `environment.progress` event
 payload so CLI, desktop, and editor clients can render the same state names.
 
+## Environment Doctor
+
+`devrelay doctor environment` diagnoses hydration blockers before the target
+code state is changed. It reports missing Nix, missing Docker/Podman, missing
+PowerShell, changed executable command hashes, missing required secret provider
+mappings, incompatible profile targets, and opt-in healthcheck failures.
+
+Each issue includes safe actions. Healthchecks are not run by default because
+they can be expensive or trigger toolchain setup. Use `--run-healthcheck` when
+the selected profile should be actively probed; Dev Container image preparation
+still requires the separate `--allow-devcontainer-prepare` flag.
+
 ## Native Bootstrap
 
 Native bootstrap profiles run on the host through the command declared in

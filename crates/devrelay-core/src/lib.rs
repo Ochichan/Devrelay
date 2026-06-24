@@ -45,6 +45,7 @@ mod data_plane;
 mod debounce;
 mod discovery;
 mod environment;
+mod environment_doctor;
 mod error;
 mod events;
 mod fs_safety;
@@ -139,6 +140,10 @@ pub use environment::{
     nix_lan_binary_cache_plan, nix_store_prefetch_plan, prepare_devcontainer_image,
     profile_targets_platform, run_devcontainer_healthcheck, run_native_bootstrap,
     run_native_healthcheck, run_nix_develop_healthcheck, select_environment_profile,
+};
+pub use environment_doctor::{
+    EnvironmentDoctorIssue, EnvironmentDoctorIssueCode, EnvironmentDoctorOptions,
+    EnvironmentDoctorReport, run_environment_doctor,
 };
 pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{

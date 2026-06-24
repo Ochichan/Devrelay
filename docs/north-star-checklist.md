@@ -1443,16 +1443,16 @@ Conventions:
 
 ### M9.8 Environment Doctor
 
-- [ ] Detect missing Nix.
-- [ ] Detect missing container engine.
-- [ ] Detect missing PowerShell.
-- [ ] Detect changed command hash.
-- [ ] Detect missing required secret.
-- [ ] Detect incompatible platform target.
-- [ ] Detect healthcheck failure.
-- [ ] Add suggested safe action for each error.
-- [ ] Add `devrelay doctor environment`.
-- [ ] Add doctor tests.
+- [x] Detect missing Nix.
+- [x] Detect missing container engine.
+- [x] Detect missing PowerShell.
+- [x] Detect changed command hash.
+- [x] Detect missing required secret.
+- [x] Detect incompatible platform target.
+- [x] Detect healthcheck failure.
+- [x] Add suggested safe action for each error.
+- [x] Add `devrelay doctor environment`.
+- [x] Add doctor tests.
 
 ### M9 Exit Gate
 

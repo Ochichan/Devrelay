@@ -17,3 +17,4 @@ clap.workspace = true
 devrelay-core = { path = "../devrelay-core" }
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true

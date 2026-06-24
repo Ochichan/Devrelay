@@ -13,24 +13,25 @@ use devrelay_core::{
     ApplySnapshotParams, ApplySnapshotResult, AuditEventInput, AuditEventRecord, AuditEventType,
     AuditOutcome, CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome,
     DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord, DiagnosticsExportParams,
-    DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole, DiscoveryService, ErrorInfo,
-    FabricIdentityBundle, FabricIdentityStore, GitPerformanceDoctorReport, GitRepo,
-    LineEndingDoctorReport, LocalConfig, LogRedactor, METHOD_APPLY_SNAPSHOT,
-    METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
-    METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, MetadataDb, PairingSession,
-    PairingStartRequest, PathDecision, PathPortabilityDoctorReport, PatternConfig,
-    PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
+    DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole, DiscoveryService,
+    EnvironmentDoctorOptions, EnvironmentDoctorReport, ErrorInfo, FabricIdentityBundle,
+    FabricIdentityStore, GitPerformanceDoctorReport, GitRepo, LineEndingDoctorReport, LocalConfig,
+    LogRedactor, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
+    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
+    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
+    MetadataDb, PairingSession, PairingStartRequest, PathDecision, PathPortabilityDoctorReport,
+    PatternConfig, PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
     ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RecoverListParams,
     RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
-    SecretScannerConfig, ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind,
-    SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult, StatusSummary,
-    StoredSession, StoredSnapshot, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
-    WorkspaceState, WslFilesystemDoctorReport, apply_snapshot, build_discovery_advertisement,
-    classify_untracked_paths, create_snapshot, current_platform_key, linux_systemd_user_template,
-    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file,
-    run_git_performance_doctor, run_line_ending_doctor, run_path_portability_doctor,
-    run_wsl_filesystem_doctor, workspace_id_for, write_snapshot_file,
+    SecretProviderLocalConfig, SecretScannerConfig, ServiceTemplate, ServiceTemplateInput,
+    ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult,
+    StatusSummary, StoredSession, StoredSnapshot, SystemEnvironmentCommandRunner, UntrackedPolicy,
+    WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, WslFilesystemDoctorReport,
+    apply_snapshot, build_discovery_advertisement, classify_untracked_paths, create_snapshot,
+    current_platform_key, linux_systemd_user_template, macos_launch_agent_template,
+    plan_apply_snapshot, read_snapshot_file, run_environment_doctor, run_git_performance_doctor,
+    run_line_ending_doctor, run_path_portability_doctor, run_wsl_filesystem_doctor,
+    workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -297,6 +298,24 @@ enum DoctorCommand {
         repo: PathBuf,
         #[arg(long)]
         target_platform: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Environment {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, default_value = "devrelay.toml")]
+        manifest: PathBuf,
+        #[arg(long)]
+        platform_key: Option<String>,
+        #[arg(long)]
+        secrets_config: Option<PathBuf>,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        run_healthcheck: bool,
+        #[arg(long)]
+        allow_devcontainer_prepare: bool,
         #[arg(long)]
         json: bool,
     },
@@ -1495,6 +1514,39 @@ fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
             let report = run_line_ending_doctor(&repo, &target_platform)?;
             render_line_ending_doctor(&report, json)
         }
+        DoctorCommand::Environment {
+            repo,
+            manifest,
+            platform_key,
+            secrets_config,
+            config,
+            run_healthcheck,
+            allow_devcontainer_prepare,
+            json,
+        } => {
+            let repo_root = resolve_git_root(&repo)?;
+            let manifest_path = if manifest.is_absolute() {
+                manifest
+            } else {
+                repo_root.join(manifest)
+            };
+            let manifest = Manifest::load(&manifest_path)
+                .with_context(|| format!("failed to load {}", manifest_path.display()))?;
+            let local_secrets = load_secret_provider_config(secrets_config.as_deref())?;
+            let platform_key = platform_key.unwrap_or_else(current_platform_key);
+            let mut options = EnvironmentDoctorOptions::for_platform(platform_key)
+                .with_run_healthcheck(run_healthcheck)
+                .with_allow_devcontainer_prepare(allow_devcontainer_prepare);
+            if let Some(command_trust) =
+                evaluate_environment_command_trust(&repo_root, &manifest, config)?
+            {
+                options = options.with_command_trust(command_trust);
+            }
+            let runner = SystemEnvironmentCommandRunner;
+            let report =
+                run_environment_doctor(&repo_root, &manifest, &local_secrets, &options, &runner)?;
+            render_environment_doctor(&report, json)
+        }
         DoctorCommand::WslFilesystem {
             repo,
             platform_key,
@@ -1506,6 +1558,45 @@ fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
             render_wsl_filesystem_doctor(&report, json)
         }
     }
+}
+
+fn load_secret_provider_config(path: Option<&Path>) -> anyhow::Result<SecretProviderLocalConfig> {
+    let Some(path) = path else {
+        return Ok(SecretProviderLocalConfig::default());
+    };
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+    {
+        Ok(serde_json::from_str(&raw)
+            .with_context(|| format!("failed to parse {}", path.display()))?)
+    } else {
+        Ok(toml::from_str(&raw).with_context(|| format!("failed to parse {}", path.display()))?)
+    }
+}
+
+fn evaluate_environment_command_trust(
+    repo_root: &Path,
+    manifest: &Manifest,
+    config: Option<PathBuf>,
+) -> anyhow::Result<Option<devrelay_core::CommandTrustEvaluation>> {
+    let home = DevRelayHome::resolve()?;
+    let db_path = home.metadata_db_path(&manifest.project_id);
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let (_, local_config) = load_or_default_config(config)?;
+    let command_hash = manifest.execution_trust_hash_with_files(repo_root)?;
+    let db = MetadataDb::open(db_path)?;
+    Ok(Some(db.evaluate_command_trust(
+        &manifest.project_id,
+        &local_config.device_id,
+        "manifest",
+        &command_hash,
+    )?))
 }
 
 fn render_git_performance_doctor(
@@ -1538,6 +1629,54 @@ fn render_git_performance_doctor(
         }
         for recommendation in &report.recommendations {
             println!("  recommendation: {}", recommendation.message);
+        }
+    }
+    Ok(())
+}
+
+fn render_environment_doctor(report: &EnvironmentDoctorReport, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!("environment doctor: {}", report.repo.display());
+        println!("  platform: {}", report.platform_key);
+        println!(
+            "  selected profile: {}",
+            report.selected_profile_name.as_deref().unwrap_or("<none>")
+        );
+        println!(
+            "  selected kind: {}",
+            report
+                .selected_profile_kind
+                .map(|kind| format!("{kind:?}"))
+                .unwrap_or_else(|| "<none>".to_string())
+        );
+        println!("  nix available: {}", report.nix_available);
+        println!(
+            "  container engine: {}",
+            report.container_engine.as_deref().unwrap_or("<none>")
+        );
+        println!("  powershell available: {}", report.powershell_available);
+        println!(
+            "  required secrets: {}/{} mapped",
+            report.mapped_required_secret_count, report.required_secret_count
+        );
+        if report.issues.is_empty() {
+            println!("  issues: none");
+        } else {
+            println!("  issues: {}", report.issues.len());
+            for issue in &report.issues {
+                println!("  - {:?}: {}", issue.code, issue.message);
+                if let Some(detail) = &issue.detail {
+                    println!("    detail: {detail}");
+                }
+                for action in &issue.safe_actions {
+                    println!("    action: {action}");
+                }
+            }
+        }
+        for line in &report.selection_explanation {
+            println!("  selection: {line}");
         }
     }
     Ok(())

@@ -1,6 +1,6 @@
 # DevRelay CLI
 
-Last updated: 2026-06-23
+Last updated: 2026-06-24
 
 The CLI is both a user surface and the safest way to exercise product
 invariants alongside the desktop UI. Commands should keep terminal output
@@ -21,6 +21,8 @@ devrelay snapshot export <snapshot-id> --project <project-id> --out snapshot.jso
 devrelay recover list --json
 devrelay recover show <snapshot-id> --json
 devrelay recover open <snapshot-id> --path ../recovery --register --name review --json
+devrelay doctor environment --repo . --manifest devrelay.toml --json
+devrelay doctor environment --repo . --manifest devrelay.toml --run-healthcheck --json
 devrelay continue --source ../source --target ../target --config devrelay.local.toml --json
 devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --dry-run
 devrelay apply --repo ../target --source . --snapshot snapshot.json --dirty-policy snapshot-and-fork --json
@@ -73,6 +75,14 @@ workspace states as inactive/active placeholders in local config.
 This command is the CLI ancestor of the first desktop vertical slice. It is not
 a substitute for real cross-device lease transfer and target preparation, but it
 exercises the same dirty-target safety vocabulary.
+
+## Environment Doctor
+
+`doctor environment` inspects environment hydration blockers without changing
+Git state. It checks declared profile compatibility, local adapter tools, local
+secret provider mappings, and existing command trust records. Healthchecks run
+only with `--run-healthcheck`; Dev Container image preparation also requires
+`--allow-devcontainer-prepare`.
 
 ## Exit Codes
 

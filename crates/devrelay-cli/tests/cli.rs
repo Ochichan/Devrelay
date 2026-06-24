@@ -534,6 +534,64 @@ fn doctor_wsl_filesystem_reports_device_mapping_guidance() {
 }
 
 #[test]
+fn doctor_environment_reports_missing_required_secret() {
+    let repo = std::env::temp_dir().join(format!(
+        "devrelay-doctor-environment-test-{}",
+        std::process::id()
+    ));
+    let home = repo.join("home");
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    std::fs::write(
+        repo.join("devrelay.toml"),
+        r#"
+schema = 1
+project_id = "12345678"
+name = "demo"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+
+[secrets.api_token]
+target = ".devrelay/secrets/api_token"
+required = true
+"#,
+    )
+    .unwrap();
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "doctor",
+            "environment",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--platform-key",
+            "darwin-arm64",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["platform_key"], "darwin-arm64");
+    assert_eq!(value["required_secret_count"], 1);
+    assert_eq!(value["mapped_required_secret_count"], 0);
+    assert!(value["issues"].as_array().unwrap().iter().any(|issue| {
+        issue["code"] == "missing-required-secret" && issue["secret_name"] == "api_token"
+    }));
+
+    let _ = std::fs::remove_dir_all(repo);
+}
+
+#[test]
 fn audit_list_and_export_redact_by_default() {
     use devrelay_core::{AuditEventInput, AuditEventType, AuditOutcome, DevRelayHome, MetadataDb};
 

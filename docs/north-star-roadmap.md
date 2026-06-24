@@ -421,10 +421,13 @@ Completed capabilities:
   hard exclusion of manifest secret file targets from snapshots.
 - Hydration state machine from cold through app-ready, failed/retry handling,
   JSON state persistence, and `environment.progress` event payloads.
+- Environment doctor report and `devrelay doctor environment` CLI for missing
+  Nix, missing container engines, missing PowerShell, changed command hashes,
+  missing required secrets, incompatible platform targets, and opt-in
+  healthcheck failures with safe actions.
 
 Open work:
 
-- Environment doctor.
 - CLI/UI visibility for hydration state.
 
 ### M10. Compute Fabric
