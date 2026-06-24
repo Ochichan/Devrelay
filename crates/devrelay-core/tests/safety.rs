@@ -1,12 +1,13 @@
 use devrelay_core::{
     AuditOutcome, BackgroundCheckpointManager, BackgroundCheckpointOutcome, BackgroundWorkspace,
-    CanonicalPublishRequest, CodeChangingTaskTestCommand, DebounceFlushReason, DebouncedCheckpoint,
-    DevRelayError, DevRelayHome, EnvironmentKind, GitRepo, HandoffJournalPhase, HandoffState,
-    LeaseRecord, LeaseState, Manifest, MetadataDb, ProtectionStatus, SESSION_ID_PREFIX,
-    SnapshotMetadata, SnapshotStore, TaskRunnerEnvironmentState, TaskRunnerSecretState,
-    TaskRunnerSidecarState, TaskRunnerWorkspace, TaskRunnerWorkspaceRetentionPolicy,
-    VerificationDetails, apply_snapshot, classification_reason, create_snapshot,
-    plan_code_changing_task,
+    CanonicalPublishRequest, CodeChangingTaskTestCommand, CommandTrustDecision, CommandTrustStatus,
+    DebounceFlushReason, DebouncedCheckpoint, DevRelayError, DevRelayHome, EnvironmentKind,
+    EnvironmentSelectionContext, GitRepo, HandoffJournalPhase, HandoffState, LeaseRecord,
+    LeaseState, Manifest, MetadataDb, ProtectionStatus, SESSION_ID_PREFIX, SnapshotMetadata,
+    SnapshotStore, TaskRunnerEnvironmentState, TaskRunnerSecretState, TaskRunnerSidecarState,
+    TaskRunnerWorkspace, TaskRunnerWorkspaceRetentionPolicy, VerificationDetails, apply_snapshot,
+    classification_reason, create_snapshot, environment_profile_command_scope,
+    plan_code_changing_task, select_environment_profile,
 };
 use std::ffi::OsString;
 use std::fs;
@@ -351,6 +352,137 @@ mod no_active_workspace_remote_task {
             },
             retention_policy: TaskRunnerWorkspaceRetentionPolicy::delete_on_cleanup(),
         }
+    }
+}
+
+mod no_untrusted_remote_execution {
+    //! Invariant: `safety/no_untrusted_remote_execution`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    #[test]
+    fn command_hash_requires_project_device_scoped_approval() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut db = MetadataDb::open(temp.path().join("metadata.sqlite")).unwrap();
+        db.ensure_default_session("project-a", "Safety Project", None)
+            .unwrap();
+        let scope = environment_profile_command_scope("remote");
+        let hash_a = "a".repeat(64);
+        let hash_b = "b".repeat(64);
+        let hash_c = "c".repeat(64);
+
+        let unapproved = db
+            .evaluate_command_trust("project-a", "device-a", &scope, &hash_a)
+            .unwrap();
+        assert_eq!(unapproved.status, CommandTrustStatus::Unapproved);
+        assert!(!unapproved.status.approved());
+
+        db.record_command_trust_decision_at(
+            "project-a",
+            "device-a",
+            &scope,
+            &hash_a,
+            CommandTrustDecision::TrustThisVersion,
+            10,
+        )
+        .unwrap();
+        let trusted = db
+            .evaluate_command_trust("project-a", "device-a", &scope, &hash_a)
+            .unwrap();
+        assert_eq!(trusted.status, CommandTrustStatus::Trusted);
+        assert!(trusted.status.approved());
+
+        let changed = db
+            .evaluate_command_trust("project-a", "device-a", &scope, &hash_b)
+            .unwrap();
+        assert_eq!(changed.status, CommandTrustStatus::Changed);
+        assert_eq!(changed.previous_hash.as_deref(), Some(hash_a.as_str()));
+        assert!(!changed.status.approved());
+
+        let other_device = db
+            .evaluate_command_trust("project-a", "device-b", &scope, &hash_a)
+            .unwrap();
+        assert_eq!(other_device.status, CommandTrustStatus::Unapproved);
+        assert!(!other_device.status.approved());
+
+        db.record_command_trust_decision_at(
+            "project-a",
+            "device-a",
+            &scope,
+            &hash_b,
+            CommandTrustDecision::Reject,
+            11,
+        )
+        .unwrap();
+        let rejected = db
+            .evaluate_command_trust("project-a", "device-a", &scope, &hash_b)
+            .unwrap();
+        assert_eq!(rejected.status, CommandTrustStatus::Rejected);
+        assert!(!rejected.status.approved());
+
+        db.record_command_trust_decision_at(
+            "project-a",
+            "device-a",
+            &scope,
+            &hash_c,
+            CommandTrustDecision::AllowOnce,
+            12,
+        )
+        .unwrap();
+        let before = db
+            .evaluate_command_trust("project-a", "device-a", &scope, &hash_c)
+            .unwrap();
+        assert_eq!(before.status, CommandTrustStatus::ApprovedOnce);
+        assert!(before.status.approved());
+
+        db.authorize_command_trust_at("project-a", "device-a", &scope, &hash_c, 13)
+            .unwrap();
+        let consumed = db
+            .evaluate_command_trust("project-a", "device-a", &scope, &hash_c)
+            .unwrap();
+        assert_eq!(consumed.status, CommandTrustStatus::Unapproved);
+        assert!(!consumed.status.approved());
+    }
+
+    #[test]
+    fn script_profile_is_not_selected_without_trusted_command_scope() {
+        let manifest = Manifest::parse(
+            r#"
+schema = 1
+project_id = "12345678"
+name = "remote-command"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+
+[environment.profiles.remote]
+kind = "script"
+targets = ["darwin-*", "linux-*"]
+command = ["sh", "-lc", "./bootstrap.sh"]
+"#,
+        )
+        .unwrap();
+        let scope = environment_profile_command_scope("remote");
+        let untrusted_context = EnvironmentSelectionContext::with_platform_key("darwin-arm64")
+            .with_available_kind(EnvironmentKind::Script);
+
+        let blocked = select_environment_profile(&manifest, &untrusted_context);
+
+        assert_eq!(blocked.profile_name, None);
+        assert_eq!(blocked.command_scope, None);
+        assert!(
+            blocked
+                .explanation
+                .iter()
+                .any(|line| line.contains("not trusted"))
+        );
+
+        let trusted_context = untrusted_context.with_trusted_command_scope(scope.clone());
+        let selected = select_environment_profile(&manifest, &trusted_context);
+
+        assert_eq!(selected.profile_name.as_deref(), Some("remote"));
+        assert_eq!(selected.command_scope.as_deref(), Some(scope.as_str()));
     }
 }
 

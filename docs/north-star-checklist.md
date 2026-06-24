@@ -2110,7 +2110,7 @@ Conventions:
 - [x] No implementation path can silently overwrite target work. Evidence suite: `safety/no_silent_overwrite`.
 - [x] No background path performs an automatic merge. Evidence suite: `safety/no_background_auto_merge`.
 - [x] No plaintext secret is included in a snapshot by default. Evidence suite: `safety/no_plaintext_secret_snapshot`.
-- [ ] No remote command runs without trust hash approval. Evidence suite: `safety/no_untrusted_remote_execution`.
+- [x] No remote command runs without trust hash approval. Evidence suite: `safety/no_untrusted_remote_execution`.
 - [x] No UI computes canonical state independently from the agent. Evidence suite: `safety/ui_has_no_state_authority`.
 - [x] No watcher event is treated as the source of truth. Evidence suite: `safety/watcher_events_are_hints`.
 - [x] No cross-device handoff succeeds before verification passes. Evidence suite: `safety/no_unverified_handoff`.
