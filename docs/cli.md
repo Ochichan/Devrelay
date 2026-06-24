@@ -25,6 +25,7 @@ devrelay doctor environment --repo . --manifest devrelay.toml --json
 devrelay doctor environment --repo . --manifest devrelay.toml --run-healthcheck --json
 devrelay doctor secrets --repo . --manifest devrelay.toml --json
 devrelay doctor resources --json
+devrelay doctor anchor-health --json
 devrelay environment status --project <project-id> --json
 devrelay metrics export --project <project-id> --out metrics.json --json
 devrelay continue --source ../source --target ../target --config devrelay.local.toml --json
@@ -102,6 +103,11 @@ power/foreground context, active adjustments, and effective CPU/hash/network
 limits. It warns when `resource_profile = "custom"` has no
 `[resource_policy_limits]` table and therefore falls back to default custom
 limits.
+
+`doctor anchor-health` wraps anchor status as a doctor report. It checks whether
+the device is configured as an anchor, verifies the local anchor metadata,
+snapshot, CAS, and startup paths, and returns safe actions such as
+`devrelay anchor init` when the anchor is not initialized.
 
 ## Local Metrics
 

@@ -361,6 +361,10 @@ enum DoctorCommand {
         #[arg(long)]
         json: bool,
     },
+    AnchorHealth {
+        #[arg(long)]
+        json: bool,
+    },
     WslFilesystem {
         #[arg(long, default_value = ".")]
         repo: PathBuf,
@@ -1308,6 +1312,31 @@ struct AnchorMaintenanceOutput {
 }
 
 #[derive(Debug, Serialize)]
+struct AnchorHealthDoctorReport {
+    initialized: bool,
+    role: AgentRole,
+    anchor_mode: AnchorMode,
+    home: PathBuf,
+    checks: Vec<AnchorHealthCheck>,
+    issues: Vec<AnchorHealthIssue>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnchorHealthCheck {
+    name: &'static str,
+    ok: bool,
+    path: Option<PathBuf>,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AnchorHealthIssue {
+    code: &'static str,
+    message: String,
+    safe_actions: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct AnchorStartupRecord {
     version: u32,
     role: AgentRole,
@@ -1720,6 +1749,11 @@ fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
             let report = run_resource_policy_doctor(&local_config, context);
             render_resource_policy_doctor(&report, json)
         }
+        DoctorCommand::AnchorHealth { json } => {
+            let status = anchor_status()?;
+            let report = anchor_health_doctor_report(&status);
+            render_anchor_health_doctor(&report, json)
+        }
         DoctorCommand::WslFilesystem {
             repo,
             platform_key,
@@ -1850,6 +1884,113 @@ fn render_environment_doctor(report: &EnvironmentDoctorReport, json: bool) -> an
         }
         for line in &report.selection_explanation {
             println!("  selection: {line}");
+        }
+    }
+    Ok(())
+}
+
+fn anchor_health_doctor_report(status: &AnchorStatusOutput) -> AnchorHealthDoctorReport {
+    let checks = vec![
+        AnchorHealthCheck {
+            name: "anchor-role",
+            ok: status.role == AgentRole::Anchor,
+            path: Some(status.config_path.clone()),
+            message: if status.role == AgentRole::Anchor {
+                "device is configured as an anchor".to_string()
+            } else {
+                "device is not configured as an anchor".to_string()
+            },
+        },
+        AnchorHealthCheck {
+            name: "metadata-db",
+            ok: status.metadata_db_exists,
+            path: Some(status.layout.metadata_db_path.clone()),
+            message: "anchor metadata database exists".to_string(),
+        },
+        AnchorHealthCheck {
+            name: "snapshot-root",
+            ok: status.snapshot_repo_root_exists,
+            path: Some(status.layout.snapshot_repo_root.clone()),
+            message: "anchor snapshot root exists".to_string(),
+        },
+        AnchorHealthCheck {
+            name: "cas-root",
+            ok: status.cas_root_exists,
+            path: Some(status.layout.cas_root.clone()),
+            message: "anchor CAS root exists".to_string(),
+        },
+        AnchorHealthCheck {
+            name: "startup-record",
+            ok: status.startup_path_exists,
+            path: Some(status.layout.startup_path.clone()),
+            message: "anchor startup record exists".to_string(),
+        },
+    ];
+
+    let mut issues = Vec::new();
+    if status.role != AgentRole::Anchor {
+        issues.push(AnchorHealthIssue {
+            code: "anchor-not-configured",
+            message: "This device is not configured as a DevRelay anchor.".to_string(),
+            safe_actions: vec![
+                "Run devrelay anchor init on the device that should act as anchor.".to_string(),
+            ],
+        });
+    } else if !status.initialized {
+        issues.push(AnchorHealthIssue {
+            code: "anchor-layout-incomplete",
+            message: "Anchor mode is enabled but required anchor storage is incomplete."
+                .to_string(),
+            safe_actions: vec![
+                "Run devrelay anchor init to recreate missing local anchor directories."
+                    .to_string(),
+                "Run devrelay anchor status --json to inspect exact paths.".to_string(),
+            ],
+        });
+    }
+
+    AnchorHealthDoctorReport {
+        initialized: status.initialized,
+        role: status.role,
+        anchor_mode: status.anchor_mode,
+        home: status.home.clone(),
+        checks,
+        issues,
+    }
+}
+
+fn render_anchor_health_doctor(
+    report: &AnchorHealthDoctorReport,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!("anchor health doctor");
+        println!("  initialized: {}", report.initialized);
+        println!("  role: {:?}", report.role);
+        println!("  anchor mode: {:?}", report.anchor_mode);
+        for check in &report.checks {
+            println!(
+                "  check {}: {}",
+                check.name,
+                if check.ok { "ok" } else { "fail" }
+            );
+            if let Some(path) = &check.path {
+                println!("    path: {}", path.display());
+            }
+            println!("    {}", check.message);
+        }
+        if report.issues.is_empty() {
+            println!("  issues: none");
+        } else {
+            println!("  issues: {}", report.issues.len());
+            for issue in &report.issues {
+                println!("  - {}: {}", issue.code, issue.message);
+                for action in &issue.safe_actions {
+                    println!("    action: {action}");
+                }
+            }
         }
     }
     Ok(())

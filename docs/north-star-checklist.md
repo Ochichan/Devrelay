@@ -1900,7 +1900,7 @@ Conventions:
 - [x] Add environment doctor.
 - [x] Add secret mapping doctor.
 - [x] Add resource policy doctor.
-- [ ] Add anchor health doctor.
+- [x] Add anchor health doctor.
 - [ ] Add device trust doctor.
 - [ ] Add one-click safe fixes where appropriate.
 - [ ] Add doctor UX tests.

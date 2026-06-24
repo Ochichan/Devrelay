@@ -2184,6 +2184,47 @@ fn doctor_resources_reports_effective_policy() {
 }
 
 #[test]
+fn doctor_anchor_health_reports_uninitialized_anchor() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-doctor-anchor-health-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["doctor", "anchor-health", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["initialized"], false);
+    assert_eq!(value["role"], "local-only");
+    assert!(
+        value["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| { check["name"] == "anchor-role" && check["ok"] == false })
+    );
+    assert!(value["issues"].as_array().unwrap().iter().any(|issue| {
+        issue["code"] == "anchor-not-configured"
+            && issue["safe_actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|action| action.as_str().unwrap().contains("devrelay anchor init"))
+    }));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn anchor_init_and_status_report_layout() {
     let root = std::env::temp_dir().join(format!("devrelay-anchor-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
