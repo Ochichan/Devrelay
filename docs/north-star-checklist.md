@@ -1102,13 +1102,13 @@ Conventions:
 ### M7.0 First Vertical Slice Scope
 
 - [x] Document first UI vertical slice.
-- [ ] Choose macOS/Linux-first or 3-OS-first UI policy.
-- [ ] Define agent commands/events required by the first slice.
-- [ ] Map dirty target UI actions to stable agent dirty policies.
-- [ ] Define Activity details payload for failed handoff.
-- [ ] Define real-device dogfood script for clean target handoff.
-- [ ] Define real-device dogfood script for dirty target preservation.
-- [ ] Keep Runs, scheduler, CAS details, lease epoch, Git OIDs, pairing certs, and advanced retention out of the first slice.
+- [x] Choose macOS/Linux-first or 3-OS-first UI policy.
+- [x] Define agent commands/events required by the first slice.
+- [x] Map dirty target UI actions to stable agent dirty policies.
+- [x] Define Activity details payload for failed handoff.
+- [x] Define real-device dogfood script for clean target handoff.
+- [x] Define real-device dogfood script for dirty target preservation.
+- [x] Keep Runs, scheduler, CAS details, lease epoch, Git OIDs, pairing certs, and advanced retention out of the first slice.
 
 ### M7.1 Tauri Shell
 
