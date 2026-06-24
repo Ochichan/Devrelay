@@ -407,14 +407,14 @@ safe.
 
 Completed capabilities:
 
-- Trust hash model for manifest commands.
+- Trust hash model for manifest commands and declared bootstrap fingerprint
+  file contents.
 - Profile selection.
 - Nix adapter.
 - Dev Container adapter.
 
 Open work:
 
-- Bootstrap script content hashing.
 - Native PowerShell/POSIX adapter.
 - Secret providers.
 - Hydration state machine.

@@ -1357,7 +1357,7 @@ Conventions:
 - [x] Hash environment command.
 - [x] Hash healthcheck command.
 - [x] Hash task command.
-- [ ] Hash bootstrap script content.
+- [x] Hash bootstrap script content.
 - [x] Store approved hashes per project/device.
 - [x] Detect changed command hash.
 - [x] Add "allow once" approval.

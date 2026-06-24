@@ -10,7 +10,7 @@ use crate::error::{DevRelayError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -357,28 +357,87 @@ impl Manifest {
     /// remapping, and healthcheck edits do affect it.
     pub fn execution_trust_hash(&self) -> String {
         let mut hasher = blake3::Hasher::new();
-        update_hash_field(&mut hasher, "devrelay.execution-trust.v1");
+        self.update_execution_trust_hash(&mut hasher);
+        hasher.finalize().to_hex().to_string()
+    }
+
+    /// Returns an execution trust hash that also includes declared bootstrap
+    /// fingerprint file contents rooted at `root`.
+    pub fn execution_trust_hash_with_files(&self, root: &Path) -> Result<String> {
+        let mut hasher = blake3::Hasher::new();
+        self.update_execution_trust_hash(&mut hasher);
+        self.update_fingerprint_file_hashes(&mut hasher, root)?;
+        Ok(hasher.finalize().to_hex().to_string())
+    }
+
+    fn update_execution_trust_hash(&self, hasher: &mut blake3::Hasher) {
+        update_hash_field(hasher, "devrelay.execution-trust.v1");
 
         if let Some(environment) = &self.environment {
             for (name, profile) in &environment.profiles {
-                update_hash_field(&mut hasher, "environment.profile");
-                update_hash_field(&mut hasher, name);
-                update_hash_command(&mut hasher, "command", &profile.command);
+                update_hash_field(hasher, "environment.profile");
+                update_hash_field(hasher, name);
+                update_hash_command(hasher, "command", &profile.command);
                 if let Some(healthcheck) = &profile.healthcheck {
-                    update_hash_command(&mut hasher, "healthcheck", healthcheck);
+                    update_hash_command(hasher, "healthcheck", healthcheck);
                 }
             }
         }
 
         for (name, task) in &self.tasks {
-            update_hash_field(&mut hasher, "task");
-            update_hash_field(&mut hasher, name);
-            update_hash_field(&mut hasher, &task.profile);
-            update_hash_command(&mut hasher, "command", &task.command);
+            update_hash_field(hasher, "task");
+            update_hash_field(hasher, name);
+            update_hash_field(hasher, &task.profile);
+            update_hash_command(hasher, "command", &task.command);
         }
-
-        hasher.finalize().to_hex().to_string()
     }
+
+    fn update_fingerprint_file_hashes(
+        &self,
+        hasher: &mut blake3::Hasher,
+        root: &Path,
+    ) -> Result<()> {
+        let Some(environment) = &self.environment else {
+            return Ok(());
+        };
+        for (profile_name, profile) in &environment.profiles {
+            let mut fingerprint_files = profile.fingerprint_files.clone();
+            fingerprint_files.sort();
+            for relative in fingerprint_files {
+                let path = resolve_fingerprint_file(root, &relative)?;
+                let bytes = fs::read(&path).map_err(|err| {
+                    DevRelayError::Manifest(format!(
+                        "failed to read environment.profiles.{profile_name}.fingerprint_files entry {relative:?}: {err}"
+                    ))
+                })?;
+                update_hash_field(hasher, "environment.profile.fingerprint_file");
+                update_hash_field(hasher, profile_name);
+                update_hash_field(hasher, &relative);
+                hasher.update(&(bytes.len() as u64).to_le_bytes());
+                hasher.update(&[0]);
+                hasher.update(&bytes);
+                hasher.update(&[0]);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn resolve_fingerprint_file(root: &Path, relative: &str) -> Result<PathBuf> {
+    let relative_path = Path::new(relative);
+    if relative_path.is_absolute()
+        || relative_path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(DevRelayError::Manifest(format!(
+            "fingerprint file path must stay inside the manifest root: {relative:?}"
+        )));
+    }
+    Ok(root.join(relative_path))
 }
 
 fn validate_command(field: &str, values: &[String]) -> Result<()> {
@@ -435,6 +494,7 @@ fn update_hash_field(hasher: &mut blake3::Hasher, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn minimal_manifest() -> String {
         r#"
@@ -807,5 +867,56 @@ command = ["cargo", "test"]
             original.execution_trust_hash(),
             changed.execution_trust_hash()
         );
+    }
+
+    #[test]
+    fn execution_trust_hash_with_files_changes_for_fingerprint_file_content() {
+        let temp = tempfile::tempdir().unwrap();
+        let script_dir = temp.path().join("scripts");
+        fs::create_dir_all(&script_dir).unwrap();
+        let script = script_dir.join("bootstrap.sh");
+        fs::write(&script, "echo first\n").unwrap();
+        let raw = manifest_with(
+            r#"
+[environment.profiles.dev]
+kind = "script"
+targets = ["local"]
+command = ["./scripts/bootstrap.sh"]
+fingerprint_files = ["scripts/bootstrap.sh"]
+"#,
+        );
+        let manifest = Manifest::parse(&raw).unwrap();
+        let manifest_only = manifest.execution_trust_hash();
+        let first = manifest
+            .execution_trust_hash_with_files(temp.path())
+            .unwrap();
+
+        fs::write(&script, "echo second\n").unwrap();
+        let second = manifest
+            .execution_trust_hash_with_files(temp.path())
+            .unwrap();
+
+        assert_ne!(first, second);
+        assert_eq!(manifest.execution_trust_hash(), manifest_only);
+    }
+
+    #[test]
+    fn execution_trust_hash_with_files_rejects_paths_outside_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let raw = manifest_with(
+            r#"
+[environment.profiles.dev]
+kind = "script"
+targets = ["local"]
+command = ["./scripts/bootstrap.sh"]
+fingerprint_files = ["../bootstrap.sh"]
+"#,
+        );
+        let manifest = Manifest::parse(&raw).unwrap();
+        let err = manifest
+            .execution_trust_hash_with_files(temp.path())
+            .unwrap_err();
+
+        assert!(err.to_string().contains("must stay inside"));
     }
 }
