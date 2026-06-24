@@ -1921,17 +1921,17 @@ Conventions:
 
 ### M14.5 User Documentation
 
-- [ ] Write quick start.
-- [ ] Write device pairing guide.
-- [ ] Write project registration guide.
-- [ ] Write handoff guide.
-- [ ] Write recovery guide.
-- [ ] Write target dirty explanation.
-- [ ] Write inactive edit explanation.
-- [ ] Write unsupported states guide.
-- [ ] Write security model guide.
-- [ ] Write backup guide.
-- [ ] Write troubleshooting guide.
+- [x] Write quick start.
+- [x] Write device pairing guide.
+- [x] Write project registration guide.
+- [x] Write handoff guide.
+- [x] Write recovery guide.
+- [x] Write target dirty explanation.
+- [x] Write inactive edit explanation.
+- [x] Write unsupported states guide.
+- [x] Write security model guide.
+- [x] Write backup guide.
+- [x] Write troubleshooting guide.
 
 ### M14.6 Dogfooding
 
@@ -1955,7 +1955,7 @@ Conventions:
 - [ ] Inactive edit flow is safe and understandable.
 - [ ] Normal handoff requires no Git command.
 - [ ] Local metrics remain private by default.
-- [ ] User docs cover recovery and backup.
+- [x] User docs cover recovery and backup.
 
 ## M15. North Star Release Candidate
 
