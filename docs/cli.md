@@ -24,6 +24,7 @@ devrelay recover open <snapshot-id> --path ../recovery --register --name review 
 devrelay doctor environment --repo . --manifest devrelay.toml --json
 devrelay doctor environment --repo . --manifest devrelay.toml --run-healthcheck --json
 devrelay doctor secrets --repo . --manifest devrelay.toml --json
+devrelay doctor resources --json
 devrelay environment status --project <project-id> --json
 devrelay metrics export --project <project-id> --out metrics.json --json
 devrelay continue --source ../source --target ../target --config devrelay.local.toml --json
@@ -95,6 +96,12 @@ projects and workspaces. It uses the local agent by default through
 `doctor secrets` is the narrow secret mapping check. It reports required
 manifest secrets, local provider mappings, and missing required mappings without
 running environment healthchecks or materializing secret values.
+
+`doctor resources` reports the configured resource profile, detected local
+power/foreground context, active adjustments, and effective CPU/hash/network
+limits. It warns when `resource_profile = "custom"` has no
+`[resource_policy_limits]` table and therefore falls back to default custom
+limits.
 
 ## Local Metrics
 

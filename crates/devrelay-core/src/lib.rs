@@ -118,9 +118,11 @@ pub use code_changing_task::{
 pub use config::{
     AgentRole, AnchorMode, DEVICE_ID_PREFIX, DeviceIdentity, EditorPreference, ForegroundLoad,
     LocalConfig, ProjectRegistryEntry, ProjectRegistryIndex, RedactedLocalConfig, ResourcePolicy,
-    ResourcePolicyContext, ResourcePolicyLimits, ResourcePowerSource, ResourceProfile,
-    WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry, WorkspaceState, detect_resource_policy_context,
-    generate_device_id, migrate_local_config, workspace_id_for,
+    ResourcePolicyAdjustment, ResourcePolicyContext, ResourcePolicyDoctorReport,
+    ResourcePolicyDoctorWarning, ResourcePolicyDoctorWarningCode, ResourcePolicyLimits,
+    ResourcePowerSource, ResourceProfile, WORKSPACE_ID_PREFIX, WorkspaceRegistryEntry,
+    WorkspaceState, detect_resource_policy_context, generate_device_id, migrate_local_config,
+    run_resource_policy_doctor, workspace_id_for,
 };
 pub use crash_journal::{
     CrashJournal, CrashJournalFaultPoint, CrashJournalOperationReplay, CrashJournalPhase,

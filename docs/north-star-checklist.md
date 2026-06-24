@@ -1899,7 +1899,7 @@ Conventions:
 - [x] Add path portability doctor.
 - [x] Add environment doctor.
 - [x] Add secret mapping doctor.
-- [ ] Add resource policy doctor.
+- [x] Add resource policy doctor.
 - [ ] Add anchor health doctor.
 - [ ] Add device trust doctor.
 - [ ] Add one-click safe fixes where appropriate.

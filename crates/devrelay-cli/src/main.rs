@@ -31,10 +31,11 @@ use devrelay_core::{
     SystemEnvironmentCommandRunner, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
     WorkspaceState, WslFilesystemDoctorReport, apply_snapshot, build_discovery_advertisement,
     classify_untracked_paths, collect_local_metrics_report, create_snapshot, current_platform_key,
-    linux_systemd_user_template, load_hydration_state, macos_launch_agent_template,
-    plan_apply_snapshot, read_snapshot_file, run_environment_doctor, run_git_performance_doctor,
-    run_line_ending_doctor, run_path_portability_doctor, run_secret_mapping_doctor,
-    run_wsl_filesystem_doctor, workspace_id_for, write_snapshot_file,
+    detect_resource_policy_context, linux_systemd_user_template, load_hydration_state,
+    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file, run_environment_doctor,
+    run_git_performance_doctor, run_line_ending_doctor, run_path_portability_doctor,
+    run_resource_policy_doctor, run_secret_mapping_doctor, run_wsl_filesystem_doctor,
+    workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -351,6 +352,12 @@ enum DoctorCommand {
         manifest: PathBuf,
         #[arg(long)]
         secrets_config: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    Resources {
+        #[arg(long)]
+        config: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -1707,6 +1714,12 @@ fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
             let report = run_secret_mapping_doctor(&repo_root, &manifest, &local_secrets);
             render_secret_mapping_doctor(&report, json)
         }
+        DoctorCommand::Resources { config, json } => {
+            let (_, local_config) = load_or_default_config(config)?;
+            let context = detect_resource_policy_context();
+            let report = run_resource_policy_doctor(&local_config, context);
+            render_resource_policy_doctor(&report, json)
+        }
         DoctorCommand::WslFilesystem {
             repo,
             platform_key,
@@ -1837,6 +1850,57 @@ fn render_environment_doctor(report: &EnvironmentDoctorReport, json: bool) -> an
         }
         for line in &report.selection_explanation {
             println!("  selection: {line}");
+        }
+    }
+    Ok(())
+}
+
+fn render_resource_policy_doctor(
+    report: &devrelay_core::ResourcePolicyDoctorReport,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!("resource policy doctor");
+        println!("  configured profile: {:?}", report.configured_profile);
+        println!("  effective profile: {:?}", report.effective_profile);
+        println!(
+            "  custom limits configured: {}",
+            report.custom_limits_configured
+        );
+        println!("  parallelism: {}", report.context.parallelism);
+        println!("  power source: {:?}", report.context.power_source);
+        println!("  low power mode: {}", report.context.low_power_mode);
+        println!("  foreground load: {:?}", report.context.foreground_load);
+        println!("  cpu slots: {}", report.limits.cpu_slot_limit);
+        println!(
+            "  hashing concurrency: {}",
+            report.limits.hashing_concurrency_limit
+        );
+        println!(
+            "  network cap: {}",
+            report
+                .limits
+                .network_bandwidth_kib_per_second
+                .map(|limit| format!("{limit} KiB/s"))
+                .unwrap_or_else(|| "<none>".to_string())
+        );
+        if report.active_adjustments.is_empty() {
+            println!("  active adjustments: none");
+        } else {
+            println!("  active adjustments: {:?}", report.active_adjustments);
+        }
+        if report.warnings.is_empty() {
+            println!("  warnings: none");
+        } else {
+            println!("  warnings: {}", report.warnings.len());
+            for warning in &report.warnings {
+                println!("  - {:?}: {}", warning.code, warning.message);
+                for action in &warning.safe_actions {
+                    println!("    action: {action}");
+                }
+            }
         }
     }
     Ok(())

@@ -2135,6 +2135,55 @@ fn config_save_and_load_round_trip() {
 }
 
 #[test]
+fn doctor_resources_reports_effective_policy() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-doctor-resources-test-{}",
+        std::process::id()
+    ));
+    let config_path = root.join("devrelay.local.toml");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let config = devrelay_core::LocalConfig {
+        resource_profile: devrelay_core::ResourceProfile::Custom,
+        resource_policy_limits: None,
+        ..devrelay_core::LocalConfig::new_for_local_device()
+    };
+    std::fs::write(&config_path, config.to_toml_string().unwrap()).unwrap();
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", root.join("home"))
+        .args([
+            "doctor",
+            "resources",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["configured_profile"], "custom");
+    assert_eq!(value["effective_profile"], "custom");
+    assert_eq!(value["custom_limits_configured"], false);
+    assert!(value["limits"]["cpu_slot_limit"].as_u64().unwrap() >= 1);
+    assert!(
+        value["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| { warning["code"] == "custom-limits-missing" })
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn anchor_init_and_status_report_layout() {
     let root = std::env::temp_dir().join(format!("devrelay-anchor-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

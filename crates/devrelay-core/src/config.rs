@@ -154,6 +154,38 @@ pub struct ResourcePolicy {
     pub limits: ResourcePolicyLimits,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResourcePolicyDoctorReport {
+    pub configured_profile: ResourceProfile,
+    pub effective_profile: ResourceProfile,
+    pub custom_limits_configured: bool,
+    pub context: ResourcePolicyContext,
+    pub limits: ResourcePolicyLimits,
+    pub active_adjustments: Vec<ResourcePolicyAdjustment>,
+    pub warnings: Vec<ResourcePolicyDoctorWarning>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResourcePolicyAdjustment {
+    BatteryMode,
+    LowPowerMode,
+    ForegroundBusy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResourcePolicyDoctorWarning {
+    pub code: ResourcePolicyDoctorWarningCode,
+    pub message: String,
+    pub safe_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResourcePolicyDoctorWarningCode {
+    CustomLimitsMissing,
+}
+
 impl ResourcePolicy {
     pub fn for_profile(profile: ResourceProfile) -> Self {
         let parallelism = std::thread::available_parallelism()
@@ -239,6 +271,48 @@ impl ResourcePolicy {
         }
 
         self
+    }
+}
+
+pub fn run_resource_policy_doctor(
+    config: &LocalConfig,
+    context: ResourcePolicyContext,
+) -> ResourcePolicyDoctorReport {
+    let policy = config.resource_policy_for_context(context);
+    let mut active_adjustments = Vec::new();
+    if context.power_source == ResourcePowerSource::Battery {
+        active_adjustments.push(ResourcePolicyAdjustment::BatteryMode);
+    }
+    if context.low_power_mode {
+        active_adjustments.push(ResourcePolicyAdjustment::LowPowerMode);
+    }
+    if context.foreground_load == ForegroundLoad::Busy {
+        active_adjustments.push(ResourcePolicyAdjustment::ForegroundBusy);
+    }
+
+    let mut warnings = Vec::new();
+    if config.resource_profile.canonical() == ResourceProfile::Custom
+        && config.resource_policy_limits.is_none()
+    {
+        warnings.push(ResourcePolicyDoctorWarning {
+            code: ResourcePolicyDoctorWarningCode::CustomLimitsMissing,
+            message: "Custom resource profile has no resource_policy_limits; using default custom limits.".to_string(),
+            safe_actions: vec![
+                "Add [resource_policy_limits] with cpu_slot_limit and hashing_concurrency_limit."
+                    .to_string(),
+                "Switch resource_profile to adaptive, instant, or eco.".to_string(),
+            ],
+        });
+    }
+
+    ResourcePolicyDoctorReport {
+        configured_profile: config.resource_profile,
+        effective_profile: policy.profile,
+        custom_limits_configured: config.resource_policy_limits.is_some(),
+        context,
+        limits: policy.limits,
+        active_adjustments,
+        warnings,
     }
 }
 
@@ -1031,6 +1105,39 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("cpu_slot_limit"));
+    }
+
+    #[test]
+    fn resource_policy_doctor_reports_effective_limits_and_warnings() {
+        let config = LocalConfig {
+            resource_profile: ResourceProfile::Custom,
+            resource_policy_limits: None,
+            ..LocalConfig::default()
+        };
+        let context = ResourcePolicyContext {
+            parallelism: 8,
+            power_source: ResourcePowerSource::Battery,
+            low_power_mode: false,
+            foreground_load: ForegroundLoad::Busy,
+        };
+
+        let report = run_resource_policy_doctor(&config, context);
+
+        assert_eq!(report.configured_profile, ResourceProfile::Custom);
+        assert_eq!(report.effective_profile, ResourceProfile::Custom);
+        assert_eq!(report.limits.cpu_slot_limit, 1);
+        assert_eq!(report.limits.hashing_concurrency_limit, 1);
+        assert_eq!(
+            report.active_adjustments,
+            vec![
+                ResourcePolicyAdjustment::BatteryMode,
+                ResourcePolicyAdjustment::ForegroundBusy
+            ]
+        );
+        assert_eq!(
+            report.warnings[0].code,
+            ResourcePolicyDoctorWarningCode::CustomLimitsMissing
+        );
     }
 
     #[test]
