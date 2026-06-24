@@ -80,6 +80,7 @@ mod snapshot_upload;
 mod sparse;
 mod storage;
 mod submodule;
+mod task_model;
 mod transport_security;
 mod watcher;
 mod wsl_doctor;
@@ -311,6 +312,10 @@ pub use submodule::{
     SUBMODULE_CHILD_SNAPSHOT_RELATIONSHIP, SubmoduleReport, SubmoduleState, SubmoduleStatus,
     dirty_submodule_child_manifest, dirty_submodule_child_project_id, inspect_submodules,
     inspect_submodules_with_depth, restore_clean_submodule_recorded_commit,
+};
+pub use task_model::{
+    TASK_RUN_ID_PREFIX, TaskDefinition, TaskRunInput, TaskRunState, generate_task_run_id,
+    task_command_definition_hash, task_definition, task_definitions_from_manifest,
 };
 pub use transport_security::{
     AuthenticatedControlPlanePeer, CONTROL_ALPN_PROTOCOL, CONTROL_PROTOCOL_VERSION,

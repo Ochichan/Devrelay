@@ -9,7 +9,7 @@ use crate::{
     CasStore, DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord, FabricRootIdentity,
     HandoffJournalPhase, HandoffJournalRecord, HandoffRecord, HandoffRecoveryOutcome, HandoffState,
     LeaseRecord, LeaseState, PairingSession, PairingState, Result, SessionState, SnapshotMetadata,
-    StoredSession, StoredSnapshot, compute_handshake_transcript_hash,
+    StoredSession, StoredSnapshot, TaskRunInput, TaskRunState, compute_handshake_transcript_hash,
     derive_short_authentication_string, ensure_sidecars_available, generate_ephemeral_pairing_key,
     generate_handoff_id, generate_pairing_id, generate_session_id, unix_now_seconds,
     validate_key_hex,
@@ -727,6 +727,56 @@ FROM task_runs
                 .then(right.task_run_id.cmp(&left.task_run_id))
         });
         Ok(runs)
+    }
+
+    pub fn record_task_run(&self, input: TaskRunInput) -> Result<TaskRunRecord> {
+        let now = unix_now_seconds();
+        self.record_task_run_at(input, now, now)
+    }
+
+    pub fn record_task_run_at(
+        &self,
+        input: TaskRunInput,
+        created_at_unix_seconds: u64,
+        updated_at_unix_seconds: u64,
+    ) -> Result<TaskRunRecord> {
+        validate_task_run_input(&input)?;
+        let metadata_json = serde_json::to_string(&input.metadata)?;
+        let state = input.state.as_str();
+        self.conn.execute(
+            r#"
+INSERT INTO task_runs (
+    task_run_id,
+    project_id,
+    session_id,
+    state,
+    command,
+    metadata_json,
+    created_at_unix_seconds,
+    updated_at_unix_seconds
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+"#,
+            (
+                input.task_run_id.as_str(),
+                input.project_id.as_str(),
+                input.session_id.as_deref(),
+                state,
+                input.command.as_deref(),
+                metadata_json.as_str(),
+                created_at_unix_seconds as i64,
+                updated_at_unix_seconds as i64,
+            ),
+        )?;
+        Ok(TaskRunRecord {
+            task_run_id: input.task_run_id,
+            project_id: input.project_id,
+            session_id: input.session_id,
+            state: state.to_string(),
+            command: input.command,
+            metadata: serde_json::from_str(&metadata_json)?,
+            created_at_unix_seconds,
+            updated_at_unix_seconds,
+        })
     }
 
     pub fn record_command_trust_decision(
@@ -2946,6 +2996,25 @@ fn task_run_record_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRunRecord> {
     })
 }
 
+fn validate_task_run_input(input: &TaskRunInput) -> Result<()> {
+    validate_non_empty("task_run_id", &input.task_run_id)?;
+    validate_non_empty("project_id", &input.project_id)?;
+    if !input.task_run_id.starts_with(crate::TASK_RUN_ID_PREFIX) {
+        return Err(crate::DevRelayError::Config(format!(
+            "task_run_id must start with {}",
+            crate::TASK_RUN_ID_PREFIX
+        )));
+    }
+    if let Some(session_id) = &input.session_id {
+        validate_non_empty("session_id", session_id)?;
+    }
+    if let Some(command) = &input.command {
+        validate_non_empty("command", command)?;
+    }
+    let _ = TaskRunState::parse(input.state.as_str());
+    Ok(())
+}
+
 fn command_trust_record_from_row(row: &Row<'_>) -> rusqlite::Result<CommandTrustRecord> {
     let raw_decision: String = row.get(5)?;
     let decision = CommandTrustDecision::parse(&raw_decision).ok_or_else(|| {
@@ -3706,6 +3775,58 @@ mod tests {
             db.list_audit_events(Some("project-a"), 10).unwrap(),
             vec![first]
         );
+    }
+
+    #[test]
+    fn records_and_filters_task_runs() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("metadata.sqlite");
+        let db = MetadataDb::open(&path).unwrap();
+        let session = db
+            .ensure_default_session("project-a", "Demo", None)
+            .unwrap();
+        db.ensure_default_session("project-b", "Other", None)
+            .unwrap();
+
+        let first = db
+            .record_task_run_at(
+                TaskRunInput {
+                    task_run_id: "tr_first".to_string(),
+                    project_id: "project-a".to_string(),
+                    session_id: Some(session.session_id.clone()),
+                    state: TaskRunState::Queued,
+                    command: Some("cargo test".to_string()),
+                    metadata: serde_json::json!({
+                        "task": "test",
+                        "command_definition_hash": "a".repeat(64),
+                    }),
+                },
+                100,
+                101,
+            )
+            .unwrap();
+        let second = db
+            .record_task_run_at(
+                TaskRunInput {
+                    task_run_id: "tr_second".to_string(),
+                    project_id: "project-b".to_string(),
+                    session_id: None,
+                    state: TaskRunState::Running,
+                    command: Some("cargo clippy".to_string()),
+                    metadata: serde_json::json!({ "task": "clippy" }),
+                },
+                100,
+                102,
+            )
+            .unwrap();
+
+        assert_eq!(first.state, "queued");
+        assert_eq!(first.metadata["task"], "test");
+        assert_eq!(
+            db.list_task_runs(Some("project-a"), 10).unwrap(),
+            vec![first.clone()]
+        );
+        assert_eq!(db.list_task_runs(None, 10).unwrap(), vec![second, first]);
     }
 
     #[test]

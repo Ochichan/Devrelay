@@ -432,13 +432,25 @@ Open work:
 
 ### M10. Compute Fabric
 
-Status: not started.
+Status: partial.
 
 Goal: use idle personal machines for builds, tests, benchmarks, and agent work
 without taking writer ownership.
 
-This remains out of scope until immutable execution snapshots, environment
-hydration, and active-session isolation are proven.
+Completed capabilities:
+
+- Task definitions parse from `devrelay.toml` and validate profile references,
+  commands, platform constraints, resource hints, and sandbox settings.
+- Task-specific command definition hashes include the task command, task
+  constraints, resource hints, and selected environment profile definition.
+- Task run metadata can be recorded and listed from the per-project metadata
+  database.
+
+Open work:
+
+- Immutable execution snapshots.
+- Scheduler constraints and scoring.
+- Remote runner, logs, artifacts, and cache.
 
 ### M11. Cross-Platform Hardening
 

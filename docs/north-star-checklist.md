@@ -1466,16 +1466,16 @@ Conventions:
 
 ### M10.1 Task Model
 
-- [ ] Parse task definitions from manifest.
-- [ ] Validate task profile exists.
-- [ ] Validate task command.
-- [ ] Validate task platform constraints.
-- [ ] Validate resource hints.
-- [ ] Validate sandbox setting.
-- [ ] Compute command definition hash.
+- [x] Parse task definitions from manifest.
+- [x] Validate task profile exists.
+- [x] Validate task command.
+- [x] Validate task platform constraints.
+- [x] Validate resource hints.
+- [x] Validate sandbox setting.
+- [x] Compute command definition hash.
 - [ ] Create immutable execution snapshot.
-- [ ] Store task run metadata.
-- [ ] Add task model tests.
+- [x] Store task run metadata.
+- [x] Add task model tests.
 
 ### M10.2 Scheduler Constraints
 

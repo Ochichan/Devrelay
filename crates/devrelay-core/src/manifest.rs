@@ -341,10 +341,23 @@ impl Manifest {
                     "tasks.{name}.profile must not be empty"
                 )));
             }
+            if let Some(environment) = &self.environment {
+                if !environment.profiles.contains_key(&task.profile) {
+                    return Err(DevRelayError::Manifest(format!(
+                        "tasks.{name}.profile references unknown environment profile {:?}",
+                        task.profile
+                    )));
+                }
+            } else {
+                return Err(DevRelayError::Manifest(format!(
+                    "tasks.{name}.profile requires an environment profile"
+                )));
+            }
             validate_command(&format!("tasks.{name}.command"), &task.command)?;
-            validate_unique(&format!("tasks.{name}.platforms"), &task.platforms)?;
-            validate_unique(&format!("tasks.{name}.outputs"), &task.outputs)?;
-            validate_unique(&format!("tasks.{name}.features"), &task.features)?;
+            validate_optional_string_array(&format!("tasks.{name}.platforms"), &task.platforms)?;
+            validate_optional_string_array(&format!("tasks.{name}.outputs"), &task.outputs)?;
+            validate_optional_string_array(&format!("tasks.{name}.features"), &task.features)?;
+            validate_task_resource_hints(name, task)?;
         }
 
         Ok(())
@@ -477,6 +490,24 @@ fn validate_optional_string_array(field: &str, values: &[String]) -> Result<()> 
         )));
     }
     validate_unique(field, values)
+}
+
+fn validate_task_resource_hints(name: &str, task: &TaskConfig) -> Result<()> {
+    if let Some(cpu) = task.cpu
+        && !(1..=1024).contains(&cpu)
+    {
+        return Err(DevRelayError::Manifest(format!(
+            "tasks.{name}.cpu must be between 1 and 1024"
+        )));
+    }
+    if let Some(memory_mib) = task.memory_mib
+        && memory_mib < 64
+    {
+        return Err(DevRelayError::Manifest(format!(
+            "tasks.{name}.memory_mib must be at least 64"
+        )));
+    }
+    Ok(())
 }
 
 fn update_hash_command(hasher: &mut blake3::Hasher, field: &str, values: &[String]) {
@@ -736,6 +767,117 @@ command = ["cargo", "test"]
 [tasks.test]
 profile = "dev"
 command = []
+"#,
+                ),
+            ),
+            (
+                "unknown task profile",
+                manifest_with(
+                    r#"
+[environment.profiles.dev]
+kind = "native"
+targets = ["local"]
+command = ["echo", "dev"]
+
+[tasks.test]
+profile = "missing"
+command = ["cargo", "test"]
+"#,
+                ),
+            ),
+            (
+                "empty task platform",
+                manifest_with(
+                    r#"
+[environment.profiles.dev]
+kind = "native"
+targets = ["local"]
+command = ["echo", "dev"]
+
+[tasks.test]
+profile = "dev"
+command = ["cargo", "test"]
+platforms = [""]
+"#,
+                ),
+            ),
+            (
+                "empty task output",
+                manifest_with(
+                    r#"
+[environment.profiles.dev]
+kind = "native"
+targets = ["local"]
+command = ["echo", "dev"]
+
+[tasks.test]
+profile = "dev"
+command = ["cargo", "test"]
+outputs = [""]
+"#,
+                ),
+            ),
+            (
+                "empty task feature",
+                manifest_with(
+                    r#"
+[environment.profiles.dev]
+kind = "native"
+targets = ["local"]
+command = ["echo", "dev"]
+
+[tasks.test]
+profile = "dev"
+command = ["cargo", "test"]
+features = [""]
+"#,
+                ),
+            ),
+            (
+                "zero task cpu",
+                manifest_with(
+                    r#"
+[environment.profiles.dev]
+kind = "native"
+targets = ["local"]
+command = ["echo", "dev"]
+
+[tasks.test]
+profile = "dev"
+command = ["cargo", "test"]
+cpu = 0
+"#,
+                ),
+            ),
+            (
+                "too-small task memory",
+                manifest_with(
+                    r#"
+[environment.profiles.dev]
+kind = "native"
+targets = ["local"]
+command = ["echo", "dev"]
+
+[tasks.test]
+profile = "dev"
+command = ["cargo", "test"]
+memory_mib = 1
+"#,
+                ),
+            ),
+            (
+                "invalid task sandbox",
+                manifest_with(
+                    r#"
+[environment.profiles.dev]
+kind = "native"
+targets = ["local"]
+command = ["echo", "dev"]
+
+[tasks.test]
+profile = "dev"
+command = ["cargo", "test"]
+sandbox = "spaceship"
 "#,
                 ),
             ),
