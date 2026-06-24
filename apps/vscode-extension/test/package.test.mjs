@@ -15,6 +15,7 @@ test("package exposes the VS Code extension entrypoint", () => {
     "onCommand:devrelay.captureContext",
     "onCommand:devrelay.captureUnsavedBuffers",
     "onCommand:devrelay.restoreUnsavedBuffers",
+    "onCommand:devrelay.openDashboard",
   ]);
 });
 
@@ -26,6 +27,7 @@ test("contributed commands are registered by the extension", () => {
     "devrelay.captureContext",
     "devrelay.captureUnsavedBuffers",
     "devrelay.restoreUnsavedBuffers",
+    "devrelay.openDashboard",
   ]);
 
   for (const command of commands) {

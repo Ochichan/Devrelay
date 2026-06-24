@@ -374,9 +374,12 @@ Completed capabilities:
   `editor.context.update` RPC with durable audit evidence.
 - Unsaved dirty buffer capture and restore through local VS Code SecretStorage,
   default-off settings, untitled-buffer opt-in, and dirty untitled restore.
+- Status bar active/inactive/handoff/protection-delayed states from agent
+  leases and handoffs, plus explain and dashboard commands.
 
 Open work:
 
+- Handoff edit guard.
 - Context restore UX.
 - Extension-host validation inside VS Code.
 

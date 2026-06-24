@@ -18,7 +18,8 @@
     "onCommand:devrelay.explainState",
     "onCommand:devrelay.captureContext",
     "onCommand:devrelay.captureUnsavedBuffers",
-    "onCommand:devrelay.restoreUnsavedBuffers"
+    "onCommand:devrelay.restoreUnsavedBuffers",
+    "onCommand:devrelay.openDashboard"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -42,6 +43,10 @@
       {
         "command": "devrelay.restoreUnsavedBuffers",
         "title": "DevRelay: Restore Unsaved Buffers"
+      },
+      {
+        "command": "devrelay.openDashboard",
+        "title": "DevRelay: Open Dashboard"
       }
     ],
     "configuration": {

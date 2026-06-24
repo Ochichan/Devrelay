@@ -6,7 +6,14 @@ import {
   contextSummary,
   editorContextUpdateParams,
 } from "./contextCapture";
-import { ConnectionStatus, statusText, statusTooltip } from "./status";
+import {
+  ConnectionStatus,
+  HandoffSummary,
+  LeaseSummary,
+  statusFromAgentState,
+  statusText,
+  statusTooltip,
+} from "./status";
 import {
   captureUnsavedBuffers,
   clearUnsavedBufferCapsule,
@@ -19,6 +26,18 @@ import {
 interface AgentHealthResult {
   status: string;
   version?: string;
+}
+
+interface SettingsGetResult {
+  device_id: string;
+}
+
+interface LeasesListResult {
+  leases: LeaseSummary[];
+}
+
+interface HandoffsListResult {
+  handoffs: HandoffSummary[];
 }
 
 interface EditorContextUpdateResult {
@@ -49,10 +68,26 @@ export function activate(context: vscode.ExtensionContext): void {
     setStatus({ kind: "connecting", detail: "Checking local agent connection" });
     try {
       const health = await client.call<AgentHealthResult>("agent.health");
-      const detail = health.version
-        ? `Agent ${health.status} (${health.version})`
-        : `Agent ${health.status}`;
-      setStatus({ kind: "connected", detail });
+      try {
+        const [settings, leases, handoffs] = await Promise.all([
+          client.call<SettingsGetResult>("settings.get"),
+          client.call<LeasesListResult>("leases.list"),
+          client.call<HandoffsListResult>("handoffs.list", { include_journal: false }),
+        ]);
+        setStatus(
+          statusFromAgentState({
+            deviceId: settings.device_id,
+            leases: leases.leases,
+            handoffs: handoffs.handoffs,
+          })
+        );
+      } catch (statusError) {
+        const message = statusError instanceof Error ? statusError.message : String(statusError);
+        const detail = health.version
+          ? `Agent ${health.status} (${health.version}); editor state delayed: ${message}`
+          : `Agent ${health.status}; editor state delayed: ${message}`;
+        setStatus({ kind: "protection-delayed", detail });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus({ kind: "unavailable", detail: message });
@@ -132,6 +167,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  const openDashboard = () => {
+    output.appendLine(`Dashboard opened: ${new Date().toISOString()}`);
+    output.appendLine(`Current state: ${lastStatus.detail}`);
+    output.show(true);
+  };
+
   context.subscriptions.push(
     output,
     statusBar,
@@ -139,6 +180,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("devrelay.captureContext", captureContext),
     vscode.commands.registerCommand("devrelay.captureUnsavedBuffers", captureUnsavedBuffersCommand),
     vscode.commands.registerCommand("devrelay.restoreUnsavedBuffers", restoreUnsavedBuffersCommand),
+    vscode.commands.registerCommand("devrelay.openDashboard", openDashboard),
     vscode.commands.registerCommand("devrelay.explainState", () => {
       void vscode.window.showInformationMessage(lastStatus.detail);
     })

@@ -1299,12 +1299,12 @@ Conventions:
 
 ### M8.4 Active/Inactive Indicator
 
-- [ ] Show active writer state in status bar.
-- [ ] Show inactive workspace warning.
-- [ ] Show handoff-in-progress state.
-- [ ] Show protection delayed state.
-- [ ] Add command to explain state.
-- [ ] Add command to open dashboard.
+- [x] Show active writer state in status bar.
+- [x] Show inactive workspace warning.
+- [x] Show handoff-in-progress state.
+- [x] Show protection delayed state.
+- [x] Add command to explain state.
+- [x] Add command to open dashboard.
 
 ### M8.5 Handoff Edit Guard
 
