@@ -6,10 +6,13 @@
 
 use crate::{
     AuthenticatedControlPlanePeer, ControlPlaneReplayCache, ControlPlaneRequestEnvelope,
-    ControlPlaneTransportPolicy, DevRelayError, DevicesListResult, MetadataDb,
-    ProjectRegistryIndex, Result, RpcError, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
-    RpcVersionNegotiationResult, StoredSnapshot, ValidatedDeviceCertificate, WorkspaceState,
-    require_authenticated_control_channel, validate_control_request_envelope,
+    ControlPlaneTransportPolicy, DevRelayError, DevicesListResult, HandoffBeginParams,
+    HandoffCommitParams, HandoffIdParams, HandoffMutationResult, HandoffRecord,
+    HandoffRecoverParams, HandoffRecoverResult, HandoffStatus, HandoffsListParams,
+    HandoffsListResult, MetadataDb, ProjectRegistryIndex, Result, RpcError, RpcRequest,
+    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, StoredSnapshot,
+    ValidatedDeviceCertificate, WorkspaceState, require_authenticated_control_channel,
+    validate_control_request_envelope,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,6 +30,7 @@ pub const METHOD_REMOTE_RECOVERY_LIST: &str = "recovery.list";
 pub const METHOD_REMOTE_RECOVERY_OPEN: &str = "recovery.open";
 pub const DEFAULT_REMOTE_SNAPSHOT_LIST_LIMIT: usize = 100;
 pub const MAX_REMOTE_SNAPSHOT_LIST_LIMIT: usize = 500;
+pub const DEFAULT_REMOTE_HANDOFF_TTL_SECONDS: u64 = 600;
 
 pub const REMOTE_RPC_METHODS: &[&str] = &[
     METHOD_RPC_NEGOTIATE,
@@ -225,6 +229,187 @@ fn remote_snapshot_summary_from(snapshot: StoredSnapshot) -> RemoteSnapshotSumma
     }
 }
 
+pub fn remote_handoffs_list(
+    metadata: &MetadataDb,
+    params: HandoffsListParams,
+) -> Result<HandoffsListResult> {
+    let handoffs = metadata
+        .list_handoffs(params.project.as_deref())?
+        .into_iter()
+        .map(|record| {
+            let journal = if params.include_journal {
+                metadata.list_handoff_journal(&record.handoff_id)?
+            } else {
+                Vec::new()
+            };
+            Ok(HandoffStatus { record, journal })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(HandoffsListResult { handoffs })
+}
+
+pub fn remote_handoff_begin(
+    metadata: &mut MetadataDb,
+    actor_device_id: &str,
+    params: HandoffBeginParams,
+) -> Result<HandoffMutationResult> {
+    let lease = metadata
+        .get_lease(&params.lease_id)?
+        .ok_or_else(|| DevRelayError::Config(format!("unknown lease {}", params.lease_id)))?;
+    require_project(&lease.project_id, &params.project, "handoff.begin")?;
+    require_actor(
+        lease.holder_device_id.as_deref(),
+        actor_device_id,
+        "handoff.begin source",
+    )?;
+    let handoff = metadata.begin_handoff(
+        &params.lease_id,
+        actor_device_id,
+        &params.target_device_id,
+        &params.source_generation,
+        params
+            .ttl_seconds
+            .unwrap_or(DEFAULT_REMOTE_HANDOFF_TTL_SECONDS),
+    )?;
+    handoff_mutation_result(metadata, handoff)
+}
+
+pub fn remote_handoff_target_verify(
+    metadata: &mut MetadataDb,
+    actor_device_id: &str,
+    params: HandoffIdParams,
+) -> Result<HandoffMutationResult> {
+    let handoff = require_handoff_project(metadata, &params.project, &params.handoff_id)?;
+    require_actor(
+        Some(&handoff.target_device_id),
+        actor_device_id,
+        "handoff.target.verify target",
+    )?;
+    let handoff = metadata.mark_handoff_target_verified(&params.handoff_id)?;
+    handoff_mutation_result(metadata, handoff)
+}
+
+pub fn remote_handoff_source_ready(
+    metadata: &mut MetadataDb,
+    actor_device_id: &str,
+    params: HandoffIdParams,
+) -> Result<HandoffMutationResult> {
+    let handoff = require_handoff_project(metadata, &params.project, &params.handoff_id)?;
+    require_actor(
+        Some(&handoff.source_device_id),
+        actor_device_id,
+        "handoff.source.ready source",
+    )?;
+    let handoff = metadata.mark_handoff_source_ready(&params.handoff_id)?;
+    handoff_mutation_result(metadata, handoff)
+}
+
+pub fn remote_handoff_commit(
+    metadata: &mut MetadataDb,
+    actor_device_id: &str,
+    params: HandoffCommitParams,
+    now_unix_seconds: u64,
+) -> Result<HandoffMutationResult> {
+    let handoff = require_handoff_project(metadata, &params.project, &params.handoff_id)?;
+    require_actor(
+        Some(&handoff.source_device_id),
+        actor_device_id,
+        "handoff.commit source",
+    )?;
+    let handoff = metadata.commit_handoff(
+        &params.handoff_id,
+        &params.observed_source_generation,
+        now_unix_seconds,
+    )?;
+    handoff_mutation_result(metadata, handoff)
+}
+
+pub fn remote_handoff_abort(
+    metadata: &mut MetadataDb,
+    actor_device_id: &str,
+    params: HandoffIdParams,
+) -> Result<HandoffMutationResult> {
+    let handoff = require_handoff_project(metadata, &params.project, &params.handoff_id)?;
+    require_source_or_target_actor(&handoff, actor_device_id, "handoff.abort")?;
+    let handoff = metadata.abort_handoff(&params.handoff_id)?;
+    handoff_mutation_result(metadata, handoff)
+}
+
+pub fn remote_handoff_recover(
+    metadata: &mut MetadataDb,
+    actor_device_id: &str,
+    params: HandoffRecoverParams,
+    now_unix_seconds: u64,
+) -> Result<HandoffRecoverResult> {
+    let handoff = require_handoff_project(metadata, &params.project, &params.handoff_id)?;
+    require_source_or_target_actor(&handoff, actor_device_id, "handoff.recover")?;
+    let outcome = metadata.recover_handoff(
+        &params.handoff_id,
+        &params.observed_source_generation,
+        now_unix_seconds,
+    )?;
+    let handoff = require_handoff_project(metadata, &params.project, &params.handoff_id)?;
+    let journal = metadata.list_handoff_journal(&params.handoff_id)?;
+    Ok(HandoffRecoverResult {
+        outcome,
+        handoff,
+        journal,
+    })
+}
+
+fn handoff_mutation_result(
+    metadata: &MetadataDb,
+    handoff: HandoffRecord,
+) -> Result<HandoffMutationResult> {
+    let journal = metadata.list_handoff_journal(&handoff.handoff_id)?;
+    Ok(HandoffMutationResult { handoff, journal })
+}
+
+fn require_handoff_project(
+    metadata: &MetadataDb,
+    expected_project: &str,
+    handoff_id: &str,
+) -> Result<HandoffRecord> {
+    let handoff = metadata
+        .get_handoff(handoff_id)?
+        .ok_or_else(|| DevRelayError::Config(format!("unknown handoff {handoff_id}")))?;
+    require_project(&handoff.project_id, expected_project, "remote handoff")?;
+    Ok(handoff)
+}
+
+fn require_project(actual: &str, expected: &str, operation: &str) -> Result<()> {
+    if actual != expected {
+        return Err(DevRelayError::Config(format!(
+            "{operation} project mismatch: expected {expected}, got {actual}"
+        )));
+    }
+    Ok(())
+}
+
+fn require_actor(expected: Option<&str>, actor_device_id: &str, operation: &str) -> Result<()> {
+    if expected != Some(actor_device_id) {
+        return Err(DevRelayError::Config(format!(
+            "{operation} actor mismatch: expected {}, got {actor_device_id}",
+            expected.unwrap_or("<none>")
+        )));
+    }
+    Ok(())
+}
+
+fn require_source_or_target_actor(
+    handoff: &HandoffRecord,
+    actor_device_id: &str,
+    operation: &str,
+) -> Result<()> {
+    if actor_device_id != handoff.source_device_id && actor_device_id != handoff.target_device_id {
+        return Err(DevRelayError::Config(format!(
+            "{operation} actor mismatch: expected source {} or target {}, got {actor_device_id}",
+            handoff.source_device_id, handoff.target_device_id
+        )));
+    }
+    Ok(())
+}
+
 pub fn preflight_remote_rpc_request(
     peer: Option<ValidatedDeviceCertificate>,
     control_envelope: &ControlPlaneRequestEnvelope,
@@ -269,7 +454,8 @@ mod tests {
     use crate::rpc::{RPC_INVALID_REQUEST, RPC_METHOD_NOT_FOUND};
     use crate::{
         CONTROL_PROTOCOL_VERSION, ControlPlaneTransportSecurity, DeviceIdentity,
-        ProjectRegistryEntry, SessionState, SnapshotMetadata, WorkspaceRegistryEntry,
+        HandoffRecoveryOutcome, HandoffState, LeaseRecord, LeaseState, ProjectRegistryEntry,
+        SessionState, SnapshotMetadata, WorkspaceRegistryEntry,
     };
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -565,6 +751,191 @@ mod tests {
         );
     }
 
+    #[test]
+    fn remote_handoff_handlers_complete_role_gated_flow() {
+        let (_temp, mut db, lease) = handoff_db();
+        let begin = remote_handoff_begin(
+            &mut db,
+            "device-a",
+            HandoffBeginParams {
+                project: "project123".to_string(),
+                lease_id: lease.lease_id.clone(),
+                target_device_id: "device-b".to_string(),
+                source_generation: "gen-1".to_string(),
+                ttl_seconds: Some(60),
+            },
+        )
+        .unwrap();
+        assert_eq!(begin.handoff.state, HandoffState::TargetPrepare);
+        assert_eq!(begin.journal.len(), 2);
+
+        let wrong_actor = remote_handoff_target_verify(
+            &mut db,
+            "device-a",
+            HandoffIdParams {
+                project: "project123".to_string(),
+                handoff_id: begin.handoff.handoff_id.clone(),
+            },
+        )
+        .unwrap_err();
+        assert!(wrong_actor.to_string().contains("actor mismatch"));
+
+        let verified = remote_handoff_target_verify(
+            &mut db,
+            "device-b",
+            HandoffIdParams {
+                project: "project123".to_string(),
+                handoff_id: begin.handoff.handoff_id.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(verified.handoff.state, HandoffState::TargetVerified);
+
+        let ready = remote_handoff_source_ready(
+            &mut db,
+            "device-a",
+            HandoffIdParams {
+                project: "project123".to_string(),
+                handoff_id: begin.handoff.handoff_id.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(ready.handoff.state, HandoffState::SourceReady);
+
+        let committed = remote_handoff_commit(
+            &mut db,
+            "device-a",
+            HandoffCommitParams {
+                project: "project123".to_string(),
+                handoff_id: begin.handoff.handoff_id.clone(),
+                observed_source_generation: "gen-1".to_string(),
+            },
+            begin.handoff.expires_at_unix_seconds - 1,
+        )
+        .unwrap();
+        assert_eq!(committed.handoff.state, HandoffState::Committed);
+
+        let updated_lease = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(updated_lease.holder_device_id.as_deref(), Some("device-b"));
+        let listed = remote_handoffs_list(
+            &db,
+            HandoffsListParams {
+                project: Some("project123".to_string()),
+                include_journal: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(listed.handoffs.len(), 1);
+        assert!(listed.handoffs[0].journal.len() >= 4);
+    }
+
+    #[test]
+    fn remote_handoff_begin_rejects_project_mismatch_before_mutation() {
+        let (_temp, mut db, lease) = handoff_db();
+
+        let err = remote_handoff_begin(
+            &mut db,
+            "device-a",
+            HandoffBeginParams {
+                project: "other-project".to_string(),
+                lease_id: lease.lease_id,
+                target_device_id: "device-b".to_string(),
+                source_generation: "gen-1".to_string(),
+                ttl_seconds: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("project mismatch"));
+        assert!(db.list_handoffs(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn remote_handoff_abort_and_recover_are_actor_gated() {
+        let (_temp, mut db, lease) = handoff_db();
+        let aborting = remote_handoff_begin(
+            &mut db,
+            "device-a",
+            HandoffBeginParams {
+                project: "project123".to_string(),
+                lease_id: lease.lease_id.clone(),
+                target_device_id: "device-b".to_string(),
+                source_generation: "gen-1".to_string(),
+                ttl_seconds: Some(60),
+            },
+        )
+        .unwrap();
+        let wrong_abort = remote_handoff_abort(
+            &mut db,
+            "device-c",
+            HandoffIdParams {
+                project: "project123".to_string(),
+                handoff_id: aborting.handoff.handoff_id.clone(),
+            },
+        )
+        .unwrap_err();
+        assert!(wrong_abort.to_string().contains("actor mismatch"));
+
+        let aborted = remote_handoff_abort(
+            &mut db,
+            "device-b",
+            HandoffIdParams {
+                project: "project123".to_string(),
+                handoff_id: aborting.handoff.handoff_id,
+            },
+        )
+        .unwrap();
+        assert_eq!(aborted.handoff.state, HandoffState::Aborted);
+
+        let (_temp, mut db, lease) = handoff_db();
+        let recovering = remote_handoff_begin(
+            &mut db,
+            "device-a",
+            HandoffBeginParams {
+                project: "project123".to_string(),
+                lease_id: lease.lease_id.clone(),
+                target_device_id: "device-b".to_string(),
+                source_generation: "gen-1".to_string(),
+                ttl_seconds: Some(60),
+            },
+        )
+        .unwrap();
+        let recovering_handoff_id = recovering.handoff.handoff_id.clone();
+        let recovering_expires_at = recovering.handoff.expires_at_unix_seconds;
+        remote_handoff_target_verify(
+            &mut db,
+            "device-b",
+            HandoffIdParams {
+                project: "project123".to_string(),
+                handoff_id: recovering_handoff_id.clone(),
+            },
+        )
+        .unwrap();
+        remote_handoff_source_ready(
+            &mut db,
+            "device-a",
+            HandoffIdParams {
+                project: "project123".to_string(),
+                handoff_id: recovering_handoff_id.clone(),
+            },
+        )
+        .unwrap();
+
+        let recovered = remote_handoff_recover(
+            &mut db,
+            "device-b",
+            HandoffRecoverParams {
+                project: "project123".to_string(),
+                handoff_id: recovering_handoff_id,
+                observed_source_generation: "gen-1".to_string(),
+            },
+            recovering_expires_at - 1,
+        )
+        .unwrap();
+        assert_eq!(recovered.outcome, HandoffRecoveryOutcome::Committed);
+        assert_eq!(recovered.handoff.state, HandoffState::Committed);
+    }
+
     fn envelope(nonce: &str) -> ControlPlaneRequestEnvelope {
         ControlPlaneRequestEnvelope {
             protocol_version: CONTROL_PROTOCOL_VERSION,
@@ -657,5 +1028,25 @@ INSERT INTO snapshots (
                 ),
             )
             .unwrap();
+    }
+
+    fn handoff_db() -> (tempfile::TempDir, MetadataDb, LeaseRecord) {
+        let temp = tempfile::tempdir().unwrap();
+        let db = MetadataDb::open(temp.path().join("metadata.db")).unwrap();
+        let session = db
+            .ensure_default_session("project123", "Demo Project", None)
+            .unwrap();
+        let lease = LeaseRecord {
+            lease_id: "lease-1".to_string(),
+            project_id: "project123".to_string(),
+            session_id: session.session_id,
+            state: LeaseState::Active,
+            epoch: 7,
+            holder_device_id: Some("device-a".to_string()),
+            latest_snapshot_id: None,
+            handoff_id: None,
+        };
+        db.upsert_lease(&lease).unwrap();
+        (temp, db, lease)
     }
 }

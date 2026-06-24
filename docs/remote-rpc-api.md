@@ -4,7 +4,8 @@ Last updated: 2026-06-24
 
 Status: schema plan, core pre-dispatch policy, and core read handlers for
 `devices.list`, `projects.list`, `workspaces.list`, and
-`sessions.snapshots.list` accepted; server not implemented.
+`sessions.snapshots.list`, plus role-gated core handoff handlers, accepted;
+server not implemented.
 
 ADR 0005 selects JSON-RPC 2.0 over mTLS for the remote Control API. This
 document defines the first remote method allowlist and schema rules required
@@ -19,6 +20,12 @@ The core read handlers for `devices.list`, `projects.list`,
 `workspaces.list`, and `sessions.snapshots.list` return remote-safe data only.
 Project and workspace responses do not serialize local filesystem paths, and
 snapshot list responses do not serialize full snapshot metadata.
+
+The core handoff handlers require the authenticated actor device to match the
+expected handoff role before mutating state: source for `handoff.begin`,
+`handoff.source.ready`, and `handoff.commit`; target for
+`handoff.target.verify`; and source or target for `handoff.abort` and
+`handoff.recover`.
 
 ## Transport And Auth
 
