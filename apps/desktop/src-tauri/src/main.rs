@@ -61,10 +61,26 @@ struct UiBootstrap {
     snapshots: Vec<StoredSnapshot>,
     leases: Vec<LeaseRecord>,
     handoffs: Vec<HandoffStatus>,
-    devices: Vec<devrelay_core::DeviceIdentity>,
+    devices: Vec<UiDeviceIdentity>,
     runs: Vec<devrelay_core::TaskRunRecord>,
     activity: Vec<devrelay_core::AuditEventRecord>,
     settings: Option<SettingsGetResult>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct DeviceResourceSummary {
+    cpu: Option<String>,
+    memory: Option<String>,
+    disk: Option<String>,
+    power: Option<String>,
+    cache_warmth: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct UiDeviceIdentity {
+    #[serde(flatten)]
+    identity: devrelay_core::DeviceIdentity,
+    resource_summary: DeviceResourceSummary,
 }
 
 #[derive(Debug, Serialize)]
@@ -506,6 +522,9 @@ fn build_ui_bootstrap() -> UiBootstrap {
         errors.push("agent socket is not available".to_string());
     }
 
+    let device_views =
+        build_device_views(devices, settings.as_ref(), &runtime, !snapshots.is_empty());
+
     UiBootstrap {
         runtime,
         agent: AgentUiStatus {
@@ -519,10 +538,116 @@ fn build_ui_bootstrap() -> UiBootstrap {
         snapshots,
         leases,
         handoffs,
-        devices,
+        devices: device_views,
         runs,
         activity,
         settings,
+    }
+}
+
+fn build_device_views(
+    devices: Vec<devrelay_core::DeviceIdentity>,
+    settings: Option<&SettingsGetResult>,
+    runtime: &RuntimeStatus,
+    snapshot_metadata_ready: bool,
+) -> Vec<UiDeviceIdentity> {
+    let local_device_id = settings.map(|settings| settings.device_id.as_str());
+    devices
+        .into_iter()
+        .map(|identity| {
+            let resource_summary = if Some(identity.device_id.as_str()) == local_device_id {
+                local_resource_summary(runtime, snapshot_metadata_ready)
+            } else {
+                DeviceResourceSummary::default()
+            };
+            UiDeviceIdentity {
+                identity,
+                resource_summary,
+            }
+        })
+        .collect()
+}
+
+fn local_resource_summary(
+    runtime: &RuntimeStatus,
+    snapshot_metadata_ready: bool,
+) -> DeviceResourceSummary {
+    let context = devrelay_core::ResourcePolicyContext::detect_current();
+    let power_source = match context.power_source {
+        devrelay_core::ResourcePowerSource::Ac => "AC",
+        devrelay_core::ResourcePowerSource::Battery => "Battery",
+        devrelay_core::ResourcePowerSource::Unknown => "Power unknown",
+    };
+    let foreground_load = match context.foreground_load {
+        devrelay_core::ForegroundLoad::Idle => "idle",
+        devrelay_core::ForegroundLoad::Busy => "busy",
+        devrelay_core::ForegroundLoad::Unknown => "load unknown",
+    };
+    DeviceResourceSummary {
+        cpu: Some(format!("{} cores, {foreground_load}", context.parallelism)),
+        memory: total_memory_summary(),
+        disk: disk_summary(&runtime.devrelay_home),
+        power: Some(format!(
+            "{power_source}, low power {}",
+            if context.low_power_mode { "on" } else { "off" }
+        )),
+        cache_warmth: Some(if snapshot_metadata_ready {
+            "Checkpoint metadata ready".to_string()
+        } else {
+            "Identity metadata only".to_string()
+        }),
+    }
+}
+
+fn total_memory_summary() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let raw = String::from_utf8_lossy(&output.stdout);
+        let bytes = raw.trim().parse::<u64>().ok()?;
+        Some(format!("{} total", format_bytes(bytes)))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+fn disk_summary(path: &str) -> Option<String> {
+    let output = Command::new("df").args(["-k", path]).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let row = raw.lines().nth(1)?;
+    let columns: Vec<&str> = row.split_whitespace().collect();
+    let total_kib = columns.get(1)?.parse::<u64>().ok()?;
+    let available_kib = columns.get(3)?.parse::<u64>().ok()?;
+    Some(format!(
+        "{} free / {} total",
+        format_bytes(available_kib.saturating_mul(1024)),
+        format_bytes(total_kib.saturating_mul(1024))
+    ))
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if value >= 10.0 || unit == 0 {
+        format!("{value:.0} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
     }
 }
 

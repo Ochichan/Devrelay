@@ -297,6 +297,88 @@ function recentlySeen(device) {
   return Math.floor(Date.now() / 1000) - (device?.last_seen_unix_seconds ?? 0) < 300;
 }
 
+function parseJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function capabilityLabel(key) {
+  if (key === "wsl") return "WSL";
+  if (key === "fsmonitor") return "FSMonitor";
+  return titleize(key);
+}
+
+function deviceCapabilityLabels(device) {
+  const capabilities = parseJsonObject(device.capabilities ?? device.capabilities_json);
+  const roles = Array.isArray(capabilities.roles) ? capabilities.roles.map(titleize) : [];
+  const enabled = Object.entries(capabilities)
+    .filter(([, value]) => value === true)
+    .map(([key]) => capabilityLabel(key));
+  const labels = [...roles, ...enabled].filter(Boolean);
+  return labels.length > 0 ? labels : ["Identity"];
+}
+
+function deviceState(device) {
+  if (recentlySeen(device)) {
+    return {
+      tone: "good",
+      label: "Online",
+      detail: `Last seen ${formatAge(device.last_seen_unix_seconds)}`,
+    };
+  }
+  return {
+    tone: "warn",
+    label: "Offline",
+    detail: `Last seen ${formatAge(device?.last_seen_unix_seconds)}`,
+  };
+}
+
+function osFamily(platformKey) {
+  const key = String(platformKey ?? "");
+  if (key.startsWith("darwin") || key === "macos") return "macOS";
+  if (key.startsWith("linux")) return "Linux";
+  if (key.startsWith("wsl")) return "WSL";
+  if (key.startsWith("windows")) return "Windows";
+  return key || "Unknown OS";
+}
+
+function resourceValueLabel(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "object") {
+    return value.summary ?? value.label ?? value.value ?? null;
+  }
+  return String(value);
+}
+
+function deviceResource(device, key) {
+  const summary = device.resource_summary ?? device.resourceSummary ?? device.resources ?? {};
+  const aliases = {
+    cpu: ["cpu", "cpu_summary", "cpuSummary"],
+    memory: ["memory", "memory_summary", "memorySummary"],
+    disk: ["disk", "disk_summary", "diskSummary"],
+    power: ["power", "power_source", "powerSource", "battery", "battery_ac", "batteryAc"],
+    cache: ["cache_warmth", "cacheWarmth", "cache", "cache_summary", "cacheSummary"],
+  }[key];
+  for (const alias of aliases ?? [key]) {
+    const label = resourceValueLabel(summary[alias] ?? device[alias]);
+    if (label) return label;
+  }
+  return "Not reported";
+}
+
+function capabilityBadges(device) {
+  return deviceCapabilityLabels(device)
+    .map((label) => `<span class="badge">${escapeHtml(label)}</span>`)
+    .join("");
+}
+
 function macLinuxTarget(device) {
   const platform = String(device?.platform_key ?? "");
   return (
@@ -1008,25 +1090,40 @@ function renderProjects() {
 
 function renderDevices() {
   const currentDeviceId = state.bootstrap?.settings?.device_id;
+  const allDevices = devices();
+  const onlineCount = allDevices.filter(recentlySeen).length;
   const rows = devices()
-    .map((device) => `<tr>
+    .map((device) => {
+      const status = deviceState(device);
+      const isCurrent = device.device_id === currentDeviceId;
+      return `<tr>
       <td><div class="cell-main"><strong>${escapeHtml(device.display_name)}</strong><span>${escapeHtml(device.device_id)}</span></div></td>
-      <td>${escapeHtml(device.platform_key)}</td>
-      <td>${escapeHtml(device.architecture)}</td>
-      <td>${formatAge(device.last_seen_unix_seconds)}</td>
-      <td>${device.device_id === currentDeviceId ? '<span class="badge good">This device</span>' : '<span class="badge">Paired</span>'}</td>
-    </tr>`)
+      <td><div class="cell-main"><strong><span class="badge ${status.tone}">${escapeHtml(status.label)}</span></strong><span>${escapeHtml(status.detail)}</span></div></td>
+      <td><div class="cell-main"><strong>${escapeHtml(osFamily(device.platform_key))}</strong><span>${escapeHtml(device.platform_key)} / ${escapeHtml(device.architecture)}</span></div></td>
+      <td>${isCurrent ? '<span class="badge good">This device</span>' : '<span class="badge">Paired</span>'}</td>
+      <td><div class="capability-list">${capabilityBadges(device)}</div></td>
+      <td>${escapeHtml(deviceResource(device, "cpu"))}</td>
+      <td>${escapeHtml(deviceResource(device, "memory"))}</td>
+      <td>${escapeHtml(deviceResource(device, "disk"))}</td>
+      <td>${escapeHtml(deviceResource(device, "power"))}</td>
+      <td>${escapeHtml(deviceResource(device, "cache"))}</td>
+      <td><div class="button-row"><button class="button danger" data-action="device-revoke-placeholder" data-device-id="${escapeHtml(device.device_id)}" ${isCurrent || state.operation ? "disabled" : ""}>${icons.x}<span>Revoke</span></button></div></td>
+    </tr>`;
+    })
     .join("");
   return `
     <section class="screen">
       ${agentErrors()}
       <div class="panel">
-        <div class="panel-head"><div><h3>Devices</h3><p>${devices().length} known identities</p></div></div>
+        <div class="panel-head">
+          <div><h3>Devices</h3><p>${allDevices.length} known identities - ${onlineCount} online</p></div>
+          <button class="button" data-action="device-pair-placeholder" ${state.operation ? "disabled" : ""}>${icons.monitor}<span>Pair device</span></button>
+        </div>
         <div class="panel-body">
           ${
             devices().length === 0
               ? '<div class="empty"><strong>No paired devices</strong><p>Pairing records will appear after the agent writes device metadata.</p></div>'
-              : `<div class="table-scroll" data-scroll-container><table><thead><tr><th>Device</th><th>Platform</th><th>Arch</th><th>Last seen</th><th>Role</th></tr></thead><tbody>${rows}</tbody></table></div>`
+              : `<div class="table-scroll" data-scroll-container><table class="devices-table"><thead><tr><th>Device</th><th>State</th><th>OS / Arch</th><th>Role</th><th>Capabilities</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Power</th><th>Cache warmth</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
           }
         </div>
       </div>
@@ -1331,6 +1428,14 @@ async function handleAction(button) {
     state.view = "continue";
     render();
     await refreshProjectStatus(projectId, false);
+    return;
+  }
+  if (action === "device-pair-placeholder") {
+    toast("Pair device is not wired to the agent yet", "warn");
+    return;
+  }
+  if (action === "device-revoke-placeholder") {
+    toast("Device revoke is not wired to the agent yet", "warn");
     return;
   }
   if (action === "checkpoint") {

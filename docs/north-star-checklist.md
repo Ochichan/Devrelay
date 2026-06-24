@@ -1170,17 +1170,17 @@ Conventions:
 
 ### M7.5 Devices View
 
-- [ ] List paired devices.
-- [ ] Show online/offline state.
-- [ ] Show OS and architecture.
-- [ ] Show role capabilities.
-- [ ] Show CPU summary.
-- [ ] Show memory summary.
-- [ ] Show disk summary.
-- [ ] Show battery/AC state.
-- [ ] Show cache warmth.
-- [ ] Add revoke action placeholder.
-- [ ] Add pair device action placeholder.
+- [x] List paired devices.
+- [x] Show online/offline state.
+- [x] Show OS and architecture.
+- [x] Show role capabilities.
+- [x] Show CPU summary.
+- [x] Show memory summary.
+- [x] Show disk summary.
+- [x] Show battery/AC state.
+- [x] Show cache warmth.
+- [x] Add revoke action placeholder.
+- [x] Add pair device action placeholder.
 
 ### M7.6 Handoff Dialog
 

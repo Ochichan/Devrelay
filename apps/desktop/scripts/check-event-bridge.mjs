@@ -105,14 +105,49 @@ const bootstrap = {
       display_name: "Local device",
       platform_key: "darwin-arm64",
       architecture: "arm64",
+      capabilities_json: JSON.stringify({
+        anchor: true,
+        local_snapshots: true,
+        filesystem_events: true,
+        fsmonitor: true,
+      }),
       last_seen_unix_seconds: nowSeconds,
+      resource_summary: {
+        cpu: "8 cores, idle",
+        memory: "16 GB total",
+        disk: "420 GB free / 1 TB total",
+        power: "AC, low power off",
+        cache_warmth: "Checkpoint metadata ready",
+      },
     },
     {
       device_id: "target-device",
       display_name: "Target device",
       platform_key: "linux-gnu-x86_64",
       architecture: "x86_64",
+      capabilities_json: JSON.stringify({
+        anchor: true,
+        local_snapshots: true,
+        filesystem_events: true,
+      }),
       last_seen_unix_seconds: nowSeconds,
+      resource_summary: {
+        cpu: "12 cores, idle",
+        memory: "32 GB total",
+        disk: "180 GB free / 512 GB total",
+        power: "AC",
+        cache_warmth: "Warm cache",
+      },
+    },
+    {
+      device_id: "offline-device",
+      display_name: "Offline device",
+      platform_key: "linux-gnu-aarch64",
+      architecture: "aarch64",
+      capabilities_json: JSON.stringify({
+        local_snapshots: true,
+      }),
+      last_seen_unix_seconds: nowSeconds - 3600,
     },
   ],
   runs: [],
@@ -203,11 +238,36 @@ assert.match(
   /target apply and verification remain pending/,
   "handoff panel did not keep verification pending"
 );
+vm.runInContext('state.view = "devices"; render();', context);
+assert.match(app.innerHTML, /3 known identities - 2 online/, "devices view did not render device counts");
+assert.match(app.innerHTML, /Pair device/, "devices view did not render pair placeholder");
+assert.match(app.innerHTML, /Revoke/, "devices view did not render revoke placeholder");
+assert.match(app.innerHTML, /Online/, "devices view did not render online state");
+assert.match(app.innerHTML, /Offline/, "devices view did not render offline state");
+assert.match(app.innerHTML, /macOS/, "devices view did not render OS family");
+assert.match(app.innerHTML, /arm64/, "devices view did not render architecture");
+assert.match(app.innerHTML, /Local Snapshots/, "devices view did not render capabilities");
+assert.match(app.innerHTML, /8 cores, idle/, "devices view did not render CPU summary");
+assert.match(app.innerHTML, /16 GB total/, "devices view did not render memory summary");
+assert.match(app.innerHTML, /420 GB free/, "devices view did not render disk summary");
+assert.match(app.innerHTML, /AC, low power off/, "devices view did not render battery or AC state");
+assert.match(app.innerHTML, /Warm cache/, "devices view did not render cache warmth");
+await vm.runInContext(
+  `
+handleAction({
+  dataset: {
+    action: "device-pair-placeholder",
+  },
+});
+`,
+  context
+);
+assert.match(app.innerHTML, /Pair device is not wired to the agent yet/, "pair placeholder did not warn");
 vm.runInContext('state.view = "projects"; render();', context);
 assert.match(app.innerHTML, /Active session/, "projects view did not render session column");
 assert.match(app.innerHTML, /Writer/, "projects view did not render writer column");
 assert.match(app.innerHTML, /Checkpoint/, "projects view did not render checkpoint column");
-assert.match(app.innerHTML, /1\/1 ready/, "projects view did not render target availability");
+assert.match(app.innerHTML, /1\/2 ready/, "projects view did not render target availability");
 assert.match(app.innerHTML, /Needs attention \(1\)/, "projects view did not render attention group");
 assert.match(app.innerHTML, /Ready \(1\)/, "projects view did not render ready group");
 assert.match(app.innerHTML, /Filter projects/, "projects view did not render filter");

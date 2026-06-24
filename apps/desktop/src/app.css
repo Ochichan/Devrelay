@@ -689,6 +689,17 @@ table {
   min-width: 1120px;
 }
 
+.devices-table {
+  min-width: 1360px;
+}
+
+.capability-list {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
 .table-group-row td {
   color: var(--faint);
   background: var(--surface-2);
@@ -920,6 +931,10 @@ code,
 
 .toast.good {
   border-color: color-mix(in srgb, var(--accent-2) 52%, var(--line));
+}
+
+.toast.warn {
+  border-color: color-mix(in srgb, var(--warning) 52%, var(--line));
 }
 
 .toast.bad {
