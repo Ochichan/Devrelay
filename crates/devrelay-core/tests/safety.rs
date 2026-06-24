@@ -450,3 +450,53 @@ mod lease_epoch_monotonic {
         assert_eq!(after_second.holder_device_id.as_deref(), Some("device-c"));
     }
 }
+
+mod published_snapshots_immutable {
+    //! Invariant: `safety/published_snapshots_immutable`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    #[test]
+    fn duplicate_published_snapshot_id_cannot_replace_existing_metadata() {
+        let (_temp, mut db, session_id, lease) = anchor_db();
+        let mut original = publish_metadata("s1_000000000000000000000301", &session_id);
+        original.project_name = "Original Safety Project".to_string();
+        db.publish_snapshot_canonical(CanonicalPublishRequest {
+            lease_id: &lease.lease_id,
+            session_id: &session_id,
+            expected_epoch: 2,
+            holder_device_id: "device-a",
+            expected_latest_snapshot_id: None,
+            metadata: &original,
+            pinned: false,
+            label: Some("original"),
+        })
+        .unwrap();
+
+        let mut replacement = original.clone();
+        replacement.project_name = "Tampered Safety Project".to_string();
+        let duplicate = db.publish_snapshot_canonical(CanonicalPublishRequest {
+            lease_id: &lease.lease_id,
+            session_id: &session_id,
+            expected_epoch: 2,
+            holder_device_id: "device-a",
+            expected_latest_snapshot_id: Some(original.snapshot_id.as_str()),
+            metadata: &replacement,
+            pinned: true,
+            label: Some("replacement"),
+        });
+
+        assert!(duplicate.is_err());
+        let snapshots = db.list_stored_snapshots(Some("project123")).unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].snapshot_id, original.snapshot_id);
+        assert_eq!(snapshots[0].metadata.project_name, original.project_name);
+        assert!(!snapshots[0].pinned);
+        assert_eq!(snapshots[0].label.as_deref(), Some("original"));
+        let lease = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(
+            lease.latest_snapshot_id.as_deref(),
+            Some(original.snapshot_id.as_str())
+        );
+    }
+}
