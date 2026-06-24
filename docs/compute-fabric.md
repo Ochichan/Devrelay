@@ -6,7 +6,8 @@ Compute fabric task execution must not take writer ownership of an active
 workspace. The current implementation covers task definitions, immutable
 execution snapshots, task run metadata, scheduler constraint filtering, and
 explainable scheduler scoring, isolated runner workspace preparation, and host
-task execution, log/artifact storage, and result cache metadata.
+task execution, log/artifact storage, result cache metadata, and Nix delegation
+planning.
 
 ## Task Model
 
@@ -128,4 +129,19 @@ artifact index. Lookups return a structured hit only when the entry and artifact
 index still match the requested key, and hits can restore cached artifacts from
 CAS into a destination root.
 
-Remote execution remains later M10 work.
+## Nix Delegation
+
+Nix delegation planning detects tasks whose environment profile kind is `nix`.
+Before delegating, it reuses scheduler constraint evaluation for platform,
+feature, CPU, memory, disk, and policy checks, then requires the Nix adapter to
+report an available command and ready shell.
+
+Eligible plans generate a temporary builder set under `.devrelay/nix`, preserve
+the task command and declared outputs, and produce command plans for
+`nix build --print-build-logs` so remote builder logs can be streamed. When a
+LAN binary cache target is configured, the plan also emits a `nix copy --to`
+command for publishing the result. Rejected plans carry explicit explanations
+for non-Nix tasks, device constraint failures, unavailable Nix, or failed Nix
+health checks.
+
+Remote execution dispatch remains later M10 work.

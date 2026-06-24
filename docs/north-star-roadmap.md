@@ -470,12 +470,16 @@ Completed capabilities:
   fingerprint, command hash, platform, and outputs; cache metadata stores
   artifact indexes, returns hits, restores artifacts from CAS, and disables
   secret-sensitive tasks by default without accepting secret values.
+- Nix tasks can be detected and converted into an explainable delegation plan
+  that respects scheduler constraints and Nix health, writes a temporary builder
+  set, streams planned remote build logs, and emits a LAN binary cache publish
+  command when a cache target is configured.
 - Task run metadata can be recorded and listed from the per-project metadata
   database.
 
 Open work:
 
-- Remote runner, Nix delegation, and code-changing task integration.
+- Remote runner dispatch and code-changing task integration.
 
 ### M11. Cross-Platform Hardening
 

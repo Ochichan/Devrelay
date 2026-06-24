@@ -1579,13 +1579,13 @@ Conventions:
 
 ### M10.9 Nix Delegation
 
-- [ ] Detect Nix task.
-- [ ] Generate temporary builder set.
-- [ ] Respect device capabilities.
-- [ ] Integrate remote builder logs.
-- [ ] Publish result to LAN binary cache.
-- [ ] Explain delegation decision.
-- [ ] Add mocked Nix delegation tests.
+- [x] Detect Nix task.
+- [x] Generate temporary builder set.
+- [x] Respect device capabilities.
+- [x] Integrate remote builder logs.
+- [x] Publish result to LAN binary cache.
+- [x] Explain delegation decision.
+- [x] Add mocked Nix delegation tests.
 
 ### M10.10 Code-Changing Agent Task
 

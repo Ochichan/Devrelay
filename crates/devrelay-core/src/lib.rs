@@ -61,6 +61,7 @@ mod lfs;
 mod line_ending_doctor;
 mod logging;
 pub mod manifest;
+mod nix_delegation;
 mod operation_capsule;
 mod pairing;
 mod path_doctor;
@@ -208,6 +209,11 @@ pub use manifest::{
     Manifest, PatternConfig, PortablePathsPolicy, RestoreTerminals, SecretConfig, SecretMode,
     SecretScannerConfig, SyncConfig, SyncMode, TaskCacheMode, TaskConfig, TaskSandbox,
     UntrackedPolicy, WorkspaceConfig,
+};
+pub use nix_delegation::{
+    NixDelegationDecision, NixDelegationOptions, NixDelegationPlan, NixLanBinaryCachePublishPlan,
+    NixLanBinaryCacheTarget, NixRemoteBuilderLogPlan, NixTemporaryBuilderSet, plan_nix_delegation,
+    write_nix_temporary_builder_set,
 };
 pub use operation_capsule::{
     ConflictWorktreeFile, GitOperationKind, GitOperationMetadata, GitOperationProgress,
