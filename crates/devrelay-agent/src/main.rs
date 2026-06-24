@@ -7,10 +7,10 @@ use devrelay_core::{
     CheckpointCreateResult, DevicesListResult, DiagnosticsExportParams, DiagnosticsExportResult,
     EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage, EventsSubscribeParams,
     EventsSubscribeResult, GitRepo, HandoffBeginParams, HandoffCommitParams, HandoffIdParams,
-    HandoffMutationResult, HandoffRecord, HandoffRecoverParams, HandoffRecoverResult,
-    HandoffStatus, HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, IpcTransport,
-    LeasesListParams, LeasesListResult, Manifest, ProjectRegistryEntry, ProjectResult,
-    ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
+    HandoffMutationResult, HandoffRecord, HandoffRecoverParams, HandoffRecoverResult, HandoffState,
+    HandoffStateChangedEvent, HandoffStatus, HandoffsListParams, HandoffsListResult, IpcConnection,
+    IpcLimits, IpcTransport, LeasesListParams, LeasesListResult, Manifest, ProjectRegistryEntry,
+    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
     RPC_PROTOCOL_VERSION, RecoverListParams, RecoverListResult, RecoverOpenParams,
     RecoverOpenResult, RecoverShowParams, RecoverShowResult, RpcError, RpcId, RpcRequest,
     RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, RunsListParams,
@@ -1018,6 +1018,9 @@ fn handle_handoff_begin(
         Ok(result) => result,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
+    if let Err(err) = publish_handoff_state_changed(state, &result.handoff, None) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
 
     match serde_json::to_value(result) {
         Ok(result) => RpcResponse::success(id, result),
@@ -1072,6 +1075,10 @@ fn handle_handoff_commit(
         Ok(db) => db,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
+    let previous_state = match db.get_handoff(&params.handoff_id) {
+        Ok(handoff) => handoff.map(|handoff| handoff.state),
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
     let handoff = match db.commit_handoff(
         &params.handoff_id,
         &params.observed_source_generation,
@@ -1084,6 +1091,9 @@ fn handle_handoff_commit(
         Ok(result) => result,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
+    if let Err(err) = publish_handoff_state_changed(state, &result.handoff, previous_state) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
 
     match serde_json::to_value(result) {
         Ok(result) => RpcResponse::success(id, result),
@@ -1103,6 +1113,10 @@ fn handle_handoff_recover(
     };
     let mut db = match open_registered_project_db(state, &params.project) {
         Ok(db) => db,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let previous_state = match db.get_handoff(&params.handoff_id) {
+        Ok(handoff) => handoff.map(|handoff| handoff.state),
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
     let outcome = match db.recover_handoff(
@@ -1132,6 +1146,9 @@ fn handle_handoff_recover(
         handoff,
         journal,
     };
+    if let Err(err) = publish_handoff_state_changed(state, &result.handoff, previous_state) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
 
     match serde_json::to_value(result) {
         Ok(result) => RpcResponse::success(id, result),
@@ -1154,6 +1171,10 @@ fn handle_handoff_id_mutation(
         Ok(db) => db,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
+    let previous_state = match db.get_handoff(&params.handoff_id) {
+        Ok(handoff) => handoff.map(|handoff| handoff.state),
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
     let handoff = match mutate(&mut db, &params.handoff_id) {
         Ok(handoff) => handoff,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
@@ -1162,6 +1183,9 @@ fn handle_handoff_id_mutation(
         Ok(result) => result,
         Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     };
+    if let Err(err) = publish_handoff_state_changed(state, &result.handoff, previous_state) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
 
     match serde_json::to_value(result) {
         Ok(result) => RpcResponse::success(id, result),
@@ -1219,6 +1243,24 @@ fn handoff_mutation_result(
 ) -> anyhow::Result<HandoffMutationResult> {
     let journal = db.list_handoff_journal(&handoff.handoff_id)?;
     Ok(HandoffMutationResult { handoff, journal })
+}
+
+#[cfg(unix)]
+fn publish_handoff_state_changed(
+    state: &AgentState,
+    handoff: &HandoffRecord,
+    previous_state: Option<HandoffState>,
+) -> anyhow::Result<()> {
+    if previous_state == Some(handoff.state) {
+        return Ok(());
+    }
+    state
+        .events
+        .publish(HandoffStateChangedEvent::from_handoff(
+            handoff,
+            previous_state,
+        ))?;
+    Ok(())
 }
 
 #[cfg(unix)]

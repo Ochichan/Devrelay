@@ -4,7 +4,9 @@
 //! replay cursor boundary; timestamps are informational and must not be used to
 //! infer ordering.
 
-use crate::{Result, StoredSnapshot, VerificationDetails, WorkspaceState};
+use crate::{
+    HandoffRecord, HandoffState, Result, StoredSnapshot, VerificationDetails, WorkspaceState,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -198,6 +200,8 @@ pub enum EventType {
     SnapshotApplyStarted,
     #[serde(rename = "snapshot.apply.verified")]
     SnapshotApplyVerified,
+    #[serde(rename = "handoff.state.changed")]
+    HandoffStateChanged,
     #[serde(rename = "protection.status.changed")]
     ProtectionStatusChanged,
     #[serde(rename = "session.diverged")]
@@ -289,6 +293,39 @@ pub struct SnapshotApplyVerifiedEvent {
 impl TypedEventPayload for SnapshotApplyVerifiedEvent {
     fn event_type(&self) -> EventType {
         EventType::SnapshotApplyVerified
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffStateChangedEvent {
+    pub project_id: String,
+    pub handoff_id: String,
+    pub lease_id: String,
+    pub previous_state: Option<HandoffState>,
+    pub state: HandoffState,
+    pub source_device_id: String,
+    pub target_device_id: String,
+    pub expires_at_unix_seconds: u64,
+}
+
+impl HandoffStateChangedEvent {
+    pub fn from_handoff(handoff: &HandoffRecord, previous_state: Option<HandoffState>) -> Self {
+        Self {
+            project_id: handoff.project_id.clone(),
+            handoff_id: handoff.handoff_id.clone(),
+            lease_id: handoff.lease_id.clone(),
+            previous_state,
+            state: handoff.state,
+            source_device_id: handoff.source_device_id.clone(),
+            target_device_id: handoff.target_device_id.clone(),
+            expires_at_unix_seconds: handoff.expires_at_unix_seconds,
+        }
+    }
+}
+
+impl TypedEventPayload for HandoffStateChangedEvent {
+    fn event_type(&self) -> EventType {
+        EventType::HandoffStateChanged
     }
 }
 
@@ -668,6 +705,31 @@ mod tests {
             encoded["payload"]["verification"]["state_hash"],
             "state-hash"
         );
+
+        let handoff = EventEnvelope::with_typed_payload_at(
+            EventSequence::new(8).unwrap(),
+            EventTimestampMillis::new(65),
+            HandoffStateChangedEvent::from_handoff(
+                &HandoffRecord {
+                    handoff_id: "ho_abc".to_string(),
+                    lease_id: "lease-1".to_string(),
+                    project_id: "12345678".to_string(),
+                    expected_epoch: 7,
+                    source_device_id: "device-a".to_string(),
+                    target_device_id: "device-b".to_string(),
+                    source_generation: "gen-1".to_string(),
+                    expires_at_unix_seconds: 1_700_000_300,
+                    state: HandoffState::TargetVerified,
+                },
+                Some(HandoffState::TargetPrepare),
+            ),
+        )
+        .unwrap();
+        let encoded = serde_json::to_value(handoff).unwrap();
+        assert_eq!(encoded["type"], "handoff.state.changed");
+        assert_eq!(encoded["payload"]["previous_state"], "target-prepare");
+        assert_eq!(encoded["payload"]["state"], "target-verified");
+        assert!(encoded["payload"].get("source_generation").is_none());
 
         let protection = EventEnvelope::with_typed_payload_at(
             EventSequence::new(4).unwrap(),

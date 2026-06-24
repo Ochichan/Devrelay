@@ -1162,7 +1162,8 @@ INSERT INTO task_runs (
 #[test]
 fn foreground_serves_handoff_state_machine_rpc_methods() {
     use devrelay_core::{
-        DeviceIdentity, IpcLimits, LeaseRecord, LeaseState, MetadataDb, UnixIpcConnection,
+        DeviceIdentity, IpcConnection, IpcLimits, LeaseRecord, LeaseState, MetadataDb,
+        UnixIpcConnection,
     };
     use serde_json::json;
 
@@ -1277,6 +1278,23 @@ fn foreground_serves_handoff_state_machine_rpc_methods() {
         source_device_id
     );
 
+    let limits = IpcLimits::default();
+    let mut handoff_events = UnixIpcConnection::connect(&running.socket, limits).unwrap();
+    let subscribe = serde_json::to_vec(&json!({
+        "jsonrpc": "2.0",
+        "id": "handoff-events",
+        "method": "events.subscribe",
+        "params": { "cursor": {} }
+    }))
+    .unwrap();
+    handoff_events.write_message(&subscribe, limits).unwrap();
+    let ack: serde_json::Value =
+        serde_json::from_slice(&handoff_events.read_message(limits).unwrap()).unwrap();
+    assert_eq!(ack["id"], "handoff-events");
+    for _ in 0..ack["result"]["replayed"].as_u64().unwrap_or_default() {
+        let _ = read_stream_message(&mut handoff_events, limits);
+    }
+
     let begin = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
         json!({
@@ -1301,6 +1319,13 @@ fn foreground_serves_handoff_state_machine_rpc_methods() {
         .as_str()
         .unwrap()
         .to_string();
+    assert_handoff_state_event(
+        &mut handoff_events,
+        limits,
+        &handoff_id,
+        "target-prepare",
+        None,
+    );
     assert!(
         begin["result"]["journal"]
             .as_array()
@@ -1346,6 +1371,13 @@ fn foreground_serves_handoff_state_machine_rpc_methods() {
         target_verified["result"]["handoff"]["state"],
         "target-verified"
     );
+    assert_handoff_state_event(
+        &mut handoff_events,
+        limits,
+        &handoff_id,
+        "target-verified",
+        Some("target-prepare"),
+    );
 
     let source_ready = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
@@ -1360,6 +1392,13 @@ fn foreground_serves_handoff_state_machine_rpc_methods() {
         }),
     );
     assert_eq!(source_ready["result"]["handoff"]["state"], "source-ready");
+    assert_handoff_state_event(
+        &mut handoff_events,
+        limits,
+        &handoff_id,
+        "source-ready",
+        Some("target-verified"),
+    );
 
     let committed = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
@@ -1375,6 +1414,13 @@ fn foreground_serves_handoff_state_machine_rpc_methods() {
         }),
     );
     assert_eq!(committed["result"]["handoff"]["state"], "committed");
+    assert_handoff_state_event(
+        &mut handoff_events,
+        limits,
+        &handoff_id,
+        "committed",
+        Some("source-ready"),
+    );
 
     let lease = project_db.get_lease("lease-handoff-rpc").unwrap().unwrap();
     assert_eq!(lease.holder_device_id.as_deref(), Some("device-target"));
@@ -1408,6 +1454,35 @@ fn read_stream_message(
 
     let response = connection.read_message(limits).unwrap();
     serde_json::from_slice(&response).unwrap()
+}
+
+#[cfg(unix)]
+fn assert_handoff_state_event(
+    connection: &mut devrelay_core::UnixIpcConnection,
+    limits: devrelay_core::IpcLimits,
+    handoff_id: &str,
+    state: &str,
+    previous_state: Option<&str>,
+) {
+    match read_stream_message(connection, limits) {
+        devrelay_core::EventStreamMessage::Event { event } => {
+            assert_eq!(
+                event.event_type,
+                devrelay_core::EventType::HandoffStateChanged
+            );
+            assert_eq!(event.payload["handoff_id"], handoff_id);
+            assert_eq!(event.payload["state"], state);
+            if let Some(previous_state) = previous_state {
+                assert_eq!(event.payload["previous_state"], previous_state);
+            } else {
+                assert!(event.payload["previous_state"].is_null());
+            }
+            assert!(event.payload.get("source_generation").is_none());
+        }
+        devrelay_core::EventStreamMessage::Gap { gap } => {
+            panic!("unexpected event gap: {gap:?}");
+        }
+    }
 }
 
 #[cfg(unix)]

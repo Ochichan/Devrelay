@@ -557,6 +557,7 @@ Conventions:
 - [x] Add `snapshot.local.created`.
 - [x] Add `snapshot.apply.started`.
 - [x] Add `snapshot.apply.verified`.
+- [x] Add `handoff.state.changed`.
 - [x] Add `security.blocked`.
 - [x] Add `quota.warning`.
 - [x] Add subscription RPC.

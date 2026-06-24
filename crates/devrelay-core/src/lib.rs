@@ -139,9 +139,10 @@ pub use error::{DevRelayError, ErrorInfo, Result};
 pub use events::{
     EVENT_SCHEMA_VERSION, EventEnvelope, EventGapDetector, EventReplayCursor, EventSequence,
     EventSequenceGap, EventSequencer, EventStreamMessage, EventTimestampMillis, EventType,
-    ProtectionStatus, ProtectionStatusEvent, QuotaWarningEvent, SecurityBlockedEvent,
-    SessionDivergedEvent, SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent,
-    SnapshotLocalCreatedEvent, TypedEventPayload, WorkspaceStateChangedEvent,
+    HandoffStateChangedEvent, ProtectionStatus, ProtectionStatusEvent, QuotaWarningEvent,
+    SecurityBlockedEvent, SessionDivergedEvent, SnapshotApplyStartedEvent,
+    SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent, TypedEventPayload,
+    WorkspaceStateChangedEvent,
 };
 pub use git::{
     GitRepo, GitStatus, StatusCounts, StatusEntry, StatusEntryKind, StatusSummary,

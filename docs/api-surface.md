@@ -86,6 +86,11 @@ device identity as the source device. The desktop app may use `handoff.begin`
 and `handoff.abort` to control target-preparation state, but must still present
 target apply and verification as pending work.
 
+The local event stream emits `handoff.state.changed` for handoff state
+transitions. The payload includes project, handoff, lease, previous/current
+state, source/target devices, and expiry, and intentionally excludes source
+generation and lease epoch fields.
+
 ## UI Boundary
 
 Production UI may depend only on:
