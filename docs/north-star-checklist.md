@@ -1868,17 +1868,17 @@ Conventions:
 
 ### M14.1 Installers And Dev Channels
 
-- [ ] Define dev channel.
-- [ ] Define beta channel.
+- [x] Define dev channel.
+- [x] Define beta channel.
 - [ ] Package macOS agent.
 - [ ] Package macOS desktop app.
 - [ ] Package Linux agent.
 - [ ] Package Linux desktop app.
 - [ ] Package Windows agent.
 - [ ] Package Windows desktop app.
-- [ ] Package WSL agent instructions.
-- [ ] Add upgrade path.
-- [ ] Add uninstall path.
+- [x] Package WSL agent instructions.
+- [x] Add upgrade path.
+- [x] Add uninstall path.
 
 ### M14.2 Onboarding
 
