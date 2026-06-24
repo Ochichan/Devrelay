@@ -460,12 +460,15 @@ Completed capabilities:
   directory and environment handling, timeout enforcement, stdout/stderr capture,
   live log sink events, process-tree cancellation on timeout, and explicit
   sandbox/container/VM placeholders.
+- Task logs can be streamed through a bounded live buffer, redacted, spooled to
+  per-run JSONL files, retrieved later, and marked with a truncation record when
+  spool limits are reached.
 - Task run metadata can be recorded and listed from the per-project metadata
   database.
 
 Open work:
 
-- Remote runner, durable logs, artifacts, and cache.
+- Remote runner, artifacts, and cache.
 
 ### M11. Cross-Platform Hardening
 

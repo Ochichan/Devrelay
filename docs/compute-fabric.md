@@ -92,5 +92,14 @@ process group and killing that group. Sandbox, container, and VM execution modes
 are explicit placeholders that fail closed rather than silently running on the
 host.
 
-Durable log storage, artifacts, remote execution, and result cache integration
-remain later M10 work.
+## Logs
+
+Task log storage implements the execution log sink. It keeps a bounded in-memory
+live buffer for recent stdout/stderr chunks and writes redacted JSONL records to
+a per-run disk spool under the project data directory. Retrieval reads the spool
+back as structured records and reports whether a truncation marker was emitted.
+
+The spool fails closed on unsafe task run IDs and stops appending regular chunks
+after its byte limit is reached, preserving a final truncation record.
+
+Artifacts, remote execution, and result cache integration remain later M10 work.

@@ -82,6 +82,7 @@ mod snapshot_upload;
 mod sparse;
 mod storage;
 mod submodule;
+mod task_logs;
 mod task_model;
 mod task_runner_execution;
 mod task_runner_workspace;
@@ -327,6 +328,10 @@ pub use submodule::{
     SUBMODULE_CHILD_SNAPSHOT_RELATIONSHIP, SubmoduleReport, SubmoduleState, SubmoduleStatus,
     dirty_submodule_child_manifest, dirty_submodule_child_project_id, inspect_submodules,
     inspect_submodules_with_depth, restore_clean_submodule_recorded_commit,
+};
+pub use task_logs::{
+    TASK_LOG_TRUNCATION_MARKER, TaskLogRecord, TaskLogRetrieval, TaskLogStore, TaskLogStoreConfig,
+    read_task_log_spool, task_log_spool_path,
 };
 pub use task_model::{
     TASK_RUN_ID_PREFIX, TaskDefinition, TaskExecutionSnapshot, TaskRunInput, TaskRunState,

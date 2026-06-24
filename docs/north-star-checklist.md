@@ -1542,13 +1542,13 @@ Conventions:
 
 ### M10.6 Logs
 
-- [ ] Add bounded live log buffer.
-- [ ] Add disk spool.
-- [ ] Add log redaction.
-- [ ] Add log event streaming.
-- [ ] Add log retrieval API.
-- [ ] Add log truncation marker.
-- [ ] Add log tests.
+- [x] Add bounded live log buffer.
+- [x] Add disk spool.
+- [x] Add log redaction.
+- [x] Add log event streaming.
+- [x] Add log retrieval API.
+- [x] Add log truncation marker.
+- [x] Add log tests.
 
 ### M10.7 Artifacts
 
