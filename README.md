@@ -61,6 +61,7 @@ workspace unless you intentionally use it as a registered test project.
 - [North Star roadmap](docs/north-star-roadmap.md)
 - [Execution checklist](docs/north-star-checklist.md)
 - [First UI vertical slice](docs/ui-vertical-slice.md)
+- [Manual verification runbook](docs/manual-verification-runbook.md)
 - [Manual runtime checklist](docs/manual-runtime-checklist.md)
 - [Dogfood scenarios](docs/dogfood-scenarios.md)
 - [Install, update, and removal](docs/install-update.md)

@@ -1,11 +1,16 @@
 # Manual Runtime Checklist
 
-Last updated: 2026-06-23
+Last updated: 2026-06-24
 
 This checklist is the manual gate for the desktop runtime slice. It is not a
 replacement for automated tests. It catches product failures that are hard to
 see from unit tests: stale UI state, unclear agent errors, broken packaging,
 scroll traps, missing runtime permissions, and unsafe-looking recovery paths.
+
+For the full manual evidence map across real-device dogfood, security,
+resource, packaging, rollback, and release gates, start with
+[manual-verification-runbook.md](manual-verification-runbook.md). This document
+is the desktop runtime sub-runbook.
 
 Run this checklist against a disposable repository first. Do not use a real work
 repository until every destructive-looking path below has passed on a throwaway

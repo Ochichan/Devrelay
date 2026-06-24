@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Last updated: 2026-06-23
+Last updated: 2026-06-24
 
 DevRelay tests must prove behavior at the same boundary users trust. Unit tests
 are necessary, but product safety gates require integration evidence.
@@ -95,9 +95,12 @@ Before the first UI slice is considered complete:
 - Primary controls must have accessible names.
 - Real-device macOS-to-Linux dogfood must be recorded.
 
-Manual runtime checks for the current desktop shell live in
-[manual-runtime-checklist.md](manual-runtime-checklist.md). Run them before
-claiming a build is ready for dogfood.
+Manual evidence requirements across desktop runtime, real-device dogfood,
+resource behavior, security, packaging, and release gates live in
+[manual-verification-runbook.md](manual-verification-runbook.md). The current
+desktop shell sub-runbook is
+[manual-runtime-checklist.md](manual-runtime-checklist.md). Run the relevant
+manual runbooks before claiming a build is ready for dogfood.
 
 `npm run check:ui --prefix apps/desktop` also runs a lightweight frontend VM
 smoke test for `devrelay-agent-connected`, `devrelay-agent-event`,

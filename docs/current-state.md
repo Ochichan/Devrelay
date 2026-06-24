@@ -59,7 +59,8 @@ The next implementation path is:
 2. Broaden resource benchmark coverage before promising invisible protection.
 3. Convert non-negotiable safety rules into integration suites with stable
    names.
-4. Run the manual desktop runtime checklist against the current Tauri shell.
+4. Run the manual verification runbook, starting with the desktop runtime
+   sub-runbook for the current Tauri shell.
 5. Dogfood clean target handoff on real macOS/Linux devices.
 6. Dogfood dirty target and inactive edit preservation.
 7. Expand to Windows/WSL after Windows IPC and startup packaging are credible.
@@ -69,6 +70,7 @@ The next implementation path is:
 - Windows named pipe transport and per-user pipe ACL.
 - Representative resource benchmark results beyond the initial macOS smoke run.
 - Integration-level safety suites mapped to the non-negotiable checklist.
-- Manual runtime evidence for the desktop shell and DMG.
+- Manual verification evidence for desktop runtime, real-device dogfood,
+  packaging, rollback, resource, UX, and security gates.
 - M4.5 remote JSON-RPC server over mTLS and its method schema/integration
   tests.
