@@ -1217,7 +1217,7 @@ Conventions:
 
 - [ ] Show audit events.
 - [ ] Show checkpoint events summarized.
-- [ ] Show handoff events.
+- [x] Show handoff events.
 - [ ] Show security blocks.
 - [ ] Show quota warnings.
 - [ ] Add filters.

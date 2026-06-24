@@ -187,6 +187,27 @@ handlers.get("devrelay-agent-event")({
     type: "snapshot.local.created",
   },
 });
+handlers.get("devrelay-agent-event")({
+  payload: {
+    sequence: 5,
+    occurred_at_unix_millis: Date.now(),
+    type: "handoff.state.changed",
+    payload: {
+      project_id: "project-1",
+      handoff_id: "handoff-1",
+      lease_id: "lease-1",
+      previous_state: "target-prepare",
+      state: "target-verified",
+      source_device_id: "local-device",
+      target_device_id: "target-device",
+      expires_at_unix_seconds: nowSeconds + 300,
+    },
+  },
+});
+vm.runInContext('state.view = "activity"; render();', context);
+assert.match(app.innerHTML, /Handoff events/, "activity view did not render handoff section");
+assert.match(app.innerHTML, /Target Verified/, "handoff event state did not render");
+assert.doesNotMatch(app.innerHTML, /lease-1/, "handoff event exposed lease id");
 handlers.get("devrelay-agent-gap")({
   payload: {
     expected_after: 4,

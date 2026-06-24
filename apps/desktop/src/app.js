@@ -27,6 +27,7 @@ const state = {
     lastGap: null,
     lastError: null,
     subscription: null,
+    events: [],
   },
   toasts: [],
 };
@@ -131,6 +132,10 @@ function activity() {
   return state.bootstrap?.activity ?? [];
 }
 
+function liveEvents() {
+  return state.eventBridge.events ?? [];
+}
+
 function snapshots() {
   return state.bootstrap?.snapshots ?? [];
 }
@@ -224,6 +229,11 @@ function deviceName(deviceId) {
   if (!deviceId) return "No writer recorded";
   const found = devices().find((device) => device.device_id === deviceId);
   return found?.display_name ?? deviceId;
+}
+
+function eventDeviceName(deviceId) {
+  const found = devices().find((device) => device.device_id === deviceId);
+  return found?.display_name ?? deviceId ?? "Unknown device";
 }
 
 function activeWriterRow(workspace, lease) {
@@ -755,6 +765,21 @@ function renderRuns() {
 }
 
 function renderActivity() {
+  const handoffEvents = liveEvents().filter((event) => event.type === "handoff.state.changed");
+  const handoffRows = handoffEvents
+    .map((event) => {
+      const payload = event.payload ?? {};
+      const stateLabel = titleize(payload.state);
+      const previous = payload.previous_state ? `from ${titleize(payload.previous_state)}` : "started";
+      const target = eventDeviceName(payload.target_device_id);
+      return `<div class="list-item">
+        <div class="list-item-row">
+          <div><strong>${escapeHtml(stateLabel)}</strong><span>${escapeHtml(previous)} - ${escapeHtml(target)} - ${formatClock(event.occurredAt ?? event.receivedAt)}</span></div>
+          <span class="badge ${payload.state === "committed" ? "good" : payload.state === "aborted" ? "bad" : "warn"}">${escapeHtml(event.type)}</span>
+        </div>
+      </div>`;
+    })
+    .join("");
   const rows = activity()
     .map((event) => `<div class="list-item">
       <div class="list-item-row">
@@ -767,6 +792,12 @@ function renderActivity() {
   return `
     <section class="screen">
       ${agentErrors()}
+      <div class="panel">
+        <div class="panel-head"><div><h3>Handoff events</h3><p>${handoffEvents.length} from agent stream</p></div></div>
+        <div class="panel-body scroll" data-scroll-container>
+          ${handoffEvents.length === 0 ? '<div class="empty"><strong>No handoff events</strong><p>Handoff state changes will appear here after the event stream receives them.</p></div>' : `<div class="list">${handoffRows}</div>`}
+        </div>
+      </div>
       <div class="panel">
         <div class="panel-head"><div><h3>Activity</h3><p>${activity().length} audit events</p></div></div>
         <div class="panel-body scroll" data-scroll-container>
@@ -986,11 +1017,18 @@ function markEventBridgeConnected(payload) {
 function markEventBridgeEvent(payload) {
   state.eventBridge.connected = true;
   state.eventBridge.lastError = null;
-  state.eventBridge.lastEvent = {
+  const event = {
     sequence: payload?.sequence ?? null,
     type: payload?.type ?? "event",
+    payload: payload?.payload ?? {},
+    occurredAt: payload?.occurred_at_unix_millis ?? null,
     receivedAt: Date.now(),
   };
+  state.eventBridge.lastEvent = event;
+  state.eventBridge.events = [
+    event,
+    ...state.eventBridge.events.filter((item) => item.sequence !== event.sequence),
+  ].slice(0, 100);
 }
 
 function markEventBridgeGap(payload) {
