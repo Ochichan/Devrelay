@@ -238,6 +238,21 @@ assert.match(
   /target apply and verification remain pending/,
   "handoff panel did not keep verification pending"
 );
+assert.match(app.innerHTML, /Environment warmth/, "continue view did not render environment warmth");
+assert.match(app.innerHTML, /Checkpoint metadata ready/, "continue view did not render warmth summary");
+assert.match(app.innerHTML, /Run elsewhere/, "continue view did not render run elsewhere placeholder");
+await vm.runInContext(
+  `
+handleAction({
+  dataset: {
+    action: "run-elsewhere-placeholder",
+    projectId: "project-1",
+  },
+});
+`,
+  context
+);
+assert.match(app.innerHTML, /Run elsewhere is not wired to the agent yet/, "run placeholder did not warn");
 vm.runInContext('state.view = "devices"; render();', context);
 assert.match(app.innerHTML, /3 known identities - 2 online/, "devices view did not render device counts");
 assert.match(app.innerHTML, /Pair device/, "devices view did not render pair placeholder");

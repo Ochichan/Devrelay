@@ -954,6 +954,15 @@ function renderContinue() {
   const continueReadiness = continueHereReadiness(incoming);
   const openHandoff = handoffIsOpen(handoff);
   const availableTargets = targetDevices();
+  const environmentWarmth = deviceResource(device, "cache");
+  const environmentCpu = deviceResource(device, "cpu");
+  const environmentPower = deviceResource(device, "power");
+  const environmentReported = [environmentWarmth, environmentCpu, environmentPower].some(
+    (value) => value !== "Not reported"
+  );
+  const environmentDetail = environmentReported
+    ? `${environmentWarmth} - ${environmentCpu} - ${environmentPower}`
+    : "No environment summary reported by this agent.";
   const handoffReady = methods().has("handoff.begin");
   const suggestedSession = workspace?.workspace_id ?? checkpoint?.session_id ?? project.project_id;
   const handoffPanelCopy = openHandoff
@@ -985,6 +994,7 @@ function renderContinue() {
             <div class="button-row">
               <button class="button primary" data-action="handoff-continue-here" data-project-id="${escapeHtml(project.project_id)}" data-handoff-id="${escapeHtml(incoming?.record?.handoff_id ?? "")}" ${continueDisabled ? "disabled" : ""}>${icons.play}<span>Continue here</span></button>
               <button class="button" data-action="checkpoint" data-project-id="${escapeHtml(project.project_id)}" ${state.operation ? "disabled" : ""}>${icons.check}<span>Checkpoint now</span></button>
+              <button class="button" data-action="run-elsewhere-placeholder" data-project-id="${escapeHtml(project.project_id)}" ${state.operation ? "disabled" : ""}>${icons.terminal}<span>Run elsewhere</span></button>
               <button class="button" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" ${status?.loading ? "disabled" : ""}>${icons.refresh}<span>Status</span></button>
               <button class="button" data-action="open-project" data-project-id="${escapeHtml(project.project_id)}">${icons.external}<span>Open folder</span></button>
             </div>
@@ -994,6 +1004,7 @@ function renderContinue() {
           <div class="panel-head"><div><h3>Continuation state</h3><p>${escapeHtml(suggestedSession)}</p></div></div>
           <div class="panel-body status-stack">
             <div class="status-row"><span class="dot good"></span><div><strong>${escapeHtml(device.display_name ?? "Local device")}</strong><span>${escapeHtml(device.platform_key ?? "unknown")} ${escapeHtml(device.architecture ?? "")}</span></div><span class="badge good">This device</span></div>
+            <div class="status-row"><span class="dot ${environmentReported ? "good" : "warn"}"></span><div><strong>Environment warmth</strong><span>${escapeHtml(environmentDetail)}</span></div><span class="badge ${environmentReported ? "good" : "warn"}">${environmentReported ? "Reported" : "Unknown"}</span></div>
             <div class="status-row"><span class="dot ${suggestedSession ? "good" : "warn"}"></span><div><strong>Suggested session</strong><span>${escapeHtml(suggestedSession ?? "No continuation session recorded")}</span></div><span class="badge">${workspace?.state ? escapeHtml(workspace.state) : "selected"}</span></div>
             ${activeWriterRow(workspace, lease)}
             ${handoffRow(handoff)}
@@ -1436,6 +1447,10 @@ async function handleAction(button) {
   }
   if (action === "device-revoke-placeholder") {
     toast("Device revoke is not wired to the agent yet", "warn");
+    return;
+  }
+  if (action === "run-elsewhere-placeholder") {
+    toast("Run elsewhere is not wired to the agent yet", "warn");
     return;
   }
   if (action === "checkpoint") {

@@ -1145,12 +1145,12 @@ Conventions:
 - [x] Show Git state summary.
 - [x] Show target readiness.
 - [x] Show handoff-in-progress state.
-- [ ] Show environment warmth.
+- [x] Show environment warmth.
 - [x] Add primary "Continue here" action.
 - [x] Add "Continue elsewhere" action.
 - [x] Add "Abort handoff" action.
 - [x] Add "Checkpoint" action.
-- [ ] Add "Run elsewhere" action placeholder.
+- [x] Add "Run elsewhere" action placeholder.
 - [x] Add empty state.
 - [x] Add error state.
 - [x] Add loading state.
