@@ -1820,12 +1820,12 @@ Conventions:
 
 ### M13.6 Opaque Anchor Research
 
-- [ ] Document encrypted bundle design.
-- [ ] Document encrypted chunk design.
-- [ ] Document dedup tradeoff.
-- [ ] Document Git negotiation tradeoff.
-- [ ] Build proof-of-concept if justified.
-- [ ] Decide whether to include in North Star release.
+- [x] Document encrypted bundle design.
+- [x] Document encrypted chunk design.
+- [x] Document dedup tradeoff.
+- [x] Document Git negotiation tradeoff.
+- [x] Build proof-of-concept if justified.
+- [x] Decide whether to include in North Star release.
 
 ### M13.7 Diagnostic Bundle
 

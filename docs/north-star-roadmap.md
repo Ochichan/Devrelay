@@ -542,6 +542,7 @@ Completed or started:
 - False-positive override and encrypted one-time sidecar designs.
 - Release channel, signing, provenance, schema support window, and rollback
   policy.
+- Opaque anchor research decision: exclude from North Star release.
 - Diagnostic bundle.
 - Fault injection.
 - Migration tests from old fixtures.
@@ -549,7 +550,6 @@ Completed or started:
 Open work:
 
 - Backup anchor.
-- Opaque anchor research decision.
 - Independent security review.
 
 ### M14. Beta Product Loop
