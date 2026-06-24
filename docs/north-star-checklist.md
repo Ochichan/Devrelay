@@ -1215,13 +1215,13 @@ Conventions:
 
 ### M7.8 Activity View
 
-- [ ] Show audit events.
-- [ ] Show checkpoint events summarized.
+- [x] Show audit events.
+- [x] Show checkpoint events summarized.
 - [x] Show handoff events.
-- [ ] Show security blocks.
-- [ ] Show quota warnings.
-- [ ] Add filters.
-- [ ] Add diagnostic bundle export action.
+- [x] Show security blocks.
+- [x] Show quota warnings.
+- [x] Add filters.
+- [x] Add diagnostic bundle export action.
 
 ### M7.9 Settings View
 

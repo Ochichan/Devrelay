@@ -15,6 +15,7 @@ const state = {
   operation: null,
   selectedProjectId: null,
   projectFilter: "",
+  activityFilter: "all",
   bootstrap: null,
   projectStatus: new Map(),
   runtimeError: null,
@@ -549,6 +550,65 @@ function continueHereRow(handoff, readiness) {
   return `<div class="status-row"><span class="dot ${readiness.tone}"></span><div><strong>${escapeHtml(readiness.label)}</strong><span>${escapeHtml(readiness.detail)}</span></div><span class="badge ${readiness.tone}">${escapeHtml(target)}</span></div>`;
 }
 
+function checkpointEvents() {
+  return liveEvents().filter((event) => event.type?.startsWith("snapshot."));
+}
+
+function handoffEvents() {
+  return liveEvents().filter((event) => event.type === "handoff.state.changed");
+}
+
+function securityEvents() {
+  return liveEvents().filter((event) => event.type === "security.blocked");
+}
+
+function quotaEvents() {
+  return liveEvents().filter((event) => event.type === "quota.warning");
+}
+
+function snapshotEventSummary(event) {
+  const payload = event.payload ?? {};
+  if (event.type === "snapshot.local.created") {
+    return {
+      title: "Checkpoint Created",
+      detail: `${payload.label ?? "unlabeled"} - ${payload.snapshot_sequence_number ? `#${payload.snapshot_sequence_number}` : "sequence pending"} - ${formatClock(event.occurredAt ?? event.receivedAt)}`,
+      badge: payload.snapshot_id ? shortId(payload.snapshot_id) : "created",
+      tone: "good",
+    };
+  }
+  if (event.type === "snapshot.apply.started") {
+    return {
+      title: "Target Apply Started",
+      detail: `${payload.target_workspace_id ?? "target workspace"} - ${payload.dry_run ? "dry run" : "apply"} - ${formatClock(event.occurredAt ?? event.receivedAt)}`,
+      badge: "started",
+      tone: "warn",
+    };
+  }
+  if (event.type === "snapshot.apply.verified") {
+    return {
+      title: "Target Apply Verified",
+      detail: `${payload.target_workspace_id ?? "target workspace"} - ${formatClock(event.occurredAt ?? event.receivedAt)}`,
+      badge: "verified",
+      tone: "good",
+    };
+  }
+  return {
+    title: titleize(event.type),
+    detail: formatClock(event.occurredAt ?? event.receivedAt),
+    badge: "snapshot",
+    tone: "warn",
+  };
+}
+
+function quotaUsage(payload) {
+  const used = payload?.used ?? null;
+  const limit = payload?.limit ?? null;
+  const unit = payload?.unit ?? "";
+  if (used === null) return "usage unknown";
+  if (limit === null || limit === undefined) return `${used} ${unit}`.trim();
+  return `${used}/${limit} ${unit}`.trim();
+}
+
 function statusCounts(statusResult) {
   return statusResult?.status?.counts ?? {
     staged: 0,
@@ -1002,8 +1062,27 @@ function renderRuns() {
 }
 
 function renderActivity() {
-  const handoffEvents = liveEvents().filter((event) => event.type === "handoff.state.changed");
-  const handoffRows = handoffEvents
+  const auditEvents = activity();
+  const checkpointItems = checkpointEvents();
+  const handoffItems = handoffEvents();
+  const securityItems = securityEvents();
+  const quotaItems = quotaEvents();
+  const activeFilter = state.activityFilter;
+  const showPanel = (filter) => activeFilter === "all" || activeFilter === filter;
+  const filterButton = (filter, label, count) =>
+    `<button class="segmented-button" data-activity-filter="${escapeHtml(filter)}" aria-pressed="${activeFilter === filter ? "true" : "false"}">${escapeHtml(label)}<span>${count}</span></button>`;
+  const checkpointRows = checkpointItems
+    .map((event) => {
+      const summary = snapshotEventSummary(event);
+      return `<div class="list-item">
+        <div class="list-item-row">
+          <div><strong>${escapeHtml(summary.title)}</strong><span>${escapeHtml(summary.detail)}</span></div>
+          <span class="badge ${summary.tone}">${escapeHtml(summary.badge)}</span>
+        </div>
+      </div>`;
+    })
+    .join("");
+  const handoffRows = handoffItems
     .map((event) => {
       const payload = event.payload ?? {};
       const stateLabel = titleize(payload.state);
@@ -1017,30 +1096,85 @@ function renderActivity() {
       </div>`;
     })
     .join("");
-  const rows = activity()
+  const securityRows = securityItems
+    .map((event) => {
+      const payload = event.payload ?? {};
+      return `<div class="list-item">
+        <div class="list-item-row">
+          <div><strong>${escapeHtml(payload.title ?? "Security Blocked")}</strong><span>${escapeHtml(payload.action ?? payload.detail ?? "Blocked by local policy")} - ${escapeHtml(payload.project_id ?? "global")} - ${formatClock(event.occurredAt ?? event.receivedAt)}</span></div>
+          <span class="badge bad">${escapeHtml(payload.code ?? "blocked")}</span>
+        </div>
+      </div>`;
+    })
+    .join("");
+  const quotaRows = quotaItems
+    .map((event) => {
+      const payload = event.payload ?? {};
+      return `<div class="list-item">
+        <div class="list-item-row">
+          <div><strong>${escapeHtml(payload.quota ?? "Quota warning")}</strong><span>${escapeHtml(quotaUsage(payload))} - ${escapeHtml(payload.scope ?? "local")} - ${escapeHtml(payload.detail ?? "Resource threshold reached")}</span></div>
+          <span class="badge warn">warning</span>
+        </div>
+      </div>`;
+    })
+    .join("");
+  const auditRows = auditEvents
     .map((event) => `<div class="list-item">
       <div class="list-item-row">
         <div><strong>${escapeHtml(event.summary)}</strong><span>${escapeHtml(event.type)} - ${escapeHtml(event.project_id ?? "global")} - ${formatAge(event.created_at_unix_seconds)}</span></div>
         <span class="badge ${event.outcome === "succeeded" ? "good" : event.outcome === "failed" ? "bad" : ""}">${escapeHtml(event.outcome)}</span>
       </div>
-      <pre class="json-box">${escapeHtml(JSON.stringify(event.detail ?? {}, null, 2))}</pre>
     </div>`)
     .join("");
   return `
     <section class="screen">
       ${agentErrors()}
-      <div class="panel">
-        <div class="panel-head"><div><h3>Handoff events</h3><p>${handoffEvents.length} from agent stream</p></div></div>
-        <div class="panel-body scroll" data-scroll-container>
-          ${handoffEvents.length === 0 ? '<div class="empty"><strong>No handoff events</strong><p>Handoff state changes will appear here after the event stream receives them.</p></div>' : `<div class="list">${handoffRows}</div>`}
+      <div class="panel flat">
+        <div class="panel-head">
+          <div><h3>Activity filters</h3><p>${liveEvents().length} live events, ${auditEvents.length} audit events</p></div>
+          <button class="button" data-action="diagnostics" ${state.operation ? "disabled" : ""}>${icons.download}<span>Diagnostics</span></button>
+        </div>
+        <div class="panel-body">
+          <div class="segmented-control" role="group" aria-label="Activity filter">
+            ${filterButton("all", "All", liveEvents().length + auditEvents.length)}
+            ${filterButton("audit", "Audit", auditEvents.length)}
+            ${filterButton("checkpoint", "Checkpoints", checkpointItems.length)}
+            ${filterButton("handoff", "Handoffs", handoffItems.length)}
+            ${filterButton("security", "Security", securityItems.length)}
+            ${filterButton("quota", "Quota", quotaItems.length)}
+          </div>
         </div>
       </div>
-      <div class="panel">
-        <div class="panel-head"><div><h3>Activity</h3><p>${activity().length} audit events</p></div></div>
+      ${showPanel("checkpoint") ? `<div class="panel">
+        <div class="panel-head"><div><h3>Checkpoint events</h3><p>${checkpointItems.length} from agent stream</p></div></div>
         <div class="panel-body scroll" data-scroll-container>
-          ${activity().length === 0 ? '<div class="empty"><strong>No activity</strong><p>Agent audit events will appear here.</p></div>' : `<div class="list">${rows}</div>`}
+          ${checkpointItems.length === 0 ? '<div class="empty"><strong>No checkpoint events</strong><p>Snapshot creation and apply verification events will appear here.</p></div>' : `<div class="list">${checkpointRows}</div>`}
         </div>
-      </div>
+      </div>` : ""}
+      ${showPanel("handoff") ? `<div class="panel">
+        <div class="panel-head"><div><h3>Handoff events</h3><p>${handoffItems.length} from agent stream</p></div></div>
+        <div class="panel-body scroll" data-scroll-container>
+          ${handoffItems.length === 0 ? '<div class="empty"><strong>No handoff events</strong><p>Handoff state changes will appear here after the event stream receives them.</p></div>' : `<div class="list">${handoffRows}</div>`}
+        </div>
+      </div>` : ""}
+      ${showPanel("security") ? `<div class="panel">
+        <div class="panel-head"><div><h3>Security blocks</h3><p>${securityItems.length} from agent stream</p></div></div>
+        <div class="panel-body scroll" data-scroll-container>
+          ${securityItems.length === 0 ? '<div class="empty"><strong>No security blocks</strong><p>Policy blocks will appear here when the agent stops unsafe work.</p></div>' : `<div class="list">${securityRows}</div>`}
+        </div>
+      </div>` : ""}
+      ${showPanel("quota") ? `<div class="panel">
+        <div class="panel-head"><div><h3>Quota warnings</h3><p>${quotaItems.length} from agent stream</p></div></div>
+        <div class="panel-body scroll" data-scroll-container>
+          ${quotaItems.length === 0 ? '<div class="empty"><strong>No quota warnings</strong><p>Storage and resource warnings will appear here.</p></div>' : `<div class="list">${quotaRows}</div>`}
+        </div>
+      </div>` : ""}
+      ${showPanel("audit") ? `<div class="panel">
+        <div class="panel-head"><div><h3>Audit events</h3><p>${auditEvents.length} persisted agent events</p></div></div>
+        <div class="panel-body scroll" data-scroll-container>
+          ${auditEvents.length === 0 ? '<div class="empty"><strong>No audit events</strong><p>Agent audit events will appear here.</p></div>' : `<div class="list">${auditRows}</div>`}
+        </div>
+      </div>` : ""}
     </section>
   `;
 }
@@ -1139,6 +1273,12 @@ function attachHandlers() {
   });
   app.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleAction(button));
+  });
+  app.querySelectorAll("[data-activity-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activityFilter = button.dataset.activityFilter ?? "all";
+      render();
+    });
   });
   const settingsForm = app.querySelector("[data-settings-form]");
   if (settingsForm) {

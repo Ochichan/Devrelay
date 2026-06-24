@@ -116,7 +116,19 @@ const bootstrap = {
     },
   ],
   runs: [],
-  activity: [],
+  activity: [
+    {
+      audit_id: 1,
+      project_id: "project-1",
+      type: "checkpoint.create",
+      outcome: "succeeded",
+      summary: "Checkpoint created",
+      detail: {
+        internal_oid: "oid-secret",
+      },
+      created_at_unix_seconds: nowSeconds,
+    },
+  ],
 };
 const cleanStatus = {
   ok: true,
@@ -286,7 +298,16 @@ handlers.get("devrelay-agent-connected")({
 handlers.get("devrelay-agent-event")({
   payload: {
     sequence: 4,
+    occurred_at_unix_millis: Date.now(),
     type: "snapshot.local.created",
+    payload: {
+      project_id: "project-1",
+      snapshot_id: "s1_livecheckpoint000000000",
+      snapshot_sequence_number: 2,
+      label: "desktop",
+      state_hash: "state-secret",
+      created_at_unix_seconds: nowSeconds,
+    },
   },
 });
 handlers.get("devrelay-agent-event")({
@@ -306,14 +327,79 @@ handlers.get("devrelay-agent-event")({
     },
   },
 });
+handlers.get("devrelay-agent-event")({
+  payload: {
+    sequence: 6,
+    occurred_at_unix_millis: Date.now(),
+    type: "snapshot.apply.verified",
+    payload: {
+      project_id: "project-1",
+      snapshot_id: "s1_livecheckpoint000000000",
+      target_workspace_id: "session-1",
+      verification: {
+        head_oid: "oid-secret",
+        index_tree_oid: "oid-secret",
+        work_tree_oid: "oid-secret",
+        state_hash: "state-secret",
+      },
+    },
+  },
+});
+handlers.get("devrelay-agent-event")({
+  payload: {
+    sequence: 7,
+    occurred_at_unix_millis: Date.now(),
+    type: "security.blocked",
+    payload: {
+      code: "DR-SECURITY-BLOCKED",
+      title: "Secret excluded",
+      detail: "Blocked a private key file",
+      action: "Review excluded files",
+      project_id: "project-1",
+      safe_actions: ["Remove the secret"],
+    },
+  },
+});
+handlers.get("devrelay-agent-event")({
+  payload: {
+    sequence: 8,
+    occurred_at_unix_millis: Date.now(),
+    type: "quota.warning",
+    payload: {
+      quota: "snapshot-store",
+      scope: "project",
+      used: 90,
+      limit: 100,
+      unit: "mb",
+      project_id: "project-1",
+      detail: "Snapshot store is near its configured limit",
+    },
+  },
+});
 vm.runInContext('state.view = "activity"; render();', context);
+assert.match(app.innerHTML, /Activity filters/, "activity view did not render filters");
+assert.match(app.innerHTML, /Audit events/, "activity view did not render audit section");
+assert.match(app.innerHTML, /Checkpoint events/, "activity view did not render checkpoint section");
 assert.match(app.innerHTML, /Handoff events/, "activity view did not render handoff section");
+assert.match(app.innerHTML, /Security blocks/, "activity view did not render security section");
+assert.match(app.innerHTML, /Quota warnings/, "activity view did not render quota section");
+assert.match(app.innerHTML, /Diagnostics/, "activity view did not render diagnostics action");
+assert.match(app.innerHTML, /Checkpoint Created/, "checkpoint event summary did not render");
+assert.match(app.innerHTML, /Target Apply Verified/, "apply verified summary did not render");
 assert.match(app.innerHTML, /Target Verified/, "handoff event state did not render");
+assert.match(app.innerHTML, /Secret excluded/, "security block did not render");
+assert.match(app.innerHTML, /snapshot-store/, "quota warning did not render");
 assert.doesNotMatch(app.innerHTML, /lease-1/, "handoff event exposed lease id");
+assert.doesNotMatch(app.innerHTML, /oid-secret/, "activity view exposed internal OID detail");
+assert.doesNotMatch(app.innerHTML, /state-secret/, "activity view exposed internal state hash");
+vm.runInContext('state.activityFilter = "checkpoint"; render();', context);
+assert.match(app.innerHTML, /Checkpoint events/, "checkpoint filter hid checkpoint section");
+assert.doesNotMatch(app.innerHTML, /Handoff events/, "checkpoint filter did not hide handoff section");
+vm.runInContext('state.activityFilter = "all"; render();', context);
 handlers.get("devrelay-agent-gap")({
   payload: {
-    expected_after: 4,
-    actual_next: 7,
+    expected_after: 8,
+    actual_next: 11,
   },
 });
 handlers.get("devrelay-agent-disconnected")({
