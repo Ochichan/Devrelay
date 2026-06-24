@@ -1896,8 +1896,8 @@ Conventions:
 ### M14.3 Guided Doctor
 
 - [ ] Add project safety doctor.
-- [ ] Add path portability doctor.
-- [ ] Add environment doctor.
+- [x] Add path portability doctor.
+- [x] Add environment doctor.
 - [ ] Add secret mapping doctor.
 - [ ] Add resource policy doctor.
 - [ ] Add anchor health doctor.
@@ -1954,7 +1954,7 @@ Conventions:
 - [ ] Target dirty flow is safe and understandable.
 - [ ] Inactive edit flow is safe and understandable.
 - [ ] Normal handoff requires no Git command.
-- [ ] Local metrics remain private by default.
+- [x] Local metrics remain private by default.
 - [x] User docs cover recovery and backup.
 
 ## M15. North Star Release Candidate
