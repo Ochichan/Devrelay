@@ -1809,7 +1809,7 @@ Conventions:
 
 ### M13.5 Backup Anchor
 
-- [ ] Define backup anchor data set.
+- [x] Define backup anchor data set.
 - [ ] Replicate metadata DB safely.
 - [ ] Replicate snapshot bare repos.
 - [ ] Replicate CAS chunks.
