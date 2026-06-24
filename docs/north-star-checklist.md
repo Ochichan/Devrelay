@@ -1901,7 +1901,7 @@ Conventions:
 - [x] Add secret mapping doctor.
 - [x] Add resource policy doctor.
 - [x] Add anchor health doctor.
-- [ ] Add device trust doctor.
+- [x] Add device trust doctor.
 - [ ] Add one-click safe fixes where appropriate.
 - [ ] Add doctor UX tests.
 

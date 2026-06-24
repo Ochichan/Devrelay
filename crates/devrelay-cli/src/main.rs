@@ -365,6 +365,10 @@ enum DoctorCommand {
         #[arg(long)]
         json: bool,
     },
+    DeviceTrust {
+        #[arg(long)]
+        json: bool,
+    },
     WslFilesystem {
         #[arg(long, default_value = ".")]
         repo: PathBuf,
@@ -1337,6 +1341,26 @@ struct AnchorHealthIssue {
 }
 
 #[derive(Debug, Serialize)]
+struct DeviceTrustDoctorReport {
+    local_device_id: String,
+    local_device_name: String,
+    device_count: usize,
+    paired_device_count: usize,
+    revoked_device_count: usize,
+    key_rotation_required_count: usize,
+    devices: Vec<DeviceIdentity>,
+    revocations: Vec<DeviceRevocationRecord>,
+    issues: Vec<DeviceTrustIssue>,
+}
+
+#[derive(Debug, Serialize)]
+struct DeviceTrustIssue {
+    code: &'static str,
+    message: String,
+    safe_actions: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct AnchorStartupRecord {
     version: u32,
     role: AgentRole,
@@ -1754,6 +1778,13 @@ fn handle_doctor_command(command: DoctorCommand) -> anyhow::Result<()> {
             let report = anchor_health_doctor_report(&status);
             render_anchor_health_doctor(&report, json)
         }
+        DoctorCommand::DeviceTrust { json } => {
+            let registry = open_device_registry()?;
+            let devices = registry.db.list_devices()?;
+            let revocations = registry.db.list_device_revocations()?;
+            let report = device_trust_doctor_report(&registry.config, devices, revocations);
+            render_device_trust_doctor(&report, json)
+        }
         DoctorCommand::WslFilesystem {
             repo,
             platform_key,
@@ -1884,6 +1915,91 @@ fn render_environment_doctor(report: &EnvironmentDoctorReport, json: bool) -> an
         }
         for line in &report.selection_explanation {
             println!("  selection: {line}");
+        }
+    }
+    Ok(())
+}
+
+fn device_trust_doctor_report(
+    config: &LocalConfig,
+    devices: Vec<DeviceIdentity>,
+    revocations: Vec<DeviceRevocationRecord>,
+) -> DeviceTrustDoctorReport {
+    let paired_device_count = devices
+        .iter()
+        .filter(|device| {
+            device.device_id != config.device_id && device.paired_at_unix_seconds.is_some()
+        })
+        .count();
+    let key_rotation_required_count = revocations
+        .iter()
+        .filter(|revocation| revocation.key_rotation_required)
+        .count();
+    let mut issues = Vec::new();
+    if paired_device_count == 0 {
+        issues.push(DeviceTrustIssue {
+            code: "no-paired-devices",
+            message: "No paired peer devices are registered for this fabric.".to_string(),
+            safe_actions: vec![
+                "Run devrelay identity show --json on each device to exchange identity material."
+                    .to_string(),
+                "Run devrelay pairing start and devrelay pairing confirm after comparing the short code."
+                    .to_string(),
+            ],
+        });
+    }
+    if key_rotation_required_count > 0 {
+        issues.push(DeviceTrustIssue {
+            code: "key-rotation-required",
+            message: format!(
+                "{key_rotation_required_count} revoked device(s) require key rotation."
+            ),
+            safe_actions: vec![
+                "Keep revoked devices offline until a fabric identity rotation flow is available."
+                    .to_string(),
+                "Review device.revoked audit events before trusting old peers.".to_string(),
+            ],
+        });
+    }
+
+    DeviceTrustDoctorReport {
+        local_device_id: config.device_id.clone(),
+        local_device_name: config.device_name.clone(),
+        device_count: devices.len(),
+        paired_device_count,
+        revoked_device_count: revocations.len(),
+        key_rotation_required_count,
+        devices,
+        revocations,
+        issues,
+    }
+}
+
+fn render_device_trust_doctor(report: &DeviceTrustDoctorReport, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!(
+            "device trust doctor: {} ({})",
+            report.local_device_name, report.local_device_id
+        );
+        println!("  devices: {}", report.device_count);
+        println!("  paired peers: {}", report.paired_device_count);
+        println!("  revoked devices: {}", report.revoked_device_count);
+        println!(
+            "  key rotations required: {}",
+            report.key_rotation_required_count
+        );
+        if report.issues.is_empty() {
+            println!("  issues: none");
+        } else {
+            println!("  issues: {}", report.issues.len());
+            for issue in &report.issues {
+                println!("  - {}: {}", issue.code, issue.message);
+                for action in &issue.safe_actions {
+                    println!("    action: {action}");
+                }
+            }
         }
     }
     Ok(())

@@ -26,6 +26,7 @@ devrelay doctor environment --repo . --manifest devrelay.toml --run-healthcheck 
 devrelay doctor secrets --repo . --manifest devrelay.toml --json
 devrelay doctor resources --json
 devrelay doctor anchor-health --json
+devrelay doctor device-trust --json
 devrelay environment status --project <project-id> --json
 devrelay metrics export --project <project-id> --out metrics.json --json
 devrelay continue --source ../source --target ../target --config devrelay.local.toml --json
@@ -108,6 +109,10 @@ limits.
 the device is configured as an anchor, verifies the local anchor metadata,
 snapshot, CAS, and startup paths, and returns safe actions such as
 `devrelay anchor init` when the anchor is not initialized.
+
+`doctor device-trust` reports the local device identity, paired peer count,
+registered devices, revocations, and key-rotation-required revocation warnings.
+It returns pairing safe actions when no paired peer devices are registered.
 
 ## Local Metrics
 

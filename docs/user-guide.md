@@ -265,6 +265,7 @@ devrelay doctor git-performance --repo . --json
 devrelay doctor secrets --repo . --manifest devrelay.toml --json
 devrelay doctor resources --json
 devrelay doctor anchor-health --json
+devrelay doctor device-trust --json
 devrelay doctor environment --repo . --manifest devrelay.toml --json
 devrelay environment status --project <project-id> --json
 ```

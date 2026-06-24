@@ -2225,6 +2225,42 @@ fn doctor_anchor_health_reports_uninitialized_anchor() {
 }
 
 #[test]
+fn doctor_device_trust_reports_missing_paired_devices() {
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-doctor-device-trust-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let output = devrelay()
+        .env("DEVRELAY_HOME", &root)
+        .args(["doctor", "device-trust", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["device_count"], 1);
+    assert_eq!(value["paired_device_count"], 0);
+    assert_eq!(value["revoked_device_count"], 0);
+    assert!(value["local_device_id"].as_str().unwrap().starts_with("d_"));
+    assert!(value["issues"].as_array().unwrap().iter().any(|issue| {
+        issue["code"] == "no-paired-devices"
+            && issue["safe_actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|action| action.as_str().unwrap().contains("devrelay pairing start"))
+    }));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn anchor_init_and_status_report_layout() {
     let root = std::env::temp_dir().join(format!("devrelay-anchor-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
