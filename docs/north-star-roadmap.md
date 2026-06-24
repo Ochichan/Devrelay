@@ -250,9 +250,9 @@ Completed capabilities:
 
 Open work:
 
-- M4.5 Control API server/endpoints/auth middleware/schema/tests.
-- Decide whether the remote control boundary is HTTP `/v1` or versioned RPC
-  over mTLS. If it is RPC, rename M4.5 and update the API docs.
+- M4.5 remote JSON-RPC server over mTLS.
+- Remote method allowlist, auth middleware, schema documentation, JSON error
+  mapping, and integration tests.
 
 Exit gate: open until unauthenticated Control API requests are rejected by an
 implemented API boundary with integration tests.

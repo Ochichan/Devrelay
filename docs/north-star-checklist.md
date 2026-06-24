@@ -832,18 +832,18 @@ Conventions:
 
 ### M4.5 Control API
 
-- [ ] Decide whether M4.5 is HTTP `/v1` or versioned remote RPC over mTLS.
-- [ ] Add HTTP server or RPC server over TLS.
-- [ ] Add `/v1/devices`.
-- [ ] Add `/v1/projects`.
-- [ ] Add `/v1/workspaces`.
-- [ ] Add `/v1/sessions/{id}/snapshots`.
-- [ ] Add `/v1/handoffs`.
-- [ ] Add `/v1/recovery`.
+- [x] Decide whether M4.5 is HTTP `/v1` or versioned remote RPC over mTLS.
+- [ ] Add remote JSON-RPC server over mTLS.
+- [ ] Add remote `devices.list`.
+- [ ] Add remote `projects.list`.
+- [ ] Add remote `workspaces.list`.
+- [ ] Add remote `sessions.snapshots.list`.
+- [ ] Add remote handoff methods.
+- [ ] Add remote recovery methods.
 - [ ] Add API auth middleware.
 - [ ] Add request ID middleware.
 - [ ] Add JSON error mapping.
-- [ ] Add OpenAPI or schema documentation.
+- [ ] Add remote RPC schema documentation.
 - [ ] Add API integration tests.
 
 ### M4.6 Revocation

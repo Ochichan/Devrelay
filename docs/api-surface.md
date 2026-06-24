@@ -57,19 +57,19 @@ These may change freely as long as the product-stable contracts remain true:
 - retention planner internals
 - CAS chunking strategy while manifest compatibility is preserved
 
-## Control API Gap
+## Remote Control API Gap
 
-M4.5 is not implemented. There is no stable remote HTTP `/v1` Control API yet.
-The project must choose one of these before M4 can close:
+ADR 0005 selects a versioned remote JSON-RPC 2.0 boundary over mTLS for M4.5.
+DevRelay will not implement a separate HTTP `/v1` REST API for the first remote
+Control API.
 
-1. Implement the documented HTTP/RPC server over mTLS with auth middleware,
-   endpoint schemas, and integration tests.
-2. Rename M4.5 to a versioned remote JSON-RPC boundary over mTLS and document
-   the method set, auth model, and schema compatibility rules.
+M4.5 is still not implemented. The project still needs a remote RPC server over
+mTLS, an explicit remote method allowlist, auth checks before dispatch, schema
+documentation, JSON error mapping, request ID behavior, and integration tests.
 
-Until that decision is complete, do not claim that a remote Control API rejects
-unauthenticated requests. The mTLS transport primitives reject invalid peers,
-but that is not the same as an implemented API boundary.
+Until that implementation exists, do not claim that a remote Control API
+rejects unauthenticated requests. The mTLS transport primitives reject invalid
+peers, but that is not the same as an implemented API boundary.
 
 ## Local Agent RPC
 

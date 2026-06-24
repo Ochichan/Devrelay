@@ -6,8 +6,9 @@ DevRelay local agent RPC uses JSON-RPC 2.0 over the local IPC transport. The
 transport is local-machine only; compatibility rules here cover the JSON
 request, response, method, and error contract.
 
-This is not the M4.5 remote Control API. Remote control over mTLS still needs a
-documented API boundary, auth middleware, schemas, and integration tests.
+Local RPC is not the M4.5 remote Control API. ADR 0005 selects JSON-RPC 2.0
+over mTLS for the remote Control API, but the remote server, method allowlist,
+auth boundary, schemas, and integration tests are still unimplemented.
 
 ## Transport Scope
 
