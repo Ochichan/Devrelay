@@ -71,12 +71,13 @@ Until that decision is complete, do not claim that a remote Control API rejects
 unauthenticated requests. The mTLS transport primitives reject invalid peers,
 but that is not the same as an implemented API boundary.
 
-## Local Agent Handoff RPC
+## Local Agent RPC
 
-The local agent JSON-RPC surface now exposes `leases.list` plus the handoff
-state-machine methods `handoffs.list`, `handoff.begin`,
-`handoff.target.verify`, `handoff.source.ready`, `handoff.commit`,
-`handoff.abort`, and `handoff.recover`.
+The local agent JSON-RPC surface now exposes `leases.list`, editor context
+capture via `editor.context.update`, plus the handoff state-machine methods
+`handoffs.list`, `handoff.begin`, `handoff.target.verify`,
+`handoff.source.ready`, `handoff.commit`, `handoff.abort`, and
+`handoff.recover`.
 
 These methods are local metadata-control commands. They do not implement the
 remote M4.5 Control API, advertise file transfer completion, or allow UI clients

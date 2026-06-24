@@ -1080,6 +1080,7 @@ INSERT INTO task_runs (
         "devices.list",
         "activity.list",
         "runs.list",
+        "editor.context.update",
         "settings.get",
         "settings.update",
         "handoffs.list",
@@ -1164,6 +1165,70 @@ INSERT INTO task_runs (
     assert_eq!(updated["result"]["settings"]["resource_profile"], "eco");
     assert_eq!(updated["result"]["settings"]["mdns_enabled"], false);
     assert_eq!(updated["result"]["settings"]["editor_command"], "system");
+
+    running.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn foreground_records_editor_context_update_rpc() {
+    use devrelay_core::{IpcLimits, UnixIpcConnection};
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("dr-agent-ctx");
+    let workspace = running.root.join("editor-project");
+    let workspace_path = workspace.to_string_lossy().to_string();
+    let active_file = workspace.join("src/main.rs").to_string_lossy().to_string();
+
+    let updated = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "editor-context-update",
+            "method": "editor.context.update",
+            "params": {
+                "project": null,
+                "workspace_path": workspace_path,
+                "capsule": {
+                    "schema_version": 1,
+                    "source": "vscode",
+                    "workspace": {
+                        "folders": [
+                            { "name": "editor-project", "path": workspace_path }
+                        ]
+                    },
+                    "tabs": [
+                        {
+                            "label": "main.rs",
+                            "resources": [
+                                { "scheme": "file", "path": active_file }
+                            ]
+                        }
+                    ]
+                }
+            }
+        }),
+    );
+    assert_eq!(updated["result"]["accepted"], true);
+    assert!(updated["result"]["capsule_bytes"].as_u64().unwrap() > 0);
+
+    let activity = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "editor-context-activity",
+            "method": "activity.list",
+            "params": { "limit": 10 }
+        }),
+    );
+    let event = &activity["result"]["events"][0];
+    assert_eq!(event["type"], "editor.context.updated");
+    assert_eq!(event["summary"], "editor context updated");
+    assert_eq!(event["detail"]["capsule"]["source"], "vscode");
+    assert_eq!(
+        event["detail"]["workspace_path"].as_str(),
+        Some(workspace_path.as_str())
+    );
 
     running.stop();
 }

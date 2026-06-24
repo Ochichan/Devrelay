@@ -21,6 +21,8 @@ pub enum AuditEventType {
     SnapshotApplied,
     #[serde(rename = "lease.transferred")]
     LeaseTransferred,
+    #[serde(rename = "editor.context.updated")]
+    EditorContextUpdated,
     #[serde(rename = "command.approved")]
     CommandApproved,
     #[serde(rename = "security.blocked")]
@@ -35,6 +37,7 @@ impl AuditEventType {
             Self::SnapshotPublished => "snapshot.published",
             Self::SnapshotApplied => "snapshot.applied",
             Self::LeaseTransferred => "lease.transferred",
+            Self::EditorContextUpdated => "editor.context.updated",
             Self::CommandApproved => "command.approved",
             Self::SecurityBlocked => "security.blocked",
         }
@@ -46,6 +49,7 @@ impl AuditEventType {
             "snapshot.published" => Self::SnapshotPublished,
             "snapshot.applied" => Self::SnapshotApplied,
             "lease.transferred" => Self::LeaseTransferred,
+            "editor.context.updated" => Self::EditorContextUpdated,
             "command.approved" => Self::CommandApproved,
             "security.blocked" => Self::SecurityBlocked,
             _ => Self::DevicePaired,

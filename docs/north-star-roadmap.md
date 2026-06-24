@@ -368,10 +368,13 @@ Completed capabilities:
 - Local agent IPC client using length-prefixed JSON-RPC.
 - Status bar connection state and refresh/explain commands.
 - Package metadata and client protocol tests.
+- Workspace folder, opened tab order, active editor, cursor, selection, split,
+  breakpoint, and terminal title/cwd capture from VS Code public APIs.
+- Size-limited editor context capsule upload through local
+  `editor.context.update` RPC with durable audit evidence.
 
 Open work:
 
-- Workspace context capture.
 - Unsaved buffer handling.
 - Context restore UX.
 - Extension-host validation inside VS Code.

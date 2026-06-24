@@ -1,10 +1,23 @@
 import * as vscode from "vscode";
 import { AgentClient } from "./agentClient";
+import {
+  assertContextWithinLimit,
+  captureWorkspaceContext,
+  contextSummary,
+  editorContextUpdateParams,
+} from "./contextCapture";
 import { ConnectionStatus, statusText, statusTooltip } from "./status";
 
 interface AgentHealthResult {
   status: string;
   version?: string;
+}
+
+interface EditorContextUpdateResult {
+  accepted: boolean;
+  audit_id: number;
+  capsule_bytes: number;
+  recorded_at_unix_seconds: number;
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -39,10 +52,30 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  const captureContext = async () => {
+    try {
+      const capsule = captureWorkspaceContext(vscode);
+      const capsuleBytes = assertContextWithinLimit(capsule);
+      const result = await client.call<EditorContextUpdateResult>(
+        "editor.context.update",
+        editorContextUpdateParams(capsule)
+      );
+      output.appendLine(
+        `Editor context captured: ${contextSummary(capsule)}; ${capsuleBytes} bytes; audit ${result.audit_id}`
+      );
+      void vscode.window.showInformationMessage("DevRelay captured editor context.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output.appendLine(`Editor context capture failed: ${message}`);
+      void vscode.window.showErrorMessage(`DevRelay context capture failed: ${message}`);
+    }
+  };
+
   context.subscriptions.push(
     output,
     statusBar,
     vscode.commands.registerCommand("devrelay.refreshConnection", refresh),
+    vscode.commands.registerCommand("devrelay.captureContext", captureContext),
     vscode.commands.registerCommand("devrelay.explainState", () => {
       void vscode.window.showInformationMessage(lastStatus.detail);
     })

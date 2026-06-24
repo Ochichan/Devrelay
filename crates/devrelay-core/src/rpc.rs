@@ -50,6 +50,7 @@ pub const METHOD_EVENTS_SUBSCRIBE: &str = "events.subscribe";
 pub const METHOD_DEVICES_LIST: &str = "devices.list";
 pub const METHOD_ACTIVITY_LIST: &str = "activity.list";
 pub const METHOD_RUNS_LIST: &str = "runs.list";
+pub const METHOD_EDITOR_CONTEXT_UPDATE: &str = "editor.context.update";
 pub const METHOD_SETTINGS_GET: &str = "settings.get";
 pub const METHOD_SETTINGS_UPDATE: &str = "settings.update";
 
@@ -453,6 +454,21 @@ pub struct RunsListResult {
     pub runs: Vec<TaskRunRecord>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorContextUpdateParams {
+    pub project: Option<String>,
+    pub workspace_path: Option<PathBuf>,
+    pub capsule: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorContextUpdateResult {
+    pub accepted: bool,
+    pub audit_id: i64,
+    pub capsule_bytes: usize,
+    pub recorded_at_unix_seconds: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsGetResult {
     pub fabric_name: String,
@@ -795,6 +811,31 @@ mod tests {
         assert_eq!(result["cursor"]["after_sequence"], 4);
         assert_eq!(result["replayed"], 2);
         assert_eq!(result["current_sequence"], 6);
+    }
+
+    #[test]
+    fn editor_context_update_params_round_trip() {
+        let params: EditorContextUpdateParams = serde_json::from_value(json!({
+            "project": "project-a",
+            "workspace_path": "/Users/dev/project",
+            "capsule": {
+                "schema_version": 1,
+                "source": "vscode",
+                "workspace": {
+                    "folders": [
+                        { "name": "project", "path": "/Users/dev/project" }
+                    ]
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(params.project.as_deref(), Some("project-a"));
+        assert_eq!(
+            params.workspace_path.as_ref().unwrap(),
+            &std::path::PathBuf::from("/Users/dev/project")
+        );
+        assert_eq!(params.capsule["source"], "vscode");
     }
 
     #[cfg(unix)]

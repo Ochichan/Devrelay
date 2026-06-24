@@ -1271,19 +1271,19 @@ Conventions:
 
 ### M8.2 Workspace Context Capture
 
-- [ ] Capture workspace folder.
-- [ ] Capture opened files.
-- [ ] Capture tab order where API allows.
-- [ ] Capture active editor.
-- [ ] Capture cursor position.
-- [ ] Capture selections.
-- [ ] Capture split layout where API allows.
-- [ ] Capture breakpoints where API allows.
-- [ ] Capture terminal cwd where API allows.
-- [ ] Capture terminal title where API allows.
-- [ ] Send context capsule to agent.
-- [ ] Add context size limits.
-- [ ] Add capture tests where practical.
+- [x] Capture workspace folder.
+- [x] Capture opened files.
+- [x] Capture tab order where API allows.
+- [x] Capture active editor.
+- [x] Capture cursor position.
+- [x] Capture selections.
+- [x] Capture split layout where API allows.
+- [x] Capture breakpoints where API allows.
+- [x] Capture terminal cwd where API allows.
+- [x] Capture terminal title where API allows.
+- [x] Send context capsule to agent.
+- [x] Add context size limits.
+- [x] Add capture tests where practical.
 
 ### M8.3 Unsaved Buffers
 

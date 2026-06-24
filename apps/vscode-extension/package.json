@@ -15,7 +15,8 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:devrelay.refreshConnection",
-    "onCommand:devrelay.explainState"
+    "onCommand:devrelay.explainState",
+    "onCommand:devrelay.captureContext"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -27,6 +28,10 @@
       {
         "command": "devrelay.explainState",
         "title": "DevRelay: Explain Current State"
+      },
+      {
+        "command": "devrelay.captureContext",
+        "title": "DevRelay: Capture Editor Context"
       }
     ]
   },
