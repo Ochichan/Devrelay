@@ -1225,14 +1225,14 @@ Conventions:
 
 ### M7.9 Settings View
 
-- [ ] Add background behavior settings.
-- [ ] Add storage/cache settings.
-- [ ] Add network settings.
-- [ ] Add security settings.
-- [ ] Add editor context settings.
-- [ ] Add advanced diagnostics settings.
-- [ ] Save settings through agent.
-- [ ] Validate settings before save.
+- [x] Add background behavior settings.
+- [x] Add storage/cache settings.
+- [x] Add network settings.
+- [x] Add security settings.
+- [x] Add editor context settings.
+- [x] Add advanced diagnostics settings.
+- [x] Save settings through agent.
+- [x] Validate settings before save.
 
 ### M7.10 Tray/Menu Bar
 

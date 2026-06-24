@@ -330,6 +330,31 @@ handleAction({
   context
 );
 assert.match(app.innerHTML, /Run task is not wired to the agent yet/, "run task placeholder did not warn");
+vm.runInContext('state.view = "settings"; render();', context);
+assert.match(app.innerHTML, /Background behavior/, "settings view did not render background behavior settings");
+assert.match(app.innerHTML, /Storage and cache/, "settings view did not render storage settings");
+assert.match(app.innerHTML, /Network/, "settings view did not render network settings");
+assert.match(app.innerHTML, /Security/, "settings view did not render security settings");
+assert.match(app.innerHTML, /Editor context/, "settings view did not render editor context settings");
+assert.match(app.innerHTML, /Advanced diagnostics/, "settings view did not render advanced diagnostics settings");
+assert.match(app.innerHTML, /Save settings/, "settings view did not render save action");
+assert.match(app.innerHTML, /Checkpoint cache/, "settings view did not render cache state");
+assert.equal(
+  vm.runInContext(
+    'validateSettingsInput({ get: (name) => name === "resource_profile" ? "adaptive" : name === "editor_command" ? "code" : null })',
+    context
+  ),
+  null,
+  "settings validation rejected a valid payload"
+);
+assert.match(
+  vm.runInContext(
+    'validateSettingsInput({ get: (name) => name === "resource_profile" ? "adaptive" : name === "editor_command" ? "  " : null })',
+    context
+  ),
+  /Editor command is required/,
+  "settings validation did not reject blank editor command"
+);
 vm.runInContext('state.view = "devices"; render();', context);
 assert.match(app.innerHTML, /3 known identities - 2 online/, "devices view did not render device counts");
 assert.match(app.innerHTML, /Pair device/, "devices view did not render pair placeholder");

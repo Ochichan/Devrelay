@@ -9,6 +9,8 @@ const views = [
   ["settings", "Settings", "settings"],
 ];
 
+const resourceProfiles = ["adaptive", "instant", "eco", "custom", "balanced", "performance"];
+
 const state = {
   view: "continue",
   loading: true,
@@ -1457,33 +1459,82 @@ function renderSettings() {
   if (!settings) {
     return `<section class="screen">${agentErrors()}<div class="empty"><strong>Settings unavailable</strong><p>The agent did not return local settings.</p></div></section>`;
   }
+  const runtime = state.bootstrap?.runtime ?? {};
+  const device = currentDevice();
+  const socketExists = Boolean(runtime.agent_socket_exists);
+  const networkLabel = settings.mdns_enabled ? "Discovery on" : "Manual only";
   return `
     <section class="screen">
       ${agentErrors()}
-      <div class="screen-grid">
-        <form class="panel" data-settings-form>
-          <div class="panel-head"><div><h3>Local Settings</h3><p>${escapeHtml(settings.device_id)}</p></div></div>
-          <div class="panel-body form-grid">
-            <div class="field"><label for="resource_profile">Resource profile</label><select id="resource_profile" name="resource_profile">
-              ${["adaptive", "instant", "eco", "custom", "balanced", "performance"].map((profile) => `<option value="${profile}" ${profile === settings.resource_profile ? "selected" : ""}>${titleize(profile)}</option>`).join("")}
-            </select></div>
-            <div class="field"><label for="editor_command">Editor command</label><input id="editor_command" name="editor_command" value="${escapeHtml(settings.editor_command)}" /></div>
-            <label class="check-field"><input type="checkbox" name="mdns_enabled" ${settings.mdns_enabled ? "checked" : ""} /> <span>mDNS discovery</span></label>
-            <div class="button-row"><button class="button primary" type="submit" ${state.operation ? "disabled" : ""}>${icons.check}<span>Save</span></button></div>
+      <div class="screen-grid settings-grid">
+        <form class="panel settings-primary" data-settings-form>
+          <div class="panel-head">
+            <div><h3>Settings</h3><p>${escapeHtml(settings.device_name)} on ${escapeHtml(settings.fabric_name)}</p></div>
+            <span class="badge">${escapeHtml(settings.resource_profile)}</span>
+          </div>
+          <div class="panel-body settings-form">
+            <section class="settings-section">
+              <div class="section-head"><h4>Background behavior</h4><p>Choose how aggressively the local agent prepares work in the background.</p></div>
+              <div class="field"><label for="resource_profile">Resource profile</label><select id="resource_profile" name="resource_profile">
+                ${resourceProfiles.map((profile) => `<option value="${profile}" ${profile === settings.resource_profile ? "selected" : ""}>${titleize(profile)}</option>`).join("")}
+              </select></div>
+            </section>
+            <section class="settings-section">
+              <div class="section-head"><h4>Network</h4><p>Control same-network discovery for nearby DevRelay devices.</p></div>
+              <label class="check-field"><input type="checkbox" name="mdns_enabled" ${settings.mdns_enabled ? "checked" : ""} /> <span>mDNS discovery</span></label>
+            </section>
+            <section class="settings-section">
+              <div class="section-head"><h4>Editor context</h4><p>Command used when DevRelay opens a project or restored workspace.</p></div>
+              <div class="field"><label for="editor_command">Editor command</label><input id="editor_command" name="editor_command" value="${escapeHtml(settings.editor_command)}" autocomplete="off" spellcheck="false" /></div>
+            </section>
+            <div class="button-row"><button class="button primary" type="submit" ${state.operation ? "disabled" : ""}>${icons.check}<span>Save settings</span></button></div>
           </div>
         </form>
         <div class="panel flat">
-          <div class="panel-head"><div><h3>Runtime</h3><p>${escapeHtml(state.bootstrap?.runtime?.platform_key)} ${escapeHtml(state.bootstrap?.runtime?.architecture)}</p></div></div>
+          <div class="panel-head"><div><h3>Storage and cache</h3><p>Local capacity reported by the agent</p></div></div>
           <div class="panel-body status-stack">
-            <div class="status-row"><span class="dot ${state.bootstrap?.runtime?.agent_socket_exists ? "good" : "bad"}"></span><div><strong>Agent socket</strong><span>${escapeHtml(state.bootstrap?.runtime?.agent_socket_path)}</span></div><span class="badge">${state.bootstrap?.runtime?.agent_socket_exists ? "Found" : "Missing"}</span></div>
+            <div class="status-row"><span class="dot good"></span><div><strong>Checkpoint cache</strong><span>${escapeHtml(deviceResource(device, "cache"))}</span></div><span class="badge">Local</span></div>
+            <div class="status-row"><span class="dot good"></span><div><strong>Disk</strong><span>${escapeHtml(deviceResource(device, "disk"))}</span></div><span class="badge">Reported</span></div>
+            <div class="status-row"><span class="dot good"></span><div><strong>Resource budget</strong><span>${escapeHtml(deviceResource(device, "cpu"))} / ${escapeHtml(deviceResource(device, "memory"))}</span></div><span class="badge">${escapeHtml(settings.resource_profile)}</span></div>
+          </div>
+        </div>
+        <div class="panel flat">
+          <div class="panel-head"><div><h3>Security</h3><p>Local trust and safe diagnostics policy</p></div></div>
+          <div class="panel-body status-stack">
+            <div class="status-row"><span class="dot ${socketExists ? "good" : "bad"}"></span><div><strong>Agent socket</strong><span>${escapeHtml(runtime.agent_socket_path)}</span></div><span class="badge ${socketExists ? "good" : "bad"}">${socketExists ? "Found" : "Missing"}</span></div>
+            <div class="status-row"><span class="dot good"></span><div><strong>Anchor mode</strong><span>${escapeHtml(titleize(settings.anchor_mode))}</span></div><span class="badge">Policy</span></div>
+            <div class="status-row"><span class="dot good"></span><div><strong>Diagnostic export</strong><span>Bundles are generated through the local agent.</span></div><span class="badge">Scoped</span></div>
+          </div>
+        </div>
+        <div class="panel flat">
+          <div class="panel-head"><div><h3>Advanced diagnostics</h3><p>Runtime state for troubleshooting this desktop app</p></div></div>
+          <div class="panel-body status-stack">
             ${renderEventBridgeRow()}
-            <div class="status-row"><span class="dot good"></span><div><strong>Anchor mode</strong><span>${escapeHtml(settings.anchor_mode)}</span></div><span class="badge">${escapeHtml(settings.resource_profile)}</span></div>
-            <div class="status-row"><span class="dot good"></span><div><strong>Projects</strong><span>${settings.project_count}</span></div><span class="badge">${escapeHtml(settings.device_name)}</span></div>
+            <div class="status-row"><span class="dot good"></span><div><strong>Runtime</strong><span>${escapeHtml(runtime.platform_key)} ${escapeHtml(runtime.architecture)}</span></div><span class="badge">${escapeHtml(networkLabel)}</span></div>
+            <div class="status-row"><span class="dot good"></span><div><strong>Projects</strong><span>${settings.project_count} registered</span></div><button class="button" data-action="diagnostics" ${state.operation ? "disabled" : ""}>${icons.download}<span>Diagnostics</span></button></div>
           </div>
         </div>
       </div>
     </section>
   `;
+}
+
+function validateSettingsInput(data) {
+  const profile = String(data.get("resource_profile") ?? "").trim();
+  const editorCommand = String(data.get("editor_command") ?? "").trim();
+  if (!resourceProfiles.includes(profile)) {
+    return "Choose a valid resource profile";
+  }
+  if (!editorCommand) {
+    return "Editor command is required";
+  }
+  if (editorCommand.length > 200) {
+    return "Editor command must be 200 characters or fewer";
+  }
+  if (/[\r\n]/.test(editorCommand)) {
+    return "Editor command must be a single line";
+  }
+  return null;
 }
 
 function agentErrors() {
@@ -1558,12 +1609,18 @@ function attachHandlers() {
     settingsForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const data = new FormData(settingsForm);
+      const validationError = validateSettingsInput(data);
+      if (validationError) {
+        toast(validationError, "bad");
+        return;
+      }
       await runOperation("Saving settings", async () => {
+        const editorCommand = String(data.get("editor_command") ?? "").trim();
         const result = await invoke("settings_update", {
           params: {
-            resource_profile: data.get("resource_profile"),
+            resource_profile: String(data.get("resource_profile") ?? "").trim(),
             mdns_enabled: data.get("mdns_enabled") === "on",
-            editor_command: data.get("editor_command"),
+            editor_command: editorCommand,
           },
         });
         if (!result.ok) throw new Error(result.message);
