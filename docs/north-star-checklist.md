@@ -1794,8 +1794,8 @@ Conventions:
 - [x] Add high-entropy heuristic.
 - [x] Add user-configured scanner hook.
 - [x] Add raw secret redaction tests.
-- [ ] Add false-positive override design.
-- [ ] Add encrypted one-time sidecar design.
+- [x] Add false-positive override design.
+- [x] Add encrypted one-time sidecar design.
 
 ### M13.4 Update And Migration
 

@@ -539,14 +539,13 @@ Completed or started:
   threats.
 - Fuzzing targets and corpus seeds.
 - Secret scanning primitives.
+- False-positive override and encrypted one-time sidecar designs.
 - Diagnostic bundle.
 - Fault injection.
 - Migration tests from old fixtures.
 
 Open work:
 
-- False-positive override design.
-- Encrypted one-time sidecar design.
 - Release channel, signed release, and provenance strategy.
 - Backup anchor.
 - Opaque anchor research decision.

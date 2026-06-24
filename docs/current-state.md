@@ -32,7 +32,7 @@ or anxiety around dirty target preservation.
 | M10 Compute fabric | Partial | Task definitions parse and validate profile references, commands, platform constraints, resource hints, and sandbox settings. Task-specific command definition hashes, pinned immutable task execution snapshots, task run metadata recording/listing, scheduler constraint filtering, explainable scheduler target selection, isolated runner workspace preparation, host task execution, redacted task log buffering/spooling, artifact capture/retrieval, result cache keying/lookup, Nix delegation planning, and code-changing task summarization exist. Remote runner dispatch remains open. |
 | M11 Cross-platform hardening | Mostly complete | Platform identity, path doctor, line endings, executable bit, symlink/reparse, and WSL separation are implemented. |
 | M12 Advanced Git states | Mostly complete | Conflicts, submodules, LFS, sparse/partial clone are implemented. Interactive rebase reconstruction remains gated. |
-| M13 Security and operations | Partial | Threat model, fuzzing, diagnostics, fault injection, and secret scanning pieces exist. Release operations, backup anchor, opaque anchor, and independent review remain open. |
+| M13 Security and operations | Partial | Threat model, fuzzing, diagnostics, fault injection, secret scanning pieces, false-positive override design, and encrypted one-time sidecar design exist. Release operations, backup anchor, opaque anchor, and independent review remain open. |
 | M14 Beta product loop | Not started | Depends on real-device dogfood. |
 | M15 Release candidate | Not started | Depends on product gates, resource evidence, UX evidence, and signed artifacts. |
 
