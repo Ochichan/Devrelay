@@ -2120,4 +2120,4 @@ Conventions:
 - [ ] Every published snapshot is immutable. Evidence suite: `safety/published_snapshots_immutable`.
 - [x] Every lease epoch transition is monotonic. Evidence suite: `safety/lease_epoch_monotonic`.
 - [x] Every stale publish preserves data as non-canonical work. Evidence suite: `safety/stale_publish_is_fork`.
-- [ ] Every diagnostic export is redacted by default. Evidence suite: `safety/diagnostics_redacted_by_default`.
+- [x] Every diagnostic export is redacted by default. Evidence suite: `safety/diagnostics_redacted_by_default`.

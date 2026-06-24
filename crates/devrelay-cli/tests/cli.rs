@@ -165,7 +165,8 @@ fn agent_install_status_and_uninstall_round_trip() {
 
 #[cfg(unix)]
 #[test]
-fn diagnostics_export_uses_agent_and_redacts_bundle_by_default() {
+fn safety_diagnostics_redacted_by_default_for_cli_export() {
+    // Invariant: safety/diagnostics_redacted_by_default.
     let mut running = RunningCliAgent::start("devrelay-cli-diagnostics-test");
     let out = running.root.join("diagnostics").join("bundle.json");
 

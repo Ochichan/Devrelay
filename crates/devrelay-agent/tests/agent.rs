@@ -862,7 +862,8 @@ fn foreground_serves_recover_open_rpc() {
 
 #[cfg(unix)]
 #[test]
-fn foreground_serves_diagnostics_export_rpc() {
+fn safety_diagnostics_redacted_by_default_for_agent_rpc() {
+    // Invariant: safety/diagnostics_redacted_by_default.
     use devrelay_core::{IpcLimits, UnixIpcConnection};
     use serde_json::json;
     use std::io::Write;
