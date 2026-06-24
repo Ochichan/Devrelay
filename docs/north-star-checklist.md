@@ -1935,8 +1935,8 @@ Conventions:
 
 ### M14.6 Dogfooding
 
-- [ ] Select two-device dogfood scenario.
-- [ ] Select three-device dogfood scenario.
+- [x] Select two-device dogfood scenario.
+- [x] Select three-device dogfood scenario.
 - [ ] Test macOS to Linux handoff.
 - [ ] Test Linux to macOS handoff.
 - [ ] Test Windows native to Linux handoff.
