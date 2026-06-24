@@ -39,6 +39,7 @@ mod anchor_snapshot;
 mod audit;
 mod background_checkpoint;
 mod cas;
+mod code_changing_task;
 mod config;
 mod crash_journal;
 mod data_plane;
@@ -105,6 +106,13 @@ pub use background_checkpoint::{
 pub use cas::{
     CAS_HASH_PREFIX, CAS_SCHEMA_VERSION, CasChunkHash, CasChunkRecord, CasManifest,
     CasManifestChunk, CasReachabilityRoot, CasStore, CasUploadResult,
+};
+pub use code_changing_task::{
+    CodeChangingTaskChangeSet, CodeChangingTaskChangeSource, CodeChangingTaskChangedFile,
+    CodeChangingTaskCommit, CodeChangingTaskPlan, CodeChangingTaskSummary,
+    CodeChangingTaskTestCommand, CodeChangingTaskTestResult, capture_code_changing_task_changes,
+    plan_code_changing_task, run_code_changing_task_tests, run_code_changing_task_tests_with_sink,
+    summarize_code_changing_task,
 };
 pub use config::{
     AgentRole, AnchorMode, DEVICE_ID_PREFIX, DeviceIdentity, EditorPreference, ForegroundLoad,

@@ -1589,15 +1589,15 @@ Conventions:
 
 ### M10.10 Code-Changing Agent Task
 
-- [ ] Mark task as code-changing.
-- [ ] Create separate session.
-- [ ] Run in isolated workspace.
-- [ ] Capture commit chain or diff.
-- [ ] Run declared tests.
-- [ ] Return summary.
-- [ ] Show changed files.
-- [ ] Never auto-merge into active session.
-- [ ] Add tests proving canonical session unchanged.
+- [x] Mark task as code-changing.
+- [x] Create separate session.
+- [x] Run in isolated workspace.
+- [x] Capture commit chain or diff.
+- [x] Run declared tests.
+- [x] Return summary.
+- [x] Show changed files.
+- [x] Never auto-merge into active session.
+- [x] Add tests proving canonical session unchanged.
 
 ### M10 Exit Gate
 

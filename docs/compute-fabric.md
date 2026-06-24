@@ -7,7 +7,7 @@ workspace. The current implementation covers task definitions, immutable
 execution snapshots, task run metadata, scheduler constraint filtering, and
 explainable scheduler scoring, isolated runner workspace preparation, and host
 task execution, log/artifact storage, result cache metadata, and Nix delegation
-planning.
+planning, and code-changing task summarization.
 
 ## Task Model
 
@@ -143,5 +143,18 @@ LAN binary cache target is configured, the plan also emits a `nix copy --to`
 command for publishing the result. Rejected plans carry explicit explanations
 for non-Nix tasks, device constraint failures, unavailable Nix, or failed Nix
 health checks.
+
+## Code-Changing Agent Tasks
+
+Code-changing task planning marks the task as code-changing, allocates a
+separate fork session, and requires the runner workspace to be non-canonical.
+The plan always sets auto-merge to false.
+
+Change capture reads only the isolated runner workspace. It records the commit
+chain after a supplied base ref, binary diff text, and changed files from both
+the commit range and uncommitted working tree. Declared test commands run inside
+the isolated workspace through the task command runner, and the final summary
+reports changed files, commits, test results, success/failure, and the separate
+task session ID.
 
 Remote execution dispatch remains later M10 work.

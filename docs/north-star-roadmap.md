@@ -474,12 +474,16 @@ Completed capabilities:
   that respects scheduler constraints and Nix health, writes a temporary builder
   set, streams planned remote build logs, and emits a LAN binary cache publish
   command when a cache target is configured.
+- Code-changing task plans mark the task as code-changing, allocate a separate
+  session, require a non-canonical isolated runner workspace, capture commit
+  chains or diffs and changed files, run declared tests, return a summary, and
+  never auto-merge into the active session.
 - Task run metadata can be recorded and listed from the per-project metadata
   database.
 
 Open work:
 
-- Remote runner dispatch and code-changing task integration.
+- Remote runner dispatch.
 
 ### M11. Cross-Platform Hardening
 
