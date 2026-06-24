@@ -330,3 +330,69 @@ mod watcher_events_are_hints {
         assert_eq!(store.list_snapshots().unwrap().len(), 1);
     }
 }
+
+mod lease_epoch_monotonic {
+    //! Invariant: `safety/lease_epoch_monotonic`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    fn complete_handoff(
+        db: &mut MetadataDb,
+        lease_id: &str,
+        source_device: &str,
+        target_device: &str,
+        generation: &str,
+    ) {
+        let handoff = db
+            .begin_handoff(lease_id, source_device, target_device, generation, 600)
+            .unwrap();
+        db.mark_handoff_target_verified(&handoff.handoff_id)
+            .unwrap();
+        db.mark_handoff_source_ready(&handoff.handoff_id).unwrap();
+        db.commit_handoff(
+            &handoff.handoff_id,
+            generation,
+            handoff.expires_at_unix_seconds.saturating_sub(1),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn committed_handoffs_advance_epoch_by_one_and_never_reuse_old_epoch() {
+        let (_temp, mut db, _session_id, lease) = anchor_db();
+        assert_eq!(lease.epoch, 2);
+
+        let first = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 600)
+            .unwrap();
+        assert_eq!(first.expected_epoch, 2);
+        assert_eq!(db.get_lease(&lease.lease_id).unwrap().unwrap().epoch, 2);
+        db.mark_handoff_target_verified(&first.handoff_id).unwrap();
+        db.mark_handoff_source_ready(&first.handoff_id).unwrap();
+        db.commit_handoff(
+            &first.handoff_id,
+            "gen-1",
+            first.expires_at_unix_seconds.saturating_sub(1),
+        )
+        .unwrap();
+
+        let after_first = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(after_first.epoch, 3);
+        assert_eq!(after_first.holder_device_id.as_deref(), Some("device-b"));
+
+        let stale_retry = db
+            .commit_handoff(
+                &first.handoff_id,
+                "gen-1",
+                first.expires_at_unix_seconds.saturating_sub(1),
+            )
+            .unwrap_err();
+        assert!(stale_retry.to_string().contains("not source-ready"));
+        assert_eq!(db.get_lease(&lease.lease_id).unwrap().unwrap().epoch, 3);
+
+        complete_handoff(&mut db, &lease.lease_id, "device-b", "device-c", "gen-2");
+        let after_second = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(after_second.epoch, 4);
+        assert_eq!(after_second.holder_device_id.as_deref(), Some("device-c"));
+    }
+}

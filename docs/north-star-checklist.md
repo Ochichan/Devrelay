@@ -2118,6 +2118,6 @@ Conventions:
 - [ ] Every destructive cleanup has explicit confirmation or prior snapshot. Evidence suite: `safety/destructive_cleanup_has_snapshot`.
 - [ ] Every recovery operation defaults to a new session or workspace. Evidence suite: `safety/recovery_defaults_new_workspace`.
 - [ ] Every published snapshot is immutable. Evidence suite: `safety/published_snapshots_immutable`.
-- [ ] Every lease epoch transition is monotonic. Evidence suite: `safety/lease_epoch_monotonic`.
+- [x] Every lease epoch transition is monotonic. Evidence suite: `safety/lease_epoch_monotonic`.
 - [x] Every stale publish preserves data as non-canonical work. Evidence suite: `safety/stale_publish_is_fork`.
 - [ ] Every diagnostic export is redacted by default. Evidence suite: `safety/diagnostics_redacted_by_default`.
