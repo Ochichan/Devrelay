@@ -246,7 +246,7 @@ pub fn build_local_metrics_report(input: LocalMetricsInput) -> LocalMetricsRepor
     let environment = environment_metrics(&input.hydration);
     let scheduler = scheduler_metrics(&input.task_runs);
     let mut recording_gaps = Vec::new();
-    if environment.duration_samples.is_empty() {
+    if environment.records > 0 && environment.duration_samples.is_empty() {
         recording_gaps.push(MetricRecordingGap {
             metric: "environment_hydrate_duration".to_string(),
             reason: "hydration state records do not yet store start and finish timestamps"
@@ -426,6 +426,18 @@ fn handoff_metrics(handoffs: &[LocalMetricsHandoffInput]) -> HandoffMetrics {
 }
 
 fn environment_metrics(records: &[HydrationStateRecord]) -> EnvironmentHydrationMetrics {
+    let duration_samples = records
+        .iter()
+        .filter_map(|record| {
+            let started = record.started_at_unix_seconds?;
+            let ready = record.ready_at_unix_seconds?;
+            Some(EnvironmentHydrationDurationMetric {
+                project_id: record.project_id.clone(),
+                workspace_id: record.workspace_id.clone(),
+                duration_seconds: ready.saturating_sub(started),
+            })
+        })
+        .collect();
     EnvironmentHydrationMetrics {
         records: records.len(),
         shell_ready: records
@@ -440,7 +452,7 @@ fn environment_metrics(records: &[HydrationStateRecord]) -> EnvironmentHydration
             .iter()
             .filter(|record| record.state == HydrationState::Failed)
             .count(),
-        duration_samples: Vec::new(),
+        duration_samples,
     }
 }
 
@@ -607,12 +619,10 @@ mod tests {
         );
         assert_eq!(report.environment.shell_ready, 1);
         assert_eq!(report.environment.failed, 1);
+        assert_eq!(report.environment.duration_samples[0].duration_seconds, 12);
         assert_eq!(report.scheduler.task_runs_with_choice_reason, 1);
         assert_eq!(report.scheduler.task_runs_missing_choice_reason, 1);
-        assert_eq!(
-            report.recording_gaps[0].metric,
-            "environment_hydrate_duration"
-        );
+        assert!(report.recording_gaps.is_empty());
 
         let redactor =
             LogRedactor::for_diagnostics([std::path::PathBuf::from("/Users/me/project")]);
@@ -719,6 +729,9 @@ mod tests {
     fn hydration(state: HydrationState) -> HydrationStateRecord {
         let mut record = HydrationStateRecord::new("project-a", None, 100);
         record.state = state;
+        if matches!(state, HydrationState::ShellReady | HydrationState::AppReady) {
+            record.ready_at_unix_seconds = Some(112);
+        }
         record
     }
 }

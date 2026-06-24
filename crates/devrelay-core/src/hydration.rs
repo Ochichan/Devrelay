@@ -38,6 +38,10 @@ pub struct HydrationStateRecord {
     pub state: HydrationState,
     pub attempt: u32,
     pub failure: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_unix_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready_at_unix_seconds: Option<u64>,
     pub updated_at_unix_seconds: u64,
 }
 
@@ -53,6 +57,8 @@ impl HydrationStateRecord {
             state: HydrationState::Cold,
             attempt: 1,
             failure: None,
+            started_at_unix_seconds: Some(updated_at_unix_seconds),
+            ready_at_unix_seconds: None,
             updated_at_unix_seconds,
         }
     }
@@ -121,10 +127,22 @@ impl HydrationStateMachine {
         if transition == HydrationTransition::Retry {
             self.record.attempt = self.record.attempt.saturating_add(1);
             self.record.failure = None;
+            self.record.started_at_unix_seconds = Some(updated_at_unix_seconds);
+            self.record.ready_at_unix_seconds = None;
         } else if transition == HydrationTransition::Failed {
             self.record.failure = failure.clone();
+            if self.record.started_at_unix_seconds.is_none() {
+                self.record.started_at_unix_seconds = Some(updated_at_unix_seconds);
+            }
         } else {
             self.record.failure = None;
+        }
+        if matches!(
+            transition,
+            HydrationTransition::ShellPrepared | HydrationTransition::AppPrepared
+        ) && self.record.ready_at_unix_seconds.is_none()
+        {
+            self.record.ready_at_unix_seconds = Some(updated_at_unix_seconds);
         }
         self.record.state = next;
         self.record.updated_at_unix_seconds = updated_at_unix_seconds;
@@ -184,6 +202,8 @@ mod tests {
 
         assert_eq!(app.state, HydrationState::AppReady);
         assert_eq!(machine.record().failure, None);
+        assert_eq!(machine.record().started_at_unix_seconds, Some(10));
+        assert_eq!(machine.record().ready_at_unix_seconds, Some(13));
     }
 
     #[test]
@@ -210,6 +230,8 @@ mod tests {
         assert_eq!(retry.state, HydrationState::Cold);
         assert_eq!(retry.attempt, 2);
         assert_eq!(retry.failure, None);
+        assert_eq!(machine.record().started_at_unix_seconds, Some(13));
+        assert_eq!(machine.record().ready_at_unix_seconds, None);
     }
 
     #[test]
@@ -224,5 +246,23 @@ mod tests {
         let loaded = load_hydration_state(&path).unwrap();
 
         assert_eq!(loaded, record);
+    }
+
+    #[test]
+    fn hydration_state_loads_legacy_json_without_duration_fields() {
+        let legacy = r#"{
+  "project_id": "project-a",
+  "workspace_id": "workspace-a",
+  "state": "shell-ready",
+  "attempt": 2,
+  "failure": null,
+  "updated_at_unix_seconds": 42
+}"#;
+
+        let record: HydrationStateRecord = serde_json::from_str(legacy).unwrap();
+
+        assert_eq!(record.state, HydrationState::ShellReady);
+        assert_eq!(record.started_at_unix_seconds, None);
+        assert_eq!(record.ready_at_unix_seconds, None);
     }
 }

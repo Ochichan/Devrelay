@@ -17,13 +17,14 @@ The export is redacted by default and records:
 - handoff phase and committed total durations from handoff journal timestamps
 - scheduler choice reasons when task-run metadata includes scheduler reason or
   scheduler selection fields
-- hydration state counts from persisted hydration records
+- hydration state counts and hydrate duration samples from persisted hydration
+  records
 
 The report does not include source code, snapshot objects, or raw logs. It
 includes `privacy.local_by_default: true`, `source_code_included: false`, and
 `snapshot_objects_included: false` so support workflows can verify the export
 boundary mechanically.
 
-Known recording gaps are explicit in `recording_gaps`. Today, environment
-hydrate duration is marked as not recorded because hydration state records store
-the latest state timestamp but not a start/finish duration sample.
+Known recording gaps are explicit in `recording_gaps`. Legacy hydration records
+that predate duration fields do not produce duration samples until the workspace
+hydrates again.

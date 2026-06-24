@@ -1913,7 +1913,7 @@ Conventions:
 - [x] Track checkpoint failure reasons.
 - [x] Track apply verification failures.
 - [x] Track handoff phase durations.
-- [ ] Track environment hydrate duration.
+- [x] Track environment hydrate duration.
 - [ ] Track scheduler choice reason.
 - [x] Keep metrics local by default.
 - [x] Add metrics export with redaction.

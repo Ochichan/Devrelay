@@ -466,6 +466,8 @@ impl EnvironmentStatusEntry {
                 state: HydrationState::Cold,
                 attempt: 0,
                 failure: None,
+                started_at_unix_seconds: None,
+                ready_at_unix_seconds: None,
                 updated_at_unix_seconds: 0,
             },
             persisted: false,
