@@ -219,20 +219,31 @@ pub fn default_filesystem_watcher(
         Ok(Box::new(MacOsFilesystemWatcher::new(sender)?))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        Ok(Box::new(LinuxFilesystemWatcher::new(sender)?))
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Ok(Box::new(PollingFilesystemWatcher::new(sender)))
     }
 }
 
-#[cfg(target_os = "macos")]
-pub struct MacOsFilesystemWatcher {
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub struct NotifyFilesystemWatcher {
     inner: notify::RecommendedWatcher,
     workspaces: BTreeMap<String, PathBuf>,
 }
 
 #[cfg(target_os = "macos")]
-impl MacOsFilesystemWatcher {
+pub type MacOsFilesystemWatcher = NotifyFilesystemWatcher;
+
+#[cfg(target_os = "linux")]
+pub type LinuxFilesystemWatcher = NotifyFilesystemWatcher;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl NotifyFilesystemWatcher {
     pub fn new(sender: Sender<FilesystemWatchMessage>) -> Result<Self> {
         use notify::{Config, Watcher as NotifyWatcher};
 
@@ -250,7 +261,7 @@ impl MacOsFilesystemWatcher {
             },
             Config::default(),
         )
-        .map_err(|err| watcher_error(format!("failed to start macOS watcher: {err}")))?;
+        .map_err(|err| watcher_error(format!("failed to start native watcher: {err}")))?;
 
         Ok(Self {
             inner,
@@ -259,8 +270,8 @@ impl MacOsFilesystemWatcher {
     }
 }
 
-#[cfg(target_os = "macos")]
-impl FilesystemWatcher for MacOsFilesystemWatcher {
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl FilesystemWatcher for NotifyFilesystemWatcher {
     fn watch(&mut self, watch: WorkspaceWatch) -> Result<()> {
         use notify::{RecursiveMode, Watcher as NotifyWatcher};
 
@@ -302,7 +313,7 @@ impl FilesystemWatcher for MacOsFilesystemWatcher {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn raw_event_from_notify(event: notify::Event) -> FilesystemRawEvent {
     use notify::event::{EventKind, ModifyKind};
 
@@ -584,12 +595,12 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
-    fn macos_watcher_supports_lifecycle() {
+    fn native_watcher_supports_lifecycle() {
         let temp = tempfile::tempdir().unwrap();
         let (tx, _rx) = mpsc::channel();
-        let mut watcher = MacOsFilesystemWatcher::new(tx).unwrap();
+        let mut watcher = NotifyFilesystemWatcher::new(tx).unwrap();
 
         watcher
             .watch(WorkspaceWatch::new("w_main", temp.path()).unwrap())

@@ -989,7 +989,7 @@ Conventions:
 
 - [x] Define watcher trait.
 - [x] Implement macOS watcher.
-- [ ] Implement Linux watcher.
+- [x] Implement Linux watcher.
 - [ ] Implement Windows watcher.
 - [x] Add polling fallback for unsupported platforms.
 - [x] Treat events as hints only.
