@@ -102,4 +102,16 @@ back as structured records and reports whether a truncation marker was emitted.
 The spool fails closed on unsafe task run IDs and stops appending regular chunks
 after its byte limit is reached, preserving a final truncation record.
 
-Artifacts, remote execution, and result cache integration remain later M10 work.
+## Artifacts
+
+Artifact capture reads the task definition's declared output globs, rejects
+absolute or escaping paths, walks the runner workspace, and uploads matched files
+to the project CAS. Each captured artifact stores its path, size, BLAKE3 chunk
+hash, CAS manifest ID, and reachability root in a per-run artifact index.
+
+The capture API returns a summary first: count, missing output patterns, total
+bytes, index path, and the full index. Artifacts can be pulled on demand from
+CAS into a destination root, and artifact retention removes the per-artifact CAS
+reachability roots.
+
+Remote execution and result cache integration remain later M10 work.

@@ -1552,16 +1552,16 @@ Conventions:
 
 ### M10.7 Artifacts
 
-- [ ] Parse declared outputs.
-- [ ] Capture output files.
-- [ ] Reject output path traversal.
-- [ ] Hash artifacts.
-- [ ] Store artifacts in CAS.
-- [ ] Store artifact index.
-- [ ] Return summary first.
-- [ ] Add on-demand artifact pull.
-- [ ] Add artifact retention.
-- [ ] Add artifact tests.
+- [x] Parse declared outputs.
+- [x] Capture output files.
+- [x] Reject output path traversal.
+- [x] Hash artifacts.
+- [x] Store artifacts in CAS.
+- [x] Store artifact index.
+- [x] Return summary first.
+- [x] Add on-demand artifact pull.
+- [x] Add artifact retention.
+- [x] Add artifact tests.
 
 ### M10.8 Result Cache
 

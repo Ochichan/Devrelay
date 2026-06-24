@@ -463,12 +463,15 @@ Completed capabilities:
 - Task logs can be streamed through a bounded live buffer, redacted, spooled to
   per-run JSONL files, retrieved later, and marked with a truncation record when
   spool limits are reached.
+- Declared task outputs can be captured as artifacts, path-checked, hashed into
+  CAS manifests, indexed per task run, pulled on demand, and released through
+  artifact retention roots.
 - Task run metadata can be recorded and listed from the per-project metadata
   database.
 
 Open work:
 
-- Remote runner, artifacts, and cache.
+- Remote runner and cache.
 
 ### M11. Cross-Platform Hardening
 
