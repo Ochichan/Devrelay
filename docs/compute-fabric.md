@@ -6,7 +6,7 @@ Compute fabric task execution must not take writer ownership of an active
 workspace. The current implementation covers task definitions, immutable
 execution snapshots, task run metadata, scheduler constraint filtering, and
 explainable scheduler scoring, isolated runner workspace preparation, and host
-task execution.
+task execution, log/artifact storage, and result cache metadata.
 
 ## Task Model
 
@@ -30,8 +30,7 @@ binds it to the normalized task definition hash. The source workspace refs are
 removed after import, while the per-project snapshot store keeps the immutable
 refs and metadata for later scheduling or audit.
 
-Applying execution snapshots to remote workers, collecting logs/artifacts, and
-cache reuse are still open.
+Applying execution snapshots to remote workers remains open.
 
 ## Scheduler Constraints
 
@@ -114,4 +113,19 @@ bytes, index path, and the full index. Artifacts can be pulled on demand from
 CAS into a destination root, and artifact retention removes the per-artifact CAS
 reachability roots.
 
-Remote execution and result cache integration remain later M10 work.
+## Result Cache
+
+Result cache keys are derived from deterministic task inputs: input snapshot
+state and tree OIDs, declared sidecar inputs, environment fingerprint, command
+definition hash, platform key, and declared outputs. The key builder does not
+accept secret values.
+
+Cache eligibility follows the task cache mode (`off`, `read`, `write`,
+`read-write`). Manifests that declare secrets are treated as secret-sensitive
+and disabled by default unless the caller explicitly opts in. Cache entries are
+stored under the project data directory as metadata pointing at the per-run
+artifact index. Lookups return a structured hit only when the entry and artifact
+index still match the requested key, and hits can restore cached artifacts from
+CAS into a destination root.
+
+Remote execution remains later M10 work.

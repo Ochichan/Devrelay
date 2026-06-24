@@ -1565,17 +1565,17 @@ Conventions:
 
 ### M10.8 Result Cache
 
-- [ ] Define task cache key.
-- [ ] Include input snapshot tree.
-- [ ] Include declared sidecar inputs.
-- [ ] Include environment fingerprint.
-- [ ] Include command definition hash.
-- [ ] Include platform.
-- [ ] Exclude secret values.
-- [ ] Disable cache for secret-sensitive tasks by default.
-- [ ] Store cache result.
-- [ ] Return cache hit.
-- [ ] Add cache tests.
+- [x] Define task cache key.
+- [x] Include input snapshot tree.
+- [x] Include declared sidecar inputs.
+- [x] Include environment fingerprint.
+- [x] Include command definition hash.
+- [x] Include platform.
+- [x] Exclude secret values.
+- [x] Disable cache for secret-sensitive tasks by default.
+- [x] Store cache result.
+- [x] Return cache hit.
+- [x] Add cache tests.
 
 ### M10.9 Nix Delegation
 

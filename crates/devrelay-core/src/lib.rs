@@ -83,6 +83,7 @@ mod sparse;
 mod storage;
 mod submodule;
 mod task_artifacts;
+mod task_cache;
 mod task_logs;
 mod task_model;
 mod task_runner_execution;
@@ -334,6 +335,13 @@ pub use task_artifacts::{
     TaskArtifactCaptureSummary, TaskArtifactEntry, TaskArtifactIndex, TaskArtifactPullResult,
     TaskArtifactRetentionResult, apply_task_artifact_retention, capture_task_artifacts,
     pull_task_artifact, read_task_artifact_index, task_artifact_index_path,
+};
+pub use task_cache::{
+    TaskResultCacheEligibility, TaskResultCacheEntry, TaskResultCacheHit, TaskResultCacheKey,
+    TaskResultCacheKeyParts, TaskResultCachePolicy, TaskResultCacheRestore,
+    TaskResultCacheSidecarInput, TaskResultCacheStoreResult, lookup_task_result_cache,
+    read_task_result_cache_entry, restore_task_result_cache_hit, store_task_result_cache,
+    task_result_cache_eligibility, task_result_cache_entry_path, task_result_cache_key,
 };
 pub use task_logs::{
     TASK_LOG_TRUNCATION_MARKER, TaskLogRecord, TaskLogRetrieval, TaskLogStore, TaskLogStoreConfig,

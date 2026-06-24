@@ -466,12 +466,16 @@ Completed capabilities:
 - Declared task outputs can be captured as artifacts, path-checked, hashed into
   CAS manifests, indexed per task run, pulled on demand, and released through
   artifact retention roots.
+- Task result cache keys include snapshot trees, sidecar inputs, environment
+  fingerprint, command hash, platform, and outputs; cache metadata stores
+  artifact indexes, returns hits, restores artifacts from CAS, and disables
+  secret-sensitive tasks by default without accepting secret values.
 - Task run metadata can be recorded and listed from the per-project metadata
   database.
 
 Open work:
 
-- Remote runner and cache.
+- Remote runner, Nix delegation, and code-changing task integration.
 
 ### M11. Cross-Platform Hardening
 
