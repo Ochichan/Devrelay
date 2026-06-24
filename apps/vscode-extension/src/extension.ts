@@ -194,6 +194,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const unsavedCaptureEnabled = () =>
     vscode.workspace.getConfiguration("devrelay").get<boolean>("captureUnsavedBuffers", false);
+  const editorContextCaptureEnabled = () =>
+    vscode.workspace.getConfiguration("devrelay").get<boolean>("captureEditorContext", true);
   const includeUntitledUnsavedBuffers = () =>
     vscode.workspace
       .getConfiguration("devrelay")
@@ -214,6 +216,11 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   const captureContext = async (): Promise<EditorContextUpdateResult | undefined> => {
+    if (!editorContextCaptureEnabled()) {
+      output.appendLine("Editor context capture skipped because devrelay.captureEditorContext is disabled.");
+      void vscode.window.showWarningMessage("DevRelay editor context capture is disabled.");
+      return undefined;
+    }
     try {
       const capsule = captureWorkspaceContext(vscode);
       const capsuleBytes = assertContextWithinLimit(capsule);
@@ -444,14 +451,13 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       const captured = await captureContext();
-      if (!captured) {
-        return;
-      }
       const handoff = await client.call<HandoffMutationResult>("handoff.begin", {
         project: project.project_id,
         lease_id: lease.lease_id,
         target_device_id: target.device_id,
-        source_generation: `vscode-context-${captured.audit_id}`,
+        source_generation: captured
+          ? `vscode-context-${captured.audit_id}`
+          : `vscode-context-skipped-${Date.now()}`,
         ttl_seconds: null,
       });
       output.appendLine(

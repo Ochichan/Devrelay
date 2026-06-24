@@ -1347,7 +1347,7 @@ Conventions:
 - [x] Unsaved buffers restore as dirty buffers.
 - [ ] Extension failure does not block verified code handoff.
 - [x] Source edit during handoff prevents stale lease transfer.
-- [ ] User can disable editor context capture.
+- [x] User can disable editor context capture.
 
 ## M9. Environment Hydration
 

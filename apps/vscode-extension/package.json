@@ -94,6 +94,11 @@
     "configuration": {
       "title": "DevRelay",
       "properties": {
+        "devrelay.captureEditorContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow DevRelay commands to capture editor context and send it to the local agent."
+        },
         "devrelay.captureUnsavedBuffers": {
           "type": "boolean",
           "default": false,

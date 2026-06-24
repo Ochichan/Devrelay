@@ -74,6 +74,7 @@ test("extension wires edit guard event listeners", () => {
 
 test("package exposes unsaved buffer safety settings", () => {
   const properties = packageJson.contributes.configuration.properties;
+  assert.equal(properties["devrelay.captureEditorContext"].default, true);
   assert.equal(properties["devrelay.captureUnsavedBuffers"].default, false);
   assert.equal(properties["devrelay.includeUntitledUnsavedBuffers"].default, false);
 });

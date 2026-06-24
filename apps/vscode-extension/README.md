@@ -21,7 +21,8 @@ latest context, Continue Elsewhere captures context and starts a guarded
 handoff when the local writer lease and a target device are available,
 Checkpoint calls `checkpoint.create`, Open Recovery Timeline lists
 `recover.list`, and Run Task opens recent `runs.list` history until an execution
-RPC exists.
+RPC exists. Set `devrelay.captureEditorContext` to false to skip editor context
+upload while still allowing the guarded handoff command to proceed.
 
 ```bash
 npm install

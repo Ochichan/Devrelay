@@ -372,6 +372,9 @@ Completed capabilities:
   breakpoint, and terminal title/cwd capture from VS Code public APIs.
 - Size-limited editor context capsule upload through local
   `editor.context.update` RPC with durable audit evidence.
+- User-controlled editor context capture through
+  `devrelay.captureEditorContext`; code handoff command flow can still start
+  when context capture is skipped.
 - Unsaved dirty buffer capture and restore through local VS Code SecretStorage,
   default-off settings, untitled-buffer opt-in, and dirty untitled restore.
 - Status bar active/inactive/handoff/protection-delayed states from agent
