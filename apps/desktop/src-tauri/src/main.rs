@@ -9,14 +9,15 @@ use devrelay_core::{
     METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST,
     METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN,
     METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY,
-    METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_PROJECTS_LIST, METHOD_RPC_NEGOTIATE,
-    METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST,
-    METHOD_STATUS_GET, ProjectRegistryEntry, ProjectsListResult, RPC_JSONRPC_VERSION,
-    RPC_PROTOCOL_VERSION, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
-    RpcVersionNegotiationResult, RunsListParams, RunsListResult, SettingsGetResult,
-    SettingsUpdateParams, SettingsUpdateResult, SnapshotsListParams, SnapshotsListResult,
-    StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection, VerificationDetails,
-    detect_platform_identity,
+    METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_RECOVER_OPEN, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
+    METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, ProjectRegistryEntry,
+    ProjectResult, ProjectsAddParams, ProjectsListResult, RPC_JSONRPC_VERSION,
+    RPC_PROTOCOL_VERSION, RecoverOpenParams, RecoverOpenResult, RpcId, RpcRequest, RpcResponse,
+    RpcVersionNegotiationParams, RpcVersionNegotiationResult, RunsListParams, RunsListResult,
+    SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult, SnapshotsListParams,
+    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection,
+    VerificationDetails, detect_platform_identity,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -105,6 +106,87 @@ fn runtime_status() -> RuntimeStatus {
 #[tauri::command]
 fn ui_bootstrap() -> UiBootstrap {
     build_ui_bootstrap()
+}
+
+#[tauri::command]
+fn project_add(path: String, manifest: Option<String>) -> UiOperationResult<ProjectRegistryEntry> {
+    let path = path.trim();
+    if path.is_empty() {
+        return operation_error("project path is required".to_string());
+    }
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return operation_error("project path must be absolute".to_string());
+    }
+    let manifest = manifest
+        .and_then(|value| {
+            let trimmed = value.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
+        .map(PathBuf::from);
+    if let Some(manifest) = &manifest
+        && !manifest.is_absolute()
+    {
+        return operation_error("manifest path must be absolute".to_string());
+    }
+    let params = ProjectsAddParams { path, manifest };
+    match call_agent::<_, ProjectResult>(
+        &resolved_home().agent_socket_path(),
+        METHOD_PROJECTS_ADD,
+        params,
+    ) {
+        Ok(result) => UiOperationResult {
+            ok: true,
+            message: "project added".to_string(),
+            data: Some(result.project),
+        },
+        Err(err) => operation_error(format!("project add failed: {err}")),
+    }
+}
+
+#[tauri::command]
+fn recover_open(
+    project_id: String,
+    snapshot_id: String,
+    path: String,
+    name: Option<String>,
+    register: bool,
+) -> UiOperationResult<RecoverOpenResult> {
+    let path = path.trim();
+    if path.is_empty() {
+        return operation_error("recovery path is required".to_string());
+    }
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return operation_error("recovery path must be absolute".to_string());
+    }
+    let snapshot_id = snapshot_id.trim();
+    if snapshot_id.is_empty() {
+        return operation_error("snapshot is required".to_string());
+    }
+    let name = name.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    });
+    let params = RecoverOpenParams {
+        snapshot_id: snapshot_id.to_string(),
+        path,
+        project: Some(project_id),
+        register,
+        name,
+    };
+    match call_agent(
+        &resolved_home().agent_socket_path(),
+        METHOD_RECOVER_OPEN,
+        params,
+    ) {
+        Ok(result) => UiOperationResult {
+            ok: true,
+            message: "recovery opened".to_string(),
+            data: Some(result),
+        },
+        Err(err) => operation_error(format!("recovery open failed: {err}")),
+    }
 }
 
 #[tauri::command]
@@ -893,6 +975,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             runtime_status,
             ui_bootstrap,
+            project_add,
+            recover_open,
             checkpoint_create,
             handoff_prepare,
             handoff_continue_here,

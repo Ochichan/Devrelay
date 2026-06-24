@@ -1163,10 +1163,10 @@ Conventions:
 - [x] Show checkpoint status.
 - [x] Show availability per target.
 - [x] Add project filter.
-- [ ] Add project add action.
+- [x] Add project add action.
 - [x] Add project detail link.
 - [x] Add needs-attention grouping.
-- [ ] Add recovery entry point.
+- [x] Add recovery entry point.
 
 ### M7.5 Devices View
 

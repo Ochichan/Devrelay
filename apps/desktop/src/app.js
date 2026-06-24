@@ -15,6 +15,8 @@ const state = {
   operation: null,
   selectedProjectId: null,
   projectFilter: "",
+  recoveryProjectId: null,
+  recoverySnapshotId: null,
   activityFilter: "all",
   bootstrap: null,
   projectStatus: new Map(),
@@ -211,6 +213,33 @@ function latestSnapshot(projectId) {
   return snapshots()
     .filter((snapshot) => snapshot.project_id === projectId)
     .sort((left, right) => (right.sequence_number ?? 0) - (left.sequence_number ?? 0))[0];
+}
+
+function recoverySnapshots(projectId) {
+  return snapshots()
+    .filter((snapshot) => !projectId || snapshot.project_id === projectId)
+    .sort((left, right) => {
+      const rightTime = right.created_at_unix_seconds ?? 0;
+      const leftTime = left.created_at_unix_seconds ?? 0;
+      if (rightTime !== leftTime) return rightTime - leftTime;
+      return (right.sequence_number ?? 0) - (left.sequence_number ?? 0);
+    });
+}
+
+function selectedRecoveryProject() {
+  const all = projects();
+  if (!state.recoveryProjectId || !all.some((project) => project.project_id === state.recoveryProjectId)) {
+    state.recoveryProjectId = selectedProject()?.project_id ?? all[0]?.project_id ?? null;
+  }
+  return all.find((project) => project.project_id === state.recoveryProjectId) ?? all[0] ?? null;
+}
+
+function selectedRecoverySnapshot(projectId) {
+  const entries = recoverySnapshots(projectId);
+  if (!state.recoverySnapshotId || !entries.some((snapshot) => snapshot.snapshot_id === state.recoverySnapshotId)) {
+    state.recoverySnapshotId = entries[0]?.snapshot_id ?? null;
+  }
+  return entries.find((snapshot) => snapshot.snapshot_id === state.recoverySnapshotId) ?? entries[0] ?? null;
 }
 
 function latestHandoff(projectId) {
@@ -1050,6 +1079,24 @@ function renderProjects() {
   }));
   const needsAttention = decorated.filter((entry) => entry.attention.needsAttention);
   const ready = decorated.filter((entry) => !entry.attention.needsAttention);
+  const recoveryProject = selectedRecoveryProject();
+  const recoveryEntries = recoverySnapshots(recoveryProject?.project_id);
+  const recoverySnapshot = selectedRecoverySnapshot(recoveryProject?.project_id);
+  const recoveryPathSuggestion = recoverySnapshot
+    ? `/tmp/devrelay-recovery-${recoveryProject?.project_id}-${recoverySnapshot.sequence_number ?? "snapshot"}`
+    : "";
+  const projectOptions = projects()
+    .map(
+      (project) =>
+        `<option value="${escapeHtml(project.project_id)}" ${project.project_id === recoveryProject?.project_id ? "selected" : ""}>${escapeHtml(project.display_name)}</option>`
+    )
+    .join("");
+  const recoverySnapshotOptions = recoveryEntries
+    .map(
+      (snapshot) =>
+        `<option value="${escapeHtml(snapshot.snapshot_id)}" ${snapshot.snapshot_id === recoverySnapshot?.snapshot_id ? "selected" : ""}>#${escapeHtml(snapshot.sequence_number ?? "?")} ${escapeHtml(snapshot.label ?? "snapshot")} - ${escapeHtml(formatAge(snapshot.created_at_unix_seconds))} - ${escapeHtml(shortId(snapshot.snapshot_id))}</option>`
+    )
+    .join("");
   const rowForProject = ({ project, attention }) => {
     const status = projectStatus(project.project_id);
     const counts = statusCounts(status?.data);
@@ -1067,6 +1114,7 @@ function renderProjects() {
       <td>
         <div class="button-row">
           <button class="button" data-action="select-project" data-project-id="${escapeHtml(project.project_id)}">${icons.play}<span>Details</span></button>
+          <button class="button" data-action="project-recovery" data-project-id="${escapeHtml(project.project_id)}">${icons.box}<span>Recovery</span></button>
           <button class="button icon-only" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" title="Status" aria-label="Status">${icons.refresh}</button>
         </div>
       </td>
@@ -1080,6 +1128,27 @@ function renderProjects() {
   return `
     <section class="screen">
       ${agentErrors()}
+      <div class="screen-grid">
+        <form class="panel" data-project-add-form>
+          <div class="panel-head"><div><h3>Add project</h3><p>Register a local Git workspace with the agent.</p></div></div>
+          <div class="panel-body form-grid">
+            <div class="field"><label for="project_add_path">Project path</label><input id="project_add_path" name="path" placeholder="/path/to/repository" autocomplete="off" /></div>
+            <div class="field"><label for="project_add_manifest">Manifest path</label><input id="project_add_manifest" name="manifest" placeholder="Optional devrelay.toml" autocomplete="off" /></div>
+            <div class="form-actions"><button class="button primary" type="submit" ${state.operation ? "disabled" : ""}>${icons.folder}<span>Add project</span></button></div>
+          </div>
+        </form>
+        <form class="panel flat" data-recovery-form>
+          <div class="panel-head"><div><h3>Recovery</h3><p>${recoveryEntries.length} snapshots for ${escapeHtml(recoveryProject?.display_name ?? "selected project")}</p></div></div>
+          <div class="panel-body form-grid">
+            <div class="field"><label for="recovery_project">Project</label><select id="recovery_project" name="project_id" data-recovery-project>${projectOptions}</select></div>
+            <div class="field"><label for="recovery_snapshot">Snapshot</label><select id="recovery_snapshot" name="snapshot_id" data-recovery-snapshot ${recoveryEntries.length === 0 ? "disabled" : ""}>${recoverySnapshotOptions}</select></div>
+            <div class="field"><label for="recovery_path">Recovery path</label><input id="recovery_path" name="path" value="${escapeHtml(recoveryPathSuggestion)}" autocomplete="off" ${recoveryEntries.length === 0 ? "disabled" : ""} /></div>
+            <div class="field"><label for="recovery_name">Workspace name</label><input id="recovery_name" name="name" value="${escapeHtml(recoveryProject ? `${recoveryProject.display_name} recovery` : "")}" autocomplete="off" ${recoveryEntries.length === 0 ? "disabled" : ""} /></div>
+            <label class="check-field"><input type="checkbox" name="register" checked ${recoveryEntries.length === 0 ? "disabled" : ""} /> <span>Register recovered workspace</span></label>
+            <div class="form-actions"><button class="button" type="submit" ${state.operation || recoveryEntries.length === 0 ? "disabled" : ""}>${icons.box}<span>Open recovery</span></button></div>
+          </div>
+        </form>
+      </div>
       <div class="panel">
         <div class="panel-head">
           <div><h3>Projects</h3><p>${visibleProjects.length} of ${projects().length} registered - ${needsAttention.length} need attention</p></div>
@@ -1407,6 +1476,70 @@ function attachHandlers() {
       }).catch((error) => toast(String(error?.message ?? error), "bad"));
     });
   }
+  const projectAddForm = app.querySelector("[data-project-add-form]");
+  if (projectAddForm) {
+    projectAddForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = new FormData(projectAddForm);
+      const path = String(data.get("path") ?? "").trim();
+      const manifest = String(data.get("manifest") ?? "").trim();
+      if (!path) {
+        toast("Project path is required", "bad");
+        return;
+      }
+      await runOperation("Adding project", async () => {
+        const result = await invoke("project_add", {
+          path,
+          manifest: manifest || null,
+        });
+        if (!result.ok) throw new Error(result.message);
+        toast(`Added ${result.data?.display_name ?? "project"}`);
+        await refresh();
+      }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    });
+  }
+  const recoveryForm = app.querySelector("[data-recovery-form]");
+  if (recoveryForm) {
+    recoveryForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = new FormData(recoveryForm);
+      const projectId = String(data.get("project_id") ?? "").trim();
+      const snapshotId = String(data.get("snapshot_id") ?? "").trim();
+      const path = String(data.get("path") ?? "").trim();
+      const name = String(data.get("name") ?? "").trim();
+      if (!projectId || !snapshotId || !path) {
+        toast("Recovery needs a project, snapshot, and target path", "bad");
+        return;
+      }
+      await runOperation("Opening recovery", async () => {
+        const result = await invoke("recover_open", {
+          projectId,
+          snapshotId,
+          path,
+          name: name || null,
+          register: data.get("register") === "on",
+        });
+        if (!result.ok) throw new Error(result.message);
+        toast(`Recovered ${shortId(result.data?.recovered?.snapshot_id)} to ${result.data?.path ?? path}`);
+        await refresh();
+      }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    });
+  }
+  const recoveryProject = app.querySelector("[data-recovery-project]");
+  if (recoveryProject) {
+    recoveryProject.addEventListener("change", () => {
+      state.recoveryProjectId = recoveryProject.value;
+      state.recoverySnapshotId = recoverySnapshots(recoveryProject.value)[0]?.snapshot_id ?? null;
+      render();
+    });
+  }
+  const recoverySnapshot = app.querySelector("[data-recovery-snapshot]");
+  if (recoverySnapshot) {
+    recoverySnapshot.addEventListener("change", () => {
+      state.recoverySnapshotId = recoverySnapshot.value;
+      render();
+    });
+  }
   const projectFilter = app.querySelector("[data-project-filter]");
   if (projectFilter) {
     projectFilter.addEventListener("input", () => {
@@ -1439,6 +1572,13 @@ async function handleAction(button) {
     state.view = "continue";
     render();
     await refreshProjectStatus(projectId, false);
+    return;
+  }
+  if (action === "project-recovery") {
+    state.recoveryProjectId = projectId;
+    state.recoverySnapshotId = recoverySnapshots(projectId)[0]?.snapshot_id ?? null;
+    state.view = "projects";
+    render();
     return;
   }
   if (action === "device-pair-placeholder") {

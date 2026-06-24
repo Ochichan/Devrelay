@@ -285,8 +285,34 @@ assert.match(app.innerHTML, /Checkpoint/, "projects view did not render checkpoi
 assert.match(app.innerHTML, /1\/2 ready/, "projects view did not render target availability");
 assert.match(app.innerHTML, /Needs attention \(1\)/, "projects view did not render attention group");
 assert.match(app.innerHTML, /Ready \(1\)/, "projects view did not render ready group");
+assert.match(app.innerHTML, /Add project/, "projects view did not render add project entry point");
+assert.match(app.innerHTML, /Open recovery/, "projects view did not render recovery entry point");
+assert.match(app.innerHTML, /Project path/, "projects view did not render project add path field");
+assert.match(app.innerHTML, /Recovery path/, "projects view did not render recovery target field");
 assert.match(app.innerHTML, /Filter projects/, "projects view did not render filter");
 assert.match(app.innerHTML, /Details/, "projects view did not render project detail action");
+assert.match(app.innerHTML, /Recovery/, "projects view did not render row recovery action");
+await vm.runInContext(
+  `
+handleAction({
+  dataset: {
+    action: "project-recovery",
+    projectId: "project-1",
+  },
+});
+`,
+  context
+);
+assert.equal(
+  vm.runInContext("state.recoveryProjectId", context),
+  "project-1",
+  "project recovery action did not select project"
+);
+assert.equal(
+  vm.runInContext("state.recoverySnapshotId", context),
+  "s1_projectonecheckpoint",
+  "project recovery action did not select latest snapshot"
+);
 vm.runInContext('state.projectFilter = "two"; render();', context);
 assert.match(app.innerHTML, /Project Two/, "project filter did not keep matching project");
 assert.doesNotMatch(
