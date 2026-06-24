@@ -65,7 +65,8 @@ Control API.
 
 M4.5 is still not implemented. The project still needs a remote RPC server over
 mTLS, an explicit remote method allowlist, auth checks before dispatch, schema
-documentation, JSON error mapping, request ID behavior, and integration tests.
+coverage in [remote-rpc-api.md](remote-rpc-api.md), JSON error mapping, request
+ID behavior, and integration tests.
 
 Until that implementation exists, do not claim that a remote Control API
 rejects unauthenticated requests. The mTLS transport primitives reject invalid

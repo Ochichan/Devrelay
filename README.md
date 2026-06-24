@@ -65,6 +65,7 @@ workspace unless you intentionally use it as a registered test project.
 - [Dogfood scenarios](docs/dogfood-scenarios.md)
 - [Install, update, and removal](docs/install-update.md)
 - [API surface](docs/api-surface.md)
+- [Remote Control RPC API](docs/remote-rpc-api.md)
 - [CLI reference](docs/cli.md)
 - [Data-loss safety policy](docs/data-loss-safety.md)
 - [Resource benchmark plan](docs/resource-benchmark.md)

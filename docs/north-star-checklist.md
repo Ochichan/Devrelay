@@ -843,7 +843,7 @@ Conventions:
 - [ ] Add API auth middleware.
 - [ ] Add request ID middleware.
 - [ ] Add JSON error mapping.
-- [ ] Add remote RPC schema documentation.
+- [x] Add remote RPC schema documentation.
 - [ ] Add API integration tests.
 
 ### M4.6 Revocation
