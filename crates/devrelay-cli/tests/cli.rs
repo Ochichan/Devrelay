@@ -766,6 +766,139 @@ fn audit_list_and_export_redact_by_default() {
     let _ = std::fs::remove_dir_all(home);
 }
 
+#[test]
+fn metrics_export_is_local_and_redacted_by_default() {
+    use devrelay_core::{
+        AuditEventInput, AuditEventType, AuditOutcome, DevRelayHome, MetadataDb, TaskRunInput,
+        TaskRunState,
+    };
+
+    let home = std::env::temp_dir().join(format!("devrelay-metrics-test-{}", std::process::id()));
+    let repo = home.join("repo");
+    let out = home.join("metrics-export.json");
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    write_manifest(&repo, "metrics-project", "Metrics Project");
+    git(&repo, &["add", "devrelay.toml"]);
+    git(&repo, &["commit", "-m", "manifest"]);
+
+    let add = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "--direct",
+            "project",
+            "add",
+            repo.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let checkpoint = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "--direct",
+            "checkpoint",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--manifest",
+            repo.join("devrelay.toml").to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        checkpoint.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&checkpoint.stderr)
+    );
+
+    let devrelay_home = DevRelayHome::new(&home);
+    let db = MetadataDb::open(devrelay_home.metadata_db_path("metrics-project")).unwrap();
+    let mut checkpoint_failure = AuditEventInput::new(
+        AuditEventType::SnapshotPublished,
+        AuditOutcome::Failed,
+        format!(
+            "checkpoint failed at {} token=secret-token",
+            repo.to_str().unwrap()
+        ),
+    );
+    checkpoint_failure.project_id = Some("metrics-project".to_string());
+    db.record_audit_event_at(checkpoint_failure, 123).unwrap();
+    let mut apply_failure = AuditEventInput::new(
+        AuditEventType::SnapshotApplied,
+        AuditOutcome::Failed,
+        format!("apply verification failed at {}", repo.to_str().unwrap()),
+    );
+    apply_failure.project_id = Some("metrics-project".to_string());
+    db.record_audit_event_at(apply_failure, 124).unwrap();
+    db.record_task_run_at(
+        TaskRunInput {
+            task_run_id: "tr_metrics".to_string(),
+            project_id: "metrics-project".to_string(),
+            session_id: None,
+            state: TaskRunState::Succeeded,
+            command: Some("cargo test".to_string()),
+            metadata: serde_json::json!({
+                "scheduler_reason": "local-cache-warm",
+                "scheduler_explanation": format!("selected {}", repo.display()),
+            }),
+        },
+        125,
+        126,
+    )
+    .unwrap();
+
+    let export = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "--direct",
+            "metrics",
+            "export",
+            "--project",
+            "metrics-project",
+            "--out",
+            out.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        export.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&export.stderr)
+    );
+    let exported: serde_json::Value = serde_json::from_slice(&export.stdout).unwrap();
+    assert_eq!(exported["path"], out.to_str().unwrap());
+    assert_eq!(exported["include_sensitive_paths"], false);
+    assert_eq!(exported["source_code_included"], false);
+    assert_eq!(exported["snapshot_objects_included"], false);
+    assert_eq!(exported["report"]["privacy"]["local_by_default"], true);
+    assert_eq!(exported["report"]["privacy"]["redacted"], true);
+    assert_eq!(exported["report"]["checkpoints"]["successes"], 1);
+    assert_eq!(exported["report"]["apply"]["verification_failures"], 1);
+    assert_eq!(
+        exported["report"]["scheduler"]["task_runs_with_choice_reason"],
+        1
+    );
+
+    let raw_export = std::fs::read_to_string(&out).unwrap();
+    assert!(raw_export.contains("metrics-project"));
+    assert!(raw_export.contains("<path>"));
+    assert!(raw_export.contains("<redacted>"));
+    assert!(!raw_export.contains(repo.to_str().unwrap()));
+    assert!(!raw_export.contains(home.to_str().unwrap()));
+    assert!(!raw_export.contains("secret-token"));
+
+    let _ = std::fs::remove_dir_all(home);
+}
+
 fn write_manifest(root: &Path, project_id: &str, name: &str) {
     std::fs::write(
         root.join("devrelay.toml"),

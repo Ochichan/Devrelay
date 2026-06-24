@@ -1907,17 +1907,17 @@ Conventions:
 
 ### M14.4 Local Metrics
 
-- [ ] Track verified continuation attempts.
-- [ ] Track verified continuation successes.
-- [ ] Track checkpoint success.
-- [ ] Track checkpoint failure reasons.
+- [x] Track verified continuation attempts.
+- [x] Track verified continuation successes.
+- [x] Track checkpoint success.
+- [x] Track checkpoint failure reasons.
 - [ ] Track apply verification failures.
-- [ ] Track handoff phase durations.
+- [x] Track handoff phase durations.
 - [ ] Track environment hydrate duration.
 - [ ] Track scheduler choice reason.
-- [ ] Keep metrics local by default.
-- [ ] Add metrics export with redaction.
-- [ ] Add metrics tests.
+- [x] Keep metrics local by default.
+- [x] Add metrics export with redaction.
+- [x] Add metrics tests.
 
 ### M14.5 User Documentation
 

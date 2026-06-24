@@ -145,6 +145,13 @@ fn foreground_serves_rpc_negotiate_and_agent_health() {
             .iter()
             .any(|method| method == "environment.status")
     );
+    assert!(
+        negotiate["result"]["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method == "metrics.export")
+    );
 
     let health = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
@@ -1077,6 +1084,132 @@ fn safety_diagnostics_redacted_by_default_for_agent_rpc() {
             .iter()
             .any(|method| method == "diagnostics.export")
     );
+
+    running.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn metrics_export_is_local_and_redacted_by_default_for_agent_rpc() {
+    use devrelay_core::{
+        AuditEventInput, AuditEventType, AuditOutcome, DevRelayHome, IpcLimits, MetadataDb,
+        TaskRunInput, TaskRunState, UnixIpcConnection,
+    };
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-metrics-rpc-test");
+    let out = running.root.join("metrics").join("bundle.json");
+    let repo = running.root.join("metrics-project");
+    create_manifest_repo(&repo, "24681358", "Metrics Project");
+
+    let added = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "metrics-project-add",
+            "method": "projects.add",
+            "params": {
+                "path": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+    assert_eq!(added["result"]["project"]["project_id"], "24681358");
+
+    let checkpoint = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "metrics-checkpoint",
+            "method": "checkpoint.create",
+            "params": {
+                "repo": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+    assert_eq!(checkpoint["id"], "metrics-checkpoint");
+    assert!(
+        checkpoint["result"]["checkpoint"]["snapshot_id"]
+            .as_str()
+            .is_some()
+    );
+
+    let home = DevRelayHome::new(&running.root);
+    let db = MetadataDb::open(home.metadata_db_path("24681358")).unwrap();
+    let mut checkpoint_failure = AuditEventInput::new(
+        AuditEventType::SnapshotPublished,
+        AuditOutcome::Failed,
+        format!(
+            "checkpoint failed at {} token=secret-token",
+            repo.to_str().unwrap()
+        ),
+    );
+    checkpoint_failure.project_id = Some("24681358".to_string());
+    db.record_audit_event_at(checkpoint_failure, 123).unwrap();
+    let mut apply_failure = AuditEventInput::new(
+        AuditEventType::SnapshotApplied,
+        AuditOutcome::Failed,
+        format!("apply verification failed at {}", repo.to_str().unwrap()),
+    );
+    apply_failure.project_id = Some("24681358".to_string());
+    db.record_audit_event_at(apply_failure, 124).unwrap();
+    db.record_task_run_at(
+        TaskRunInput {
+            task_run_id: "tr_metrics_agent".to_string(),
+            project_id: "24681358".to_string(),
+            session_id: None,
+            state: TaskRunState::Succeeded,
+            command: Some("cargo test".to_string()),
+            metadata: serde_json::json!({
+                "scheduler_reason": "local-cache-warm",
+                "scheduler_explanation": format!("selected {}", repo.display()),
+            }),
+        },
+        125,
+        126,
+    )
+    .unwrap();
+
+    let exported = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "metrics-1",
+            "method": "metrics.export",
+            "params": { "project": "24681358", "out": out }
+        }),
+    );
+
+    assert_eq!(exported["id"], "metrics-1");
+    assert_eq!(
+        exported["result"]["path"].as_str(),
+        Some(out.to_str().unwrap())
+    );
+    assert_eq!(exported["result"]["include_sensitive_paths"], false);
+    assert_eq!(exported["result"]["source_code_included"], false);
+    assert_eq!(exported["result"]["snapshot_objects_included"], false);
+    assert_eq!(
+        exported["result"]["report"]["privacy"]["local_by_default"],
+        true
+    );
+    assert_eq!(exported["result"]["report"]["privacy"]["redacted"], true);
+    assert_eq!(exported["result"]["report"]["checkpoints"]["successes"], 1);
+    assert_eq!(
+        exported["result"]["report"]["apply"]["verification_failures"],
+        1
+    );
+    assert_eq!(
+        exported["result"]["report"]["scheduler"]["task_runs_with_choice_reason"],
+        1
+    );
+    let raw_bundle = std::fs::read_to_string(&out).unwrap();
+    assert!(raw_bundle.contains("24681358"));
+    assert!(raw_bundle.contains("<path>"));
+    assert!(raw_bundle.contains("<redacted>"));
+    assert!(!raw_bundle.contains(repo.to_str().unwrap()));
+    assert!(!raw_bundle.contains(running.root.to_str().unwrap()));
+    assert!(!raw_bundle.contains("secret-token"));
 
     running.stop();
 }

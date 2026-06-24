@@ -14,18 +14,19 @@ use devrelay_core::{
     HandoffIdParams, HandoffMutationResult, HandoffRecord, HandoffRecoverParams,
     HandoffRecoverResult, HandoffState, HandoffStateChangedEvent, HandoffStatus,
     HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, IpcTransport,
-    LeasesListParams, LeasesListResult, Manifest, ProjectRegistryEntry, ProjectResult,
-    ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
-    RPC_PROTOCOL_VERSION, RecoverListParams, RecoverListResult, RecoverOpenParams,
-    RecoverOpenResult, RecoverShowParams, RecoverShowResult, RpcError, RpcId, RpcRequest,
-    RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, RunsListParams,
-    RunsListResult, SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult,
-    SnapshotApplyStartedEvent, SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent,
-    SnapshotStore, SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult,
-    StoredSnapshot, StructuredLogFile, StructuredLogRecord, TypedEventPayload, UnixIpcConnection,
-    UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, WorkspaceStateChangedEvent,
-    apply_snapshot, classify_untracked_paths, load_hydration_state, plan_apply_snapshot,
-    workspace_id_for,
+    LeasesListParams, LeasesListResult, Manifest, MetricsExportParams, MetricsExportResult,
+    ProjectRegistryEntry, ProjectResult, ProjectsAddParams, ProjectsListResult,
+    ProjectsRemoveParams, ProjectsShowParams, RPC_PROTOCOL_VERSION, RecoverListParams,
+    RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
+    RpcError, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
+    RpcVersionNegotiationResult, RunsListParams, RunsListResult, SettingsGetResult,
+    SettingsUpdateParams, SettingsUpdateResult, SnapshotApplyStartedEvent,
+    SnapshotApplyVerifiedEvent, SnapshotLocalCreatedEvent, SnapshotStore, SnapshotsListParams,
+    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, StructuredLogFile,
+    StructuredLogRecord, TypedEventPayload, UnixIpcConnection, UnixIpcListener,
+    WorkspaceRegistryEntry, WorkspaceState, WorkspaceStateChangedEvent, apply_snapshot,
+    classify_untracked_paths, collect_local_metrics_report, load_hydration_state,
+    plan_apply_snapshot, workspace_id_for,
 };
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, LogRedactor,
@@ -34,11 +35,11 @@ use devrelay_core::{
     METHOD_EDITOR_CONTEXT_UPDATE, METHOD_EDITOR_EVENT_RECORD, METHOD_EDITOR_RESTORE_ACK,
     METHOD_ENVIRONMENT_STATUS, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN,
     METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_RECOVER, METHOD_HANDOFF_SOURCE_READY,
-    METHOD_HANDOFF_TARGET_VERIFY, METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_PROJECTS_ADD,
-    METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST,
-    METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST,
-    METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
-    MetadataDb, StructuredLogLevel, current_platform_key,
+    METHOD_HANDOFF_TARGET_VERIFY, METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_METRICS_EXPORT,
+    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
+    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE,
+    METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST,
+    METHOD_STATUS_GET, MetadataDb, StructuredLogLevel, current_platform_key,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -240,6 +241,7 @@ impl AgentState {
             METHOD_RECOVER_SHOW.to_string(),
             METHOD_RECOVER_OPEN.to_string(),
             METHOD_DIAGNOSTICS_EXPORT.to_string(),
+            METHOD_METRICS_EXPORT.to_string(),
             METHOD_ENVIRONMENT_STATUS.to_string(),
             METHOD_EVENTS_SUBSCRIBE.to_string(),
             METHOD_DEVICES_LIST.to_string(),
@@ -711,6 +713,7 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_RECOVER_SHOW => handle_recover_show(id, request.params, state),
         METHOD_RECOVER_OPEN => handle_recover_open(id, request.params, state),
         METHOD_DIAGNOSTICS_EXPORT => handle_diagnostics_export(id, request.params, state),
+        METHOD_METRICS_EXPORT => handle_metrics_export(id, request.params, state),
         METHOD_ENVIRONMENT_STATUS => handle_environment_status(id, request.params, state),
         METHOD_DEVICES_LIST => handle_devices_list(id, state),
         METHOD_ACTIVITY_LIST => handle_activity_list(id, request.params, state),
@@ -1627,6 +1630,84 @@ fn handle_diagnostics_export(
         include_sensitive_paths: params.include_sensitive_paths,
         source_code_included: false,
         snapshot_objects_included: false,
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_metrics_export(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: MetricsExportParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let path = params.out.clone().unwrap_or_else(|| {
+        state
+            .home
+            .metrics_dir()
+            .join(format!("metrics-{}.json", unix_seconds()))
+    });
+    let (project_ids, redactor) = match state.config.lock() {
+        Ok(config) => {
+            let project_ids = if let Some(project) = params.project.as_deref() {
+                if !config.project_registry.projects.contains_key(project) {
+                    return RpcResponse::error(
+                        Some(id),
+                        RpcError::internal(format!("unknown project {project}")),
+                    );
+                }
+                vec![project.to_string()]
+            } else {
+                config.project_registry.projects.keys().cloned().collect()
+            };
+            let redactor = if params.include_sensitive_paths {
+                LogRedactor::new()
+            } else {
+                LogRedactor::for_diagnostics(diagnostic_local_paths(&state.home, &config))
+            };
+            (project_ids, redactor)
+        }
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let mut report = match collect_local_metrics_report(
+        &state.home,
+        params.project.clone(),
+        &project_ids,
+        unix_seconds(),
+        !params.include_sensitive_paths,
+    ) {
+        Ok(report) => report,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    if !params.include_sensitive_paths {
+        report = report.redact(&redactor);
+    }
+    if let Some(parent) = path.parent()
+        && let Err(err) = std::fs::create_dir_all(parent)
+    {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    let bytes = match serde_json::to_vec_pretty(&report) {
+        Ok(bytes) => bytes,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    if let Err(err) = std::fs::write(&path, bytes) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    let result = MetricsExportResult {
+        path,
+        project: params.project,
+        include_sensitive_paths: params.include_sensitive_paths,
+        source_code_included: false,
+        snapshot_objects_included: false,
+        report,
     };
 
     match serde_json::to_value(result) {

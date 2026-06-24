@@ -1,6 +1,6 @@
 # DevRelay Local RPC Compatibility Policy
 
-Last updated: 2026-06-23
+Last updated: 2026-06-24
 
 DevRelay local agent RPC uses JSON-RPC 2.0 over the local IPC transport. The
 transport is local-machine only; compatibility rules here cover the JSON
@@ -45,6 +45,9 @@ documented API boundary, auth middleware, schemas, and integration tests.
 - `environment.status` is an additive local method in protocol version `1`; it
   reports registered project/workspace hydration state and treats missing state
   files as `cold`/`persisted: false`.
+- `metrics.export` is an additive local method in protocol version `1`; it
+  writes a redacted, local-only aggregate report and does not include source
+  code, snapshot objects, or raw logs.
 
 ## Breaking Changes
 

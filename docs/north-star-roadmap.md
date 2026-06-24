@@ -557,10 +557,15 @@ Open work:
 
 ### M14. Beta Product Loop
 
-Status: not started.
+Status: started.
 
 Goal: make the product reliable for real daily development before expanding
 scope.
+
+Current progress:
+
+- Local `metrics.export` RPC and `devrelay metrics export` write redacted,
+  local-only aggregate reports from existing metadata sources.
 
 Requires:
 

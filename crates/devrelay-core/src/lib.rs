@@ -62,6 +62,7 @@ mod lfs;
 mod line_ending_doctor;
 mod logging;
 pub mod manifest;
+mod metrics;
 mod nix_delegation;
 mod operation_capsule;
 mod pairing;
@@ -218,6 +219,15 @@ pub use manifest::{
     SecretScannerConfig, SyncConfig, SyncMode, TaskCacheMode, TaskConfig, TaskSandbox,
     UntrackedPolicy, WorkspaceConfig,
 };
+pub use metrics::{
+    ApplyVerificationMetrics, CheckpointMetrics, EnvironmentHydrationDurationMetric,
+    EnvironmentHydrationMetrics, HandoffMetrics, HandoffPhaseDurationMetric,
+    HandoffTotalDurationMetric, LOCAL_METRICS_RECORD_LIMIT, LOCAL_METRICS_SCHEMA_VERSION,
+    LocalMetricsHandoffInput, LocalMetricsInput, LocalMetricsPrivacy, LocalMetricsRecordCounts,
+    LocalMetricsReport, MetricReasonCount, MetricRecordingGap, SchedulerChoiceMetrics,
+    SchedulerChoiceReasonCount, VerifiedContinuationMetrics, build_local_metrics_report,
+    collect_local_metrics_report,
+};
 pub use nix_delegation::{
     NixDelegationDecision, NixDelegationOptions, NixDelegationPlan, NixLanBinaryCachePublishPlan,
     NixLanBinaryCacheTarget, NixRemoteBuilderLogPlan, NixTemporaryBuilderSet, plan_nix_delegation,
@@ -276,10 +286,11 @@ pub use rpc::{
     METHOD_EDITOR_RESTORE_ACK, METHOD_ENVIRONMENT_STATUS, METHOD_EVENTS_SUBSCRIBE,
     METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN, METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_RECOVER,
     METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY, METHOD_HANDOFFS_LIST,
-    METHOD_LEASES_LIST, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
-    METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
-    METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE,
-    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, ProjectResult, ProjectsAddParams, ProjectsListResult,
+    METHOD_LEASES_LIST, METHOD_METRICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
+    METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
+    METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetricsExportParams,
+    MetricsExportResult, ProjectResult, ProjectsAddParams, ProjectsListResult,
     ProjectsRemoveParams, ProjectsShowParams, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION,
     RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
     RecoverShowResult, RpcError, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,

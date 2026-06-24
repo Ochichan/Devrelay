@@ -21,7 +21,7 @@ or anxiety around dirty target preservation.
 | --- | --- | --- |
 | M0 Git state round trip | Complete | Local snapshot create/apply/verify is implemented and covered by round-trip fixtures. |
 | M1 Local CLI, SQLite, recovery | Complete | Project registry, snapshot store, recovery, dirty policies, and local continue flow are implemented. |
-| M2 Agent, IPC, RPC, events | Nearly complete | Agent, JSON-RPC, local lease and handoff state RPC, event stream with handoff state events, diagnostics, and macOS/Linux local IPC exist. Windows named pipe and pipe ACL remain open. |
+| M2 Agent, IPC, RPC, events | Nearly complete | Agent, JSON-RPC, local lease and handoff state RPC, event stream with handoff state events, diagnostics, local metrics export, and macOS/Linux local IPC exist. Windows named pipe and pipe ACL remain open. |
 | M3 Anchor and single-writer lease | Complete | Canonical publish, stale publish, handoff, inactive edit fork, and crash recovery are implemented. |
 | M4 Pairing, mTLS, revocation | Mostly complete | Identity, pairing, discovery, mTLS transport, revocation, and audit are present. M4.5 Control API remains unimplemented, so the M4 exit gate is open. |
 | M5 Git object and CAS data plane | Complete | Per-project bare repo strategy, route selection, CAS, sidecars, materialization, and partial upload safety are implemented. |
@@ -33,7 +33,7 @@ or anxiety around dirty target preservation.
 | M11 Cross-platform hardening | Mostly complete | Platform identity, path doctor, line endings, executable bit, symlink/reparse, and WSL separation are implemented. |
 | M12 Advanced Git states | Mostly complete | Conflicts, submodules, LFS, sparse/partial clone are implemented. Interactive rebase reconstruction remains gated. |
 | M13 Security and operations | Partial | Threat model, fuzzing, diagnostics, fault injection, secret scanning pieces, false-positive override design, encrypted one-time sidecar design, release/update policy, backup anchor data set, and opaque anchor research decision exist. Backup anchor replication/restore and independent review remain open. |
-| M14 Beta product loop | Not started | Depends on real-device dogfood. |
+| M14 Beta product loop | Started | Local metrics export now derives redacted, local-only aggregate reports from audit events, snapshots, handoff journals, task runs, and hydration state. Installers, onboarding, guided doctor, user docs, and real-device dogfood remain open. |
 | M15 Release candidate | Not started | Depends on product gates, resource evidence, UX evidence, and signed artifacts. |
 
 ## Documentation Corrections Made

@@ -18,9 +18,10 @@ use devrelay_core::{
     EnvironmentStatusParams, EnvironmentStatusResult, ErrorInfo, FabricIdentityBundle,
     FabricIdentityStore, GitPerformanceDoctorReport, GitRepo, LineEndingDoctorReport, LocalConfig,
     LogRedactor, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
-    METHOD_ENVIRONMENT_STATUS, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
-    METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
-    METHOD_STATUS_GET, Manifest, MetadataDb, PairingSession, PairingStartRequest, PathDecision,
+    METHOD_ENVIRONMENT_STATUS, METHOD_METRICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
+    METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, MetadataDb, MetricsExportParams,
+    MetricsExportResult, PairingSession, PairingStartRequest, PathDecision,
     PathPortabilityDoctorReport, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
     ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
     RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
@@ -29,10 +30,11 @@ use devrelay_core::{
     StatusGetResult, StatusSummary, StoredSession, StoredSnapshot, SystemEnvironmentCommandRunner,
     UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
     WslFilesystemDoctorReport, apply_snapshot, build_discovery_advertisement,
-    classify_untracked_paths, create_snapshot, current_platform_key, linux_systemd_user_template,
-    load_hydration_state, macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file,
-    run_environment_doctor, run_git_performance_doctor, run_line_ending_doctor,
-    run_path_portability_doctor, run_wsl_filesystem_doctor, workspace_id_for, write_snapshot_file,
+    classify_untracked_paths, collect_local_metrics_report, create_snapshot, current_platform_key,
+    linux_systemd_user_template, load_hydration_state, macos_launch_agent_template,
+    plan_apply_snapshot, read_snapshot_file, run_environment_doctor, run_git_performance_doctor,
+    run_line_ending_doctor, run_path_portability_doctor, run_wsl_filesystem_doctor,
+    workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -99,6 +101,10 @@ enum Command {
     Environment {
         #[command(subcommand)]
         command: EnvironmentCommand,
+    },
+    Metrics {
+        #[command(subcommand)]
+        command: MetricsCommand,
     },
     Identity {
         #[command(subcommand)]
@@ -271,6 +277,20 @@ enum DiagnosticsCommand {
     Export {
         #[arg(long)]
         out: Option<PathBuf>,
+        #[arg(long)]
+        include_sensitive_paths: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MetricsCommand {
+    Export {
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        project: Option<String>,
         #[arg(long)]
         include_sensitive_paths: bool,
         #[arg(long)]
@@ -831,6 +851,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Devices { command } => handle_devices_command(command)?,
         Command::Discovery { command } => handle_discovery_command(command)?,
         Command::Environment { command } => handle_environment_command(command, &agent_options)?,
+        Command::Metrics { command } => handle_metrics_command(command, &agent_options)?,
         Command::Identity { command } => handle_identity_command(command)?,
         Command::Manifest { command } => match command {
             ManifestCommand::Check { path, json } => {
@@ -1488,6 +1509,99 @@ fn handle_diagnostics_command(
                 );
             }
         }
+    }
+    Ok(())
+}
+
+fn handle_metrics_command(
+    command: MetricsCommand,
+    agent_options: &AgentOptions,
+) -> anyhow::Result<()> {
+    match command {
+        MetricsCommand::Export {
+            out,
+            project,
+            include_sensitive_paths,
+            json,
+        } => {
+            let params = MetricsExportParams {
+                out,
+                project,
+                include_sensitive_paths,
+            };
+            let result = if agent_options.direct {
+                metrics_export_direct(params)?
+            } else {
+                call_agent(agent_options, METHOD_METRICS_EXPORT, params)?
+            };
+            render_metrics_export(&result, json)?;
+        }
+    }
+    Ok(())
+}
+
+fn metrics_export_direct(params: MetricsExportParams) -> anyhow::Result<MetricsExportResult> {
+    let (_, config) = load_or_default_config(None)?;
+    let home = DevRelayHome::resolve()?;
+    home.create_base_dirs()?;
+    let path = params.out.clone().unwrap_or_else(|| {
+        home.metrics_dir().join(format!(
+            "metrics-{}.json",
+            devrelay_core::unix_now_seconds()
+        ))
+    });
+    let project_ids = audit_project_ids(params.project.as_deref(), &config)?;
+    let mut report = collect_local_metrics_report(
+        &home,
+        params.project.clone(),
+        &project_ids,
+        devrelay_core::unix_now_seconds(),
+        !params.include_sensitive_paths,
+    )?;
+    if !params.include_sensitive_paths {
+        let redactor = LogRedactor::for_diagnostics(audit_local_paths(&home, &config));
+        report = report.redact(&redactor);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, serde_json::to_vec_pretty(&report)?)?;
+    Ok(MetricsExportResult {
+        path,
+        project: params.project,
+        include_sensitive_paths: params.include_sensitive_paths,
+        source_code_included: false,
+        snapshot_objects_included: false,
+        report,
+    })
+}
+
+fn render_metrics_export(result: &MetricsExportResult, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(result)?);
+    } else {
+        println!("metrics exported: {}", result.path.display());
+        if let Some(project) = &result.project {
+            println!("  project: {project}");
+        }
+        println!(
+            "  sensitive paths: {}",
+            if result.include_sensitive_paths {
+                "included"
+            } else {
+                "redacted"
+            }
+        );
+        println!(
+            "  continuation successes: {}",
+            result.report.continuation.successes
+        );
+        println!("  checkpoints: {}", result.report.checkpoints.successes);
+        println!("  source code included: {}", result.source_code_included);
+        println!(
+            "  snapshot objects included: {}",
+            result.snapshot_objects_included
+        );
     }
     Ok(())
 }

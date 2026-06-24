@@ -24,6 +24,7 @@ devrelay recover open <snapshot-id> --path ../recovery --register --name review 
 devrelay doctor environment --repo . --manifest devrelay.toml --json
 devrelay doctor environment --repo . --manifest devrelay.toml --run-healthcheck --json
 devrelay environment status --project <project-id> --json
+devrelay metrics export --project <project-id> --out metrics.json --json
 devrelay continue --source ../source --target ../target --config devrelay.local.toml --json
 devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --dry-run
 devrelay apply --repo ../target --source . --snapshot snapshot.json --dirty-policy snapshot-and-fork --json
@@ -89,6 +90,18 @@ only with `--run-healthcheck`; Dev Container image preparation also requires
 projects and workspaces. It uses the local agent by default through
 `environment.status`; `--direct` reads the same state files from
 `$DEVRELAY_HOME/projects/<project-id>/hydration/`.
+
+## Local Metrics
+
+`metrics export` writes a local JSON report. It uses the local agent by default
+through `metrics.export`; `--direct` reads the same per-project metadata DBs and
+hydration files without starting an agent.
+
+The export is local-only and redacted by default. It includes aggregate counts
+and durations derived from audit events, stored snapshots, handoff journals,
+task-run metadata, and hydration records. It does not include source code,
+snapshot objects, or raw logs. Use `--include-sensitive-paths` only for a local
+debugging bundle that may contain configured local paths inside reason text.
 
 ## Exit Codes
 

@@ -15,8 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::{
     AnchorMode, ApplyPlan, AuditEventRecord, ClassifiedPath, DeviceIdentity, HandoffJournalRecord,
     HandoffRecord, HandoffRecoveryOutcome, HydrationState, HydrationStateRecord, LeaseRecord,
-    ProjectRegistryEntry, ResourceProfile, StatusEntry, StatusSummary, StoredSnapshot,
-    TaskRunRecord, VerificationDetails, WorkspaceRegistryEntry,
+    LocalMetricsReport, ProjectRegistryEntry, ResourceProfile, StatusEntry, StatusSummary,
+    StoredSnapshot, TaskRunRecord, VerificationDetails, WorkspaceRegistryEntry,
 };
 #[cfg(unix)]
 use crate::{DevRelayError, IpcConnection, IpcLimits, Result, UnixIpcConnection};
@@ -46,6 +46,7 @@ pub const METHOD_RECOVER_LIST: &str = "recover.list";
 pub const METHOD_RECOVER_SHOW: &str = "recover.show";
 pub const METHOD_RECOVER_OPEN: &str = "recover.open";
 pub const METHOD_DIAGNOSTICS_EXPORT: &str = "diagnostics.export";
+pub const METHOD_METRICS_EXPORT: &str = "metrics.export";
 pub const METHOD_ENVIRONMENT_STATUS: &str = "environment.status";
 pub const METHOD_EVENTS_SUBSCRIBE: &str = "events.subscribe";
 pub const METHOD_DEVICES_LIST: &str = "devices.list";
@@ -416,6 +417,24 @@ pub struct DiagnosticsExportResult {
     pub include_sensitive_paths: bool,
     pub source_code_included: bool,
     pub snapshot_objects_included: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetricsExportParams {
+    pub out: Option<PathBuf>,
+    pub project: Option<String>,
+    #[serde(default)]
+    pub include_sensitive_paths: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MetricsExportResult {
+    pub path: PathBuf,
+    pub project: Option<String>,
+    pub include_sensitive_paths: bool,
+    pub source_code_included: bool,
+    pub snapshot_objects_included: bool,
+    pub report: LocalMetricsReport,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -890,6 +909,15 @@ mod tests {
         let params: DiagnosticsExportParams = serde_json::from_value(json!({})).unwrap();
 
         assert_eq!(params.out, None);
+        assert!(!params.include_sensitive_paths);
+    }
+
+    #[test]
+    fn metrics_export_defaults_to_redacted_paths() {
+        let params: MetricsExportParams = serde_json::from_value(json!({})).unwrap();
+
+        assert_eq!(params.out, None);
+        assert_eq!(params.project, None);
         assert!(!params.include_sensitive_paths);
     }
 

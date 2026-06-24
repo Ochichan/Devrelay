@@ -91,6 +91,10 @@ impl DevRelayHome {
         self.root.join("diagnostics")
     }
 
+    pub fn metrics_dir(&self) -> PathBuf {
+        self.root.join("metrics")
+    }
+
     pub fn anchor_dir(&self) -> PathBuf {
         self.root.join("anchor")
     }
@@ -139,6 +143,7 @@ impl DevRelayHome {
             self.projects_dir(),
             self.log_dir(),
             self.diagnostics_dir(),
+            self.metrics_dir(),
         ] {
             fs::create_dir_all(dir)?;
         }
@@ -380,6 +385,7 @@ mod tests {
         assert!(home.cas_dir("project123").is_dir());
         assert!(home.log_dir().is_dir());
         assert!(home.diagnostics_dir().is_dir());
+        assert!(home.metrics_dir().is_dir());
         assert!(home.anchor_dir().is_dir());
         assert!(home.anchor_snapshot_repo_root().is_dir());
         assert!(home.anchor_cas_root().is_dir());
