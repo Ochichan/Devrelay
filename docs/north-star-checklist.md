@@ -1,6 +1,6 @@
 # DevRelay North Star Checklist
 
-Last updated: 2026-06-23
+Last updated: 2026-06-24
 
 This is the execution checklist for `docs/north-star-roadmap.md`. The roadmap
 explains why and when. This file tracks what must be built, tested, documented,
@@ -1318,18 +1318,18 @@ Conventions:
 
 ### M8.6 Context Restore
 
-- [ ] Receive restore command from agent.
-- [ ] Open workspace folder.
-- [ ] Open files in saved order.
-- [ ] Restore active file.
-- [ ] Restore cursor positions.
-- [ ] Restore selections.
-- [ ] Restore split layout where possible.
-- [ ] Restore breakpoints where possible.
-- [ ] Restore unsaved buffers as dirty.
-- [ ] Report restore ACK to agent.
-- [ ] Report partial restore details.
-- [ ] Add restore tests where possible.
+- [x] Receive restore context from agent.
+- [x] Open workspace folder.
+- [x] Open files in saved order.
+- [x] Restore active file.
+- [x] Restore cursor positions.
+- [x] Restore selections.
+- [x] Restore split layout where possible.
+- [x] Restore breakpoints where possible.
+- [x] Restore unsaved buffers as dirty.
+- [x] Report restore ACK to agent.
+- [x] Report partial restore details.
+- [x] Add restore tests where possible.
 
 ### M8.7 Editor Commands
 

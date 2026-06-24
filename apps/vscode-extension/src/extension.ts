@@ -1,11 +1,20 @@
 import * as vscode from "vscode";
 import { AgentClient } from "./agentClient";
 import {
+  CapturedResource,
+  CapturedSelection,
+  CapturedWorkspaceContext,
   assertContextWithinLimit,
   captureWorkspaceContext,
   contextSummary,
   editorContextUpdateParams,
 } from "./contextCapture";
+import {
+  ContextRestoreDriver,
+  ContextRestoreResult,
+  RestorableBreakpoint,
+  restoreWorkspaceContext,
+} from "./contextRestore";
 import {
   EditorEventRecordParams,
   EditorEventRecordResult,
@@ -48,11 +57,26 @@ interface HandoffsListResult {
   handoffs: HandoffSummary[];
 }
 
+interface EditorContextSnapshot {
+  project?: string | null;
+  audit_id: number;
+  capsule: CapturedWorkspaceContext;
+}
+
+interface EditorContextLatestResult {
+  context?: EditorContextSnapshot | null;
+}
+
 interface EditorContextUpdateResult {
   accepted: boolean;
   audit_id: number;
   capsule_bytes: number;
   recorded_at_unix_seconds: number;
+}
+
+interface EditorRestoreAckResult {
+  accepted: boolean;
+  audit_id: number;
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -175,6 +199,60 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  const restoreUnsavedBuffersFromSecret = async () => {
+    const capsule = await loadUnsavedBufferCapsule(context.secrets);
+    if (!capsule || capsule.buffers.length === 0) {
+      return 0;
+    }
+    const restored = await restoreUnsavedBufferCapsule(capsule, vscode.workspace, vscode.window);
+    await clearUnsavedBufferCapsule(context.secrets);
+    return restored;
+  };
+
+  const restoreContext = async () => {
+    let latest: EditorContextLatestResult | undefined;
+    let restoreResult: ContextRestoreResult | undefined;
+    try {
+      latest = await client.call<EditorContextLatestResult>("editor.context.latest", {
+        project: null,
+      });
+      if (!latest.context) {
+        void vscode.window.showInformationMessage("No DevRelay editor context to restore.");
+        return;
+      }
+      restoreResult = await restoreWorkspaceContext(
+        latest.context.capsule,
+        createContextRestoreDriver(restoreUnsavedBuffersFromSecret)
+      );
+      await client.call<EditorRestoreAckResult>("editor.restore.ack", {
+        project: latest.context.project ?? null,
+        restored_context_audit_id: latest.context.audit_id,
+        succeeded: restoreResult.succeeded,
+        partial: restoreResult.partial,
+        detail: restoreResult,
+      });
+      output.appendLine(`Editor context restore result: ${JSON.stringify(restoreResult)}`);
+      void vscode.window.showInformationMessage(
+        restoreResult.partial
+          ? "DevRelay partially restored editor context."
+          : "DevRelay restored editor context."
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output.appendLine(`Editor context restore failed: ${message}`);
+      if (latest?.context) {
+        void client.call<EditorRestoreAckResult>("editor.restore.ack", {
+          project: latest.context.project ?? null,
+          restored_context_audit_id: latest.context.audit_id,
+          succeeded: false,
+          partial: true,
+          detail: restoreResult ?? { error: message },
+        });
+      }
+      void vscode.window.showErrorMessage(`DevRelay context restore failed: ${message}`);
+    }
+  };
+
   const recordEditorEvent = async (params: EditorEventRecordParams) => {
     if (!shouldNotifyEditorEvent(params)) {
       return;
@@ -213,6 +291,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("devrelay.captureUnsavedBuffers", captureUnsavedBuffersCommand),
     vscode.commands.registerCommand("devrelay.restoreUnsavedBuffers", restoreUnsavedBuffersCommand),
     vscode.commands.registerCommand("devrelay.openDashboard", openDashboard),
+    vscode.commands.registerCommand("devrelay.restoreContext", restoreContext),
     vscode.commands.registerCommand("devrelay.explainState", () => {
       void vscode.window.showInformationMessage(lastStatus.detail);
     }),
@@ -247,6 +326,77 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   void refresh();
+}
+
+function createContextRestoreDriver(
+  restoreUnsavedBuffers: () => Promise<number>
+): ContextRestoreDriver<vscode.TextEditor> {
+  return {
+    openWorkspaceFolder: async (path) => {
+      const alreadyOpen = vscode.workspace.workspaceFolders?.some(
+        (folder) => folder.uri.fsPath === path
+      );
+      if (!alreadyOpen) {
+        const insertAt = vscode.workspace.workspaceFolders?.length ?? 0;
+        const added = vscode.workspace.updateWorkspaceFolders(insertAt, 0, {
+          uri: vscode.Uri.file(path),
+        });
+        if (!added) {
+          throw new Error(`VS Code rejected workspace folder ${path}`);
+        }
+      }
+    },
+    openFile: async (resource, viewColumn) => {
+      const document = await vscode.workspace.openTextDocument(uriFromCapturedResource(resource));
+      return vscode.window.showTextDocument(document, {
+        preview: false,
+        viewColumn: viewColumn as vscode.ViewColumn | undefined,
+      });
+    },
+    setSelections: (editor, selections) => {
+      const restored = selections.map(selectionFromCaptured);
+      editor.selections = restored;
+      if (restored[0]) {
+        editor.selection = restored[0];
+      }
+    },
+    addBreakpoints: async (breakpoints) => {
+      const restored = breakpoints.map(sourceBreakpointFromCaptured);
+      vscode.debug.addBreakpoints(restored);
+      return restored.length;
+    },
+    restoreUnsavedBuffers,
+  };
+}
+
+function uriFromCapturedResource(resource: CapturedResource): vscode.Uri {
+  if (resource.path) {
+    return vscode.Uri.file(resource.path);
+  }
+  if (resource.uri) {
+    return vscode.Uri.parse(resource.uri);
+  }
+  return vscode.Uri.parse(`${resource.scheme}:`);
+}
+
+function selectionFromCaptured(selection: CapturedSelection): vscode.Selection {
+  return new vscode.Selection(
+    new vscode.Position(selection.anchor.line, selection.anchor.character),
+    new vscode.Position(selection.active.line, selection.active.character)
+  );
+}
+
+function sourceBreakpointFromCaptured(breakpoint: RestorableBreakpoint): vscode.SourceBreakpoint {
+  return new vscode.SourceBreakpoint(
+    new vscode.Location(
+      uriFromCapturedResource(breakpoint.resource),
+      new vscode.Position(breakpoint.line, breakpoint.character)
+    ),
+    breakpoint.enabled,
+    breakpoint.condition,
+    breakpoint.hit_condition,
+    breakpoint.log_message
+  );
 }
 
 export function deactivate(): void {

@@ -51,7 +51,9 @@ pub const METHOD_DEVICES_LIST: &str = "devices.list";
 pub const METHOD_ACTIVITY_LIST: &str = "activity.list";
 pub const METHOD_RUNS_LIST: &str = "runs.list";
 pub const METHOD_EDITOR_CONTEXT_UPDATE: &str = "editor.context.update";
+pub const METHOD_EDITOR_CONTEXT_LATEST: &str = "editor.context.latest";
 pub const METHOD_EDITOR_EVENT_RECORD: &str = "editor.event.record";
+pub const METHOD_EDITOR_RESTORE_ACK: &str = "editor.restore.ack";
 pub const METHOD_SETTINGS_GET: &str = "settings.get";
 pub const METHOD_SETTINGS_UPDATE: &str = "settings.update";
 
@@ -470,6 +472,24 @@ pub struct EditorContextUpdateResult {
     pub recorded_at_unix_seconds: u64,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorContextLatestParams {
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorContextSnapshot {
+    pub project: Option<String>,
+    pub audit_id: i64,
+    pub capsule: Value,
+    pub captured_at_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorContextLatestResult {
+    pub context: Option<EditorContextSnapshot>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EditorEventKind {
@@ -495,6 +515,21 @@ pub struct EditorEventRecordResult {
     pub project: Option<String>,
     pub source_generation: u64,
     pub aborted_handoffs: Vec<HandoffRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorRestoreAckParams {
+    pub project: Option<String>,
+    pub restored_context_audit_id: Option<i64>,
+    pub succeeded: bool,
+    pub partial: bool,
+    pub detail: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorRestoreAckResult {
+    pub accepted: bool,
+    pub audit_id: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -864,6 +899,36 @@ mod tests {
             &std::path::PathBuf::from("/Users/dev/project")
         );
         assert_eq!(params.capsule["source"], "vscode");
+    }
+
+    #[test]
+    fn editor_context_latest_and_restore_ack_round_trip() {
+        let latest: EditorContextLatestParams =
+            serde_json::from_value(json!({ "project": null })).unwrap();
+        assert_eq!(latest.project, None);
+
+        let result = serde_json::to_value(EditorContextLatestResult {
+            context: Some(EditorContextSnapshot {
+                project: Some("project-a".to_string()),
+                audit_id: 42,
+                capsule: json!({ "source": "vscode" }),
+                captured_at_unix_seconds: 100,
+            }),
+        })
+        .unwrap();
+        assert_eq!(result["context"]["audit_id"], 42);
+        assert_eq!(result["context"]["capsule"]["source"], "vscode");
+
+        let ack: EditorRestoreAckParams = serde_json::from_value(json!({
+            "project": "project-a",
+            "restored_context_audit_id": 42,
+            "succeeded": true,
+            "partial": false,
+            "detail": { "opened_files": 2 }
+        }))
+        .unwrap();
+        assert!(ack.succeeded);
+        assert_eq!(ack.restored_context_audit_id, Some(42));
     }
 
     #[test]

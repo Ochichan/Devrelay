@@ -1,6 +1,6 @@
 # Unsupported States
 
-Last updated: 2026-06-23
+Last updated: 2026-06-24
 
 Unsupported does not mean data may be discarded. It means DevRelay must block,
 preserve as separate work, or ask for explicit user action.
@@ -8,7 +8,7 @@ preserve as separate work, or ask for explicit user action.
 ## Product-Unsupported Today
 
 - Production desktop UI.
-- Editor context restore.
+- Editor context restore without real VS Code extension-host validation.
 - Remote compute task execution.
 - Windows UI through agent IPC.
 - Windows named pipe local IPC.

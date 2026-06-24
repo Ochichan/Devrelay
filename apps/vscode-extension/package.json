@@ -19,7 +19,8 @@
     "onCommand:devrelay.captureContext",
     "onCommand:devrelay.captureUnsavedBuffers",
     "onCommand:devrelay.restoreUnsavedBuffers",
-    "onCommand:devrelay.openDashboard"
+    "onCommand:devrelay.openDashboard",
+    "onCommand:devrelay.restoreContext"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -47,6 +48,10 @@
       {
         "command": "devrelay.openDashboard",
         "title": "DevRelay: Open Dashboard"
+      },
+      {
+        "command": "devrelay.restoreContext",
+        "title": "DevRelay: Restore Editor Context"
       }
     ],
     "configuration": {

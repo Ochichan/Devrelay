@@ -1211,6 +1211,39 @@ fn foreground_records_editor_context_update_rpc() {
     );
     assert_eq!(updated["result"]["accepted"], true);
     assert!(updated["result"]["capsule_bytes"].as_u64().unwrap() > 0);
+    let context_audit_id = updated["result"]["audit_id"].as_i64().unwrap();
+
+    let latest = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "editor-context-latest",
+            "method": "editor.context.latest",
+            "params": { "project": null }
+        }),
+    );
+    assert_eq!(latest["result"]["context"]["audit_id"], context_audit_id);
+    assert_eq!(latest["result"]["context"]["capsule"]["source"], "vscode");
+
+    let ack = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "editor-restore-ack",
+            "method": "editor.restore.ack",
+            "params": {
+                "project": null,
+                "restored_context_audit_id": context_audit_id,
+                "succeeded": true,
+                "partial": false,
+                "detail": {
+                    "opened_files": [active_file],
+                    "partial_details": []
+                }
+            }
+        }),
+    );
+    assert_eq!(ack["result"]["accepted"], true);
 
     let activity = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
@@ -1221,7 +1254,11 @@ fn foreground_records_editor_context_update_rpc() {
             "params": { "limit": 10 }
         }),
     );
-    let event = &activity["result"]["events"][0];
+    let events = activity["result"]["events"].as_array().unwrap();
+    let event = events
+        .iter()
+        .find(|event| event["type"] == "editor.context.updated")
+        .unwrap();
     assert_eq!(event["type"], "editor.context.updated");
     assert_eq!(event["summary"], "editor context updated");
     assert_eq!(event["detail"]["capsule"]["source"], "vscode");
@@ -1229,6 +1266,10 @@ fn foreground_records_editor_context_update_rpc() {
         event["detail"]["workspace_path"].as_str(),
         Some(workspace_path.as_str())
     );
+    assert!(events.iter().any(|event| {
+        event["type"] == "editor.restore.acked"
+            && event["detail"]["restored_context_audit_id"] == context_audit_id
+    }));
 
     running.stop();
 }

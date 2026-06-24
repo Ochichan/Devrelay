@@ -74,10 +74,12 @@ but that is not the same as an implemented API boundary.
 ## Local Agent RPC
 
 The local agent JSON-RPC surface now exposes `leases.list`, editor context
-capture via `editor.context.update`, editor edit guard events via
-`editor.event.record`, plus the handoff state-machine methods `handoffs.list`,
-`handoff.begin`, `handoff.target.verify`, `handoff.source.ready`,
-`handoff.commit`, `handoff.abort`, and `handoff.recover`.
+capture via `editor.context.update`, latest editor context retrieval via
+`editor.context.latest`, editor restore acknowledgement via
+`editor.restore.ack`, editor edit guard events via `editor.event.record`, plus
+the handoff state-machine methods `handoffs.list`, `handoff.begin`,
+`handoff.target.verify`, `handoff.source.ready`, `handoff.commit`,
+`handoff.abort`, and `handoff.recover`.
 
 These methods are local metadata-control commands. They do not implement the
 remote M4.5 Control API, advertise file transfer completion, or allow UI clients

@@ -1,6 +1,6 @@
 # DevRelay North Star Roadmap
 
-Last updated: 2026-06-23
+Last updated: 2026-06-24
 
 This roadmap turns the bundled North Star spec into a live execution plan. The
 spec is the product target. This roadmap is the implementation path from the
@@ -111,7 +111,7 @@ Current gaps that matter before product claims:
 - Idle CPU/RSS and checkpoint burst evidence.
 - Product-level safety suites named from the non-negotiable invariants.
 - Production desktop UI.
-- Editor context restore.
+- Extension-host validation for editor context restore.
 - Native bootstrap, secret providers, hydration state machine, and environment
   doctor.
 - Compute fabric.
@@ -379,10 +379,13 @@ Completed capabilities:
 - Handoff edit guard: VS Code edit/save/active-editor events report to the
   agent, meaningful edits increment source generation, and source-side pending
   handoffs abort on generation change.
+- Context restore command: latest captured context retrieval, saved
+  folder/file/tab-order reopening, active selections, split columns,
+  breakpoints, local dirty-buffer restore, restore ACK audit, partial detail
+  reporting, and Node/Rust coverage.
 
 Open work:
 
-- Context restore UX.
 - Extension-host validation inside VS Code.
 
 ### M9. Environment Hydration

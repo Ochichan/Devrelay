@@ -3,10 +3,12 @@ use clap::{Parser, ValueEnum};
 #[cfg(unix)]
 use devrelay_core::{
     ActivityListParams, ActivityListResult, AnchorSnapshotRepo, ApplySnapshotParams,
-    ApplySnapshotResult, AuditEventInput, AuditEventType, AuditOutcome, CheckpointCreateParams,
-    CheckpointCreateResult, DevicesListResult, DiagnosticsExportParams, DiagnosticsExportResult,
-    EditorContextUpdateParams, EditorContextUpdateResult, EditorEventKind, EditorEventRecordParams,
-    EditorEventRecordResult, EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage,
+    ApplySnapshotResult, AuditEventInput, AuditEventRecord, AuditEventType, AuditOutcome,
+    CheckpointCreateParams, CheckpointCreateResult, DevicesListResult, DiagnosticsExportParams,
+    DiagnosticsExportResult, EditorContextLatestParams, EditorContextLatestResult,
+    EditorContextSnapshot, EditorContextUpdateParams, EditorContextUpdateResult, EditorEventKind,
+    EditorEventRecordParams, EditorEventRecordResult, EditorRestoreAckParams,
+    EditorRestoreAckResult, EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage,
     EventsSubscribeParams, EventsSubscribeResult, GitRepo, HandoffBeginParams, HandoffCommitParams,
     HandoffIdParams, HandoffMutationResult, HandoffRecord, HandoffRecoverParams,
     HandoffRecoverResult, HandoffState, HandoffStateChangedEvent, HandoffStatus,
@@ -26,14 +28,15 @@ use devrelay_core::{
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, LogRedactor,
     METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
-    METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EDITOR_CONTEXT_UPDATE,
-    METHOD_EDITOR_EVENT_RECORD, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT,
-    METHOD_HANDOFF_BEGIN, METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_RECOVER,
-    METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY, METHOD_HANDOFFS_LIST,
-    METHOD_LEASES_LIST, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
-    METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
-    METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE,
-    METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb, StructuredLogLevel, current_platform_key,
+    METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EDITOR_CONTEXT_LATEST,
+    METHOD_EDITOR_CONTEXT_UPDATE, METHOD_EDITOR_EVENT_RECORD, METHOD_EDITOR_RESTORE_ACK,
+    METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN, METHOD_HANDOFF_COMMIT,
+    METHOD_HANDOFF_RECOVER, METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY,
+    METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
+    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
+    METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
+    METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb,
+    StructuredLogLevel, current_platform_key,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -240,7 +243,9 @@ impl AgentState {
             METHOD_ACTIVITY_LIST.to_string(),
             METHOD_RUNS_LIST.to_string(),
             METHOD_EDITOR_CONTEXT_UPDATE.to_string(),
+            METHOD_EDITOR_CONTEXT_LATEST.to_string(),
             METHOD_EDITOR_EVENT_RECORD.to_string(),
+            METHOD_EDITOR_RESTORE_ACK.to_string(),
             METHOD_SETTINGS_GET.to_string(),
             METHOD_SETTINGS_UPDATE.to_string(),
         ]
@@ -707,7 +712,9 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_ACTIVITY_LIST => handle_activity_list(id, request.params, state),
         METHOD_RUNS_LIST => handle_runs_list(id, request.params, state),
         METHOD_EDITOR_CONTEXT_UPDATE => handle_editor_context_update(id, request.params, state),
+        METHOD_EDITOR_CONTEXT_LATEST => handle_editor_context_latest(id, request.params, state),
         METHOD_EDITOR_EVENT_RECORD => handle_editor_event_record(id, request.params, state),
+        METHOD_EDITOR_RESTORE_ACK => handle_editor_restore_ack(id, request.params, state),
         METHOD_SETTINGS_GET => handle_settings_get(id, state),
         METHOD_SETTINGS_UPDATE => handle_settings_update(id, request.params, state),
         method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
@@ -1727,6 +1734,72 @@ fn handle_editor_context_update(
 }
 
 #[cfg(unix)]
+fn handle_editor_context_latest(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: EditorContextLatestParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let project_ids = match registered_project_ids_for_query(state, params.project.as_deref()) {
+        Ok(project_ids) => project_ids,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let mut contexts = Vec::new();
+
+    if params.project.is_none() {
+        match MetadataDb::open(&state.database_path).and_then(|db| db.list_audit_events(None, 100))
+        {
+            Ok(events) => contexts.extend(events.into_iter().filter_map(editor_context_from_audit)),
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        }
+    }
+
+    for project_id in project_ids {
+        let db_path = state.home.metadata_db_path(&project_id);
+        if !db_path.exists() {
+            continue;
+        }
+        match MetadataDb::open(&db_path).and_then(|db| db.list_audit_events(Some(&project_id), 100))
+        {
+            Ok(events) => contexts.extend(events.into_iter().filter_map(editor_context_from_audit)),
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        }
+    }
+
+    contexts.sort_by(|left, right| {
+        right
+            .captured_at_unix_seconds
+            .cmp(&left.captured_at_unix_seconds)
+            .then(right.audit_id.cmp(&left.audit_id))
+    });
+    let result = EditorContextLatestResult {
+        context: contexts.into_iter().next(),
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn editor_context_from_audit(record: AuditEventRecord) -> Option<EditorContextSnapshot> {
+    if record.event_type != AuditEventType::EditorContextUpdated {
+        return None;
+    }
+    let capsule = record.detail.get("capsule")?.clone();
+    Some(EditorContextSnapshot {
+        project: record.project_id,
+        audit_id: record.audit_id,
+        capsule,
+        captured_at_unix_seconds: record.created_at_unix_seconds,
+    })
+}
+
+#[cfg(unix)]
 fn handle_editor_event_record(
     id: devrelay_core::RpcId,
     params: serde_json::Value,
@@ -1852,6 +1925,78 @@ fn abort_source_handoffs_after_editor_edit(
         aborted.push(next);
     }
     Ok(aborted)
+}
+
+#[cfg(unix)]
+fn handle_editor_restore_ack(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: EditorRestoreAckParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let project = match params.project {
+        Some(project) => {
+            let project = project.trim().to_string();
+            if project.is_empty() {
+                return RpcResponse::error(
+                    Some(id),
+                    RpcError::invalid_params("project must not be empty"),
+                );
+            }
+            if let Err(err) = registered_project_ids_for_query(state, Some(&project)) {
+                return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+            }
+            Some(project)
+        }
+        None => None,
+    };
+    let actor_device_id = match state.config.lock() {
+        Ok(config) => config.device_id.clone(),
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let mut audit = AuditEventInput::new(
+        AuditEventType::EditorRestoreAcked,
+        if params.succeeded {
+            AuditOutcome::Succeeded
+        } else {
+            AuditOutcome::Failed
+        },
+        if params.partial {
+            "editor context partially restored"
+        } else if params.succeeded {
+            "editor context restored"
+        } else {
+            "editor context restore failed"
+        },
+    )
+    .with_detail(serde_json::json!({
+        "restored_context_audit_id": params.restored_context_audit_id,
+        "partial": params.partial,
+        "detail": params.detail,
+    }));
+    audit.project_id = project.clone();
+    audit.actor_device_id = Some(actor_device_id);
+
+    let db_path = project
+        .as_deref()
+        .map(|project| state.home.metadata_db_path(project))
+        .unwrap_or_else(|| state.database_path.clone());
+    let record = match MetadataDb::open(db_path).and_then(|db| db.record_audit_event(audit)) {
+        Ok(record) => record,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let result = EditorRestoreAckResult {
+        accepted: true,
+        audit_id: record.audit_id,
+    };
+
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
 }
 
 #[cfg(unix)]

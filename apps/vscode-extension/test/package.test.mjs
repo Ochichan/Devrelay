@@ -16,6 +16,7 @@ test("package exposes the VS Code extension entrypoint", () => {
     "onCommand:devrelay.captureUnsavedBuffers",
     "onCommand:devrelay.restoreUnsavedBuffers",
     "onCommand:devrelay.openDashboard",
+    "onCommand:devrelay.restoreContext",
   ]);
 });
 
@@ -28,6 +29,7 @@ test("contributed commands are registered by the extension", () => {
     "devrelay.captureUnsavedBuffers",
     "devrelay.restoreUnsavedBuffers",
     "devrelay.openDashboard",
+    "devrelay.restoreContext",
   ]);
 
   for (const command of commands) {
@@ -39,6 +41,9 @@ test("extension surfaces local agent connection state", () => {
   assert.match(extensionSource, /createStatusBarItem/);
   assert.match(extensionSource, /client\.call<AgentHealthResult>\("agent\.health"\)/);
   assert.match(extensionSource, /client\.call<EditorContextUpdateResult>\(\s*"editor\.context\.update"/);
+  assert.match(extensionSource, /client\.call<EditorContextLatestResult>\("editor\.context\.latest"/);
+  assert.match(extensionSource, /client\.call<EditorRestoreAckResult>\("editor\.restore\.ack"/);
+  assert.match(extensionSource, /restoreWorkspaceContext/);
   assert.match(extensionSource, /client\.call<EditorEventRecordResult>\("editor\.event\.record"/);
   assert.match(extensionSource, /statusBar\.command = "devrelay\.explainState"/);
 });
