@@ -265,6 +265,60 @@ mod no_plaintext_secret_snapshot {
     }
 }
 
+mod no_background_auto_merge {
+    //! Invariant: `safety/no_background_auto_merge`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    fn background_workspace(path: &Path) -> BackgroundWorkspace {
+        BackgroundWorkspace {
+            project_id: "12345678".to_string(),
+            workspace_id: "w-source".to_string(),
+            device_id: Some("device-a".to_string()),
+            repo_path: path.to_path_buf(),
+            manifest_path: Some(path.join("devrelay.toml")),
+        }
+    }
+
+    #[test]
+    fn background_checkpoint_preserves_worktree_and_index_status() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("devrelay.toml"), MANIFEST_TEXT).unwrap();
+        source.run(&["add", "devrelay.toml"]).unwrap();
+        source.run(&["commit", "-m", "manifest"]).unwrap();
+        fs::write(source_path.join("README.md"), "unstaged change\n").unwrap();
+        fs::write(source_path.join("staged.txt"), "staged\n").unwrap();
+        source.run(&["add", "staged.txt"]).unwrap();
+        fs::write(source_path.join("notes.md"), "untracked\n").unwrap();
+        let before = source.run(&["status", "--porcelain=v2", "-z"]).unwrap();
+        let workspace = background_workspace(&source_path);
+        let checkpoint = DebouncedCheckpoint {
+            workspace_id: "w-source".to_string(),
+            source_generation: 1,
+            reason: DebounceFlushReason::QuietWindow,
+            paths: vec![
+                PathBuf::from("README.md"),
+                PathBuf::from("staged.txt"),
+                PathBuf::from("notes.md"),
+            ],
+        };
+        let mut manager = BackgroundCheckpointManager::new();
+
+        let report = manager.handle_checkpoint(&home, &workspace, &checkpoint);
+
+        assert!(matches!(
+            report.outcome,
+            BackgroundCheckpointOutcome::Created { .. }
+        ));
+        let after = source.run(&["status", "--porcelain=v2", "-z"]).unwrap();
+        assert_eq!(after, before);
+    }
+}
+
 mod watcher_events_are_hints {
     //! Invariant: `safety/watcher_events_are_hints`; see `docs/data-loss-safety.md`.
 

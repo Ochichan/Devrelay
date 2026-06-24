@@ -2108,7 +2108,7 @@ Conventions:
 ## Non-Negotiable Safety Checklist
 
 - [x] No implementation path can silently overwrite target work. Evidence suite: `safety/no_silent_overwrite`.
-- [ ] No background path performs an automatic merge. Evidence suite: `safety/no_background_auto_merge`.
+- [x] No background path performs an automatic merge. Evidence suite: `safety/no_background_auto_merge`.
 - [x] No plaintext secret is included in a snapshot by default. Evidence suite: `safety/no_plaintext_secret_snapshot`.
 - [ ] No remote command runs without trust hash approval. Evidence suite: `safety/no_untrusted_remote_execution`.
 - [x] No UI computes canonical state independently from the agent. Evidence suite: `safety/ui_has_no_state_authority`.
