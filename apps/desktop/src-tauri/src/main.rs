@@ -1,19 +1,22 @@
 use devrelay_core::{
-    ActivityListParams, ActivityListResult, AgentRpcClient, CheckpointCreateParams,
-    CheckpointCreateResult, DevRelayHome, DevicesListResult, DiagnosticsExportParams,
-    DiagnosticsExportResult, EventReplayCursor, EventStreamMessage, EventsSubscribeParams,
-    EventsSubscribeResult, HandoffBeginParams, HandoffIdParams, HandoffMutationResult,
-    HandoffStatus, HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, LeaseRecord,
-    LeaseState, LeasesListParams, LeasesListResult, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH,
-    METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT,
-    METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN, METHOD_HANDOFFS_LIST,
-    METHOD_LEASES_LIST, METHOD_PROJECTS_LIST, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST,
-    METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
-    ProjectRegistryEntry, ProjectsListResult, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcId,
-    RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
-    RunsListParams, RunsListResult, SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult,
-    SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot,
-    UnixIpcConnection, detect_platform_identity,
+    ActivityListParams, ActivityListResult, AgentRpcClient, ApplySnapshotParams,
+    ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult, DevRelayHome,
+    DevicesListResult, DiagnosticsExportParams, DiagnosticsExportResult, EventReplayCursor,
+    EventStreamMessage, EventsSubscribeParams, EventsSubscribeResult, HandoffBeginParams,
+    HandoffCommitParams, HandoffIdParams, HandoffMutationResult, HandoffState, HandoffStatus,
+    HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, LeaseRecord, LeaseState,
+    LeasesListParams, LeasesListResult, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH,
+    METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST,
+    METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN,
+    METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY,
+    METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_PROJECTS_LIST, METHOD_RPC_NEGOTIATE,
+    METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST,
+    METHOD_STATUS_GET, ProjectRegistryEntry, ProjectsListResult, RPC_JSONRPC_VERSION,
+    RPC_PROTOCOL_VERSION, RpcId, RpcRequest, RpcResponse, RpcVersionNegotiationParams,
+    RpcVersionNegotiationResult, RunsListParams, RunsListResult, SettingsGetResult,
+    SettingsUpdateParams, SettingsUpdateResult, SnapshotsListParams, SnapshotsListResult,
+    StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection, VerificationDetails,
+    detect_platform_identity,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -69,6 +72,13 @@ struct UiOperationResult<T: Serialize> {
     ok: bool,
     message: String,
     data: Option<T>,
+}
+
+#[derive(Debug, Serialize)]
+struct HandoffContinueResult {
+    snapshot_id: Option<String>,
+    verification: Option<VerificationDetails>,
+    handoff: HandoffMutationResult,
 }
 
 #[tauri::command]
@@ -198,6 +208,130 @@ fn handoff_abort(
             data: Some(result),
         },
         Err(err) => operation_error(format!("handoff abort failed: {err}")),
+    }
+}
+
+#[tauri::command]
+fn handoff_continue_here(
+    project_id: String,
+    handoff_id: String,
+) -> UiOperationResult<HandoffContinueResult> {
+    let socket = resolved_home().agent_socket_path();
+    let settings: SettingsGetResult = match call_agent(&socket, METHOD_SETTINGS_GET, json!({})) {
+        Ok(result) => result,
+        Err(err) => return operation_error(format!("failed to load local device settings: {err}")),
+    };
+    let project = match project_by_id(&socket, &project_id) {
+        Ok(project) => project,
+        Err(err) => return operation_error(err),
+    };
+    let status = match find_handoff_status(&socket, &project_id, &handoff_id) {
+        Ok(status) => status,
+        Err(err) => return operation_error(err),
+    };
+    let mut handoff = status.record;
+    let mut journal = status.journal;
+    if handoff.target_device_id != settings.device_id {
+        return operation_error("handoff is waiting for a different target device".to_string());
+    }
+
+    let mut applied_snapshot_id = None;
+    let mut verification = None;
+    if handoff.state == HandoffState::TargetPrepare {
+        let snapshots: SnapshotsListResult = match call_agent(
+            &socket,
+            METHOD_SNAPSHOTS_LIST,
+            SnapshotsListParams {
+                project: project_id.clone(),
+            },
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                return operation_error(format!("failed to load handoff checkpoint: {err}"));
+            }
+        };
+        let Some(snapshot) =
+            snapshot_matching_generation(&snapshots.snapshots, &handoff.source_generation)
+        else {
+            return operation_error(
+                "handoff checkpoint is not available on this device".to_string(),
+            );
+        };
+        applied_snapshot_id = Some(snapshot.snapshot_id.clone());
+        let apply: ApplySnapshotResult = match call_agent(
+            &socket,
+            METHOD_APPLY_SNAPSHOT,
+            ApplySnapshotParams {
+                repo: project.local_path,
+                project: project_id.clone(),
+                snapshot_id: snapshot.snapshot_id.clone(),
+                dry_run: false,
+            },
+        ) {
+            Ok(result) => result,
+            Err(err) => return operation_error(format!("target apply failed: {err}")),
+        };
+        verification = apply.verification;
+        let result = match mutate_handoff(
+            &socket,
+            METHOD_HANDOFF_TARGET_VERIFY,
+            &project_id,
+            &handoff_id,
+        ) {
+            Ok(result) => result,
+            Err(err) => return operation_error(format!("target verification failed: {err}")),
+        };
+        handoff = result.handoff;
+        journal = result.journal;
+    }
+
+    if handoff.state == HandoffState::TargetVerified {
+        let result = match mutate_handoff(
+            &socket,
+            METHOD_HANDOFF_SOURCE_READY,
+            &project_id,
+            &handoff_id,
+        ) {
+            Ok(result) => result,
+            Err(err) => return operation_error(format!("source readiness failed: {err}")),
+        };
+        handoff = result.handoff;
+        journal = result.journal;
+    }
+
+    let result = match handoff.state {
+        HandoffState::SourceReady => match call_agent(
+            &socket,
+            METHOD_HANDOFF_COMMIT,
+            HandoffCommitParams {
+                project: project_id,
+                handoff_id,
+                observed_source_generation: handoff.source_generation.clone(),
+            },
+        ) {
+            Ok(result) => result,
+            Err(err) => return operation_error(format!("handoff commit failed: {err}")),
+        },
+        HandoffState::Committed => HandoffMutationResult { handoff, journal },
+        HandoffState::Aborted => {
+            return operation_error("handoff has already been aborted".to_string());
+        }
+        HandoffState::TargetPrepare | HandoffState::TargetVerified => {
+            return operation_error(format!(
+                "handoff stopped before commit in {} state",
+                handoff.state.as_str()
+            ));
+        }
+    };
+
+    UiOperationResult {
+        ok: true,
+        message: "continuation verified".to_string(),
+        data: Some(HandoffContinueResult {
+            snapshot_id: applied_snapshot_id,
+            verification,
+            handoff: result,
+        }),
     }
 }
 
@@ -404,6 +538,52 @@ fn project_by_id(
         .ok_or_else(|| format!("unknown project {project_id}"))
 }
 
+fn find_handoff_status(
+    socket: &std::path::Path,
+    project_id: &str,
+    handoff_id: &str,
+) -> Result<HandoffStatus, String> {
+    let handoffs: HandoffsListResult = call_agent(
+        socket,
+        METHOD_HANDOFFS_LIST,
+        HandoffsListParams {
+            project: Some(project_id.to_string()),
+            include_journal: true,
+        },
+    )?;
+    handoffs
+        .handoffs
+        .into_iter()
+        .find(|status| status.record.handoff_id == handoff_id)
+        .ok_or_else(|| format!("unknown handoff {handoff_id}"))
+}
+
+fn snapshot_matching_generation<'a>(
+    snapshots: &'a [StoredSnapshot],
+    source_generation: &str,
+) -> Option<&'a StoredSnapshot> {
+    snapshots
+        .iter()
+        .filter(|snapshot| snapshot.metadata.state_hash == source_generation)
+        .max_by_key(|snapshot| snapshot.sequence_number)
+}
+
+fn mutate_handoff(
+    socket: &std::path::Path,
+    method: &str,
+    project_id: &str,
+    handoff_id: &str,
+) -> Result<HandoffMutationResult, String> {
+    call_agent(
+        socket,
+        method,
+        HandoffIdParams {
+            project: project_id.to_string(),
+            handoff_id: handoff_id.to_string(),
+        },
+    )
+}
+
 fn platform_open_path(path: &std::path::Path) -> Result<(), std::io::Error> {
     #[cfg(target_os = "macos")]
     {
@@ -590,6 +770,7 @@ fn main() {
             ui_bootstrap,
             checkpoint_create,
             handoff_prepare,
+            handoff_continue_here,
             handoff_abort,
             project_status,
             open_project,

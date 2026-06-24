@@ -221,6 +221,25 @@ function latestHandoff(projectId) {
   );
 }
 
+function incomingHandoff(projectId) {
+  const localDeviceId = state.bootstrap?.settings?.device_id;
+  if (!localDeviceId) return null;
+  return (
+    handoffs()
+      .filter(
+        (handoff) =>
+          handoff.record?.project_id === projectId &&
+          handoff.record?.target_device_id === localDeviceId &&
+          handoffIsOpen(handoff)
+      )
+      .sort((left, right) => {
+        const leftTime = left.record?.expires_at_unix_seconds ?? 0;
+        const rightTime = right.record?.expires_at_unix_seconds ?? 0;
+        return leftTime - rightTime;
+      })[0] ?? null
+  );
+}
+
 function handoffIsOpen(handoff) {
   return Boolean(handoff && !["committed", "aborted"].includes(handoff.record?.state));
 }
@@ -336,6 +355,55 @@ function targetReadiness(device, context) {
     label: "Ready",
     detail: "Fresh checkpoint and target preparation can start.",
   };
+}
+
+function continueHereReadiness(handoff) {
+  if (!handoff) {
+    return {
+      ready: false,
+      tone: "warn",
+      label: "No incoming handoff",
+      detail: "Start a handoff from another device before continuing here.",
+    };
+  }
+  const record = handoff.record ?? {};
+  const remaining = formatUntil(record.expires_at_unix_seconds);
+  if (remaining === "expired") {
+    return {
+      ready: false,
+      tone: "bad",
+      label: "Expired",
+      detail: "Abort this handoff and start again from the source device.",
+    };
+  }
+  const requiredMethods = [
+    "apply.snapshot",
+    "handoff.target.verify",
+    "handoff.source.ready",
+    "handoff.commit",
+  ];
+  const missingMethod = requiredMethods.find((method) => !methods().has(method));
+  if (missingMethod) {
+    return {
+      ready: false,
+      tone: "warn",
+      label: "RPC missing",
+      detail: `${missingMethod} is not exposed by this agent build.`,
+    };
+  }
+  return {
+    ready: true,
+    tone: "good",
+    label: titleize(record.state),
+    detail: `Ready to apply and verify this handoff on ${deviceName(record.target_device_id)}.`,
+  };
+}
+
+function continueHereRow(handoff, readiness) {
+  const target = handoff?.record?.target_device_id
+    ? deviceName(handoff.record.target_device_id)
+    : "This device";
+  return `<div class="status-row"><span class="dot ${readiness.tone}"></span><div><strong>${escapeHtml(readiness.label)}</strong><span>${escapeHtml(readiness.detail)}</span></div><span class="badge ${readiness.tone}">${escapeHtml(target)}</span></div>`;
 }
 
 function statusCounts(statusResult) {
@@ -597,15 +665,18 @@ function renderContinue() {
   const latest = activity().find((event) => event.project_id === project.project_id);
   const checkpoint = latestSnapshot(project.project_id);
   const handoff = latestHandoff(project.project_id);
+  const incoming = incomingHandoff(project.project_id);
+  const continueReadiness = continueHereReadiness(incoming);
   const openHandoff = handoffIsOpen(handoff);
   const targetDevices = devices().filter((device) => device.device_id !== state.bootstrap?.settings?.device_id);
   const handoffReady = methods().has("handoff.begin");
   const suggestedSession = workspace?.workspace_id ?? checkpoint?.session_id ?? project.project_id;
   const handoffPanelCopy = openHandoff
-    ? "Target preparation is in progress; target apply and verification remain pending"
+    ? "Target preparation is in progress; continue on the target device to apply and verify"
     : handoffReady
       ? "Start target preparation with a fresh checkpoint; target apply and verification remain pending"
       : "Handoff RPC is not exposed by this agent build";
+  const continueDisabled = !continueReadiness.ready || Boolean(state.operation);
   return `
     <section class="screen">
       ${agentErrors()}
@@ -627,7 +698,8 @@ function renderContinue() {
               <div class="metric"><strong>${counts.unmerged}</strong><span>Conflicts</span></div>
             </div>
             <div class="button-row">
-              <button class="button primary" data-action="checkpoint" data-project-id="${escapeHtml(project.project_id)}" ${state.operation ? "disabled" : ""}>${icons.check}<span>Checkpoint now</span></button>
+              <button class="button primary" data-action="handoff-continue-here" data-project-id="${escapeHtml(project.project_id)}" data-handoff-id="${escapeHtml(incoming?.record?.handoff_id ?? "")}" ${continueDisabled ? "disabled" : ""}>${icons.play}<span>Continue here</span></button>
+              <button class="button" data-action="checkpoint" data-project-id="${escapeHtml(project.project_id)}" ${state.operation ? "disabled" : ""}>${icons.check}<span>Checkpoint now</span></button>
               <button class="button" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" ${status?.loading ? "disabled" : ""}>${icons.refresh}<span>Status</span></button>
               <button class="button" data-action="open-project" data-project-id="${escapeHtml(project.project_id)}">${icons.external}<span>Open folder</span></button>
             </div>
@@ -640,6 +712,7 @@ function renderContinue() {
             <div class="status-row"><span class="dot ${suggestedSession ? "good" : "warn"}"></span><div><strong>Suggested session</strong><span>${escapeHtml(suggestedSession ?? "No continuation session recorded")}</span></div><span class="badge">${workspace?.state ? escapeHtml(workspace.state) : "selected"}</span></div>
             ${activeWriterRow(workspace, lease)}
             ${handoffRow(handoff)}
+            ${continueHereRow(incoming, continueReadiness)}
             <div class="status-row"><span class="dot ${checkpoint ? "good" : "warn"}"></span><div><strong>${checkpoint ? escapeHtml(shortId(checkpoint.snapshot_id)) : "No checkpoint recorded"}</strong><span>${checkpoint ? `${formatAge(checkpoint.created_at_unix_seconds)} - ${escapeHtml(checkpoint.label ?? "unlabeled")}` : "Create a checkpoint before cross-device handoff."}</span></div><span class="badge">${checkpoint ? `#${checkpoint.sequence_number}` : "empty"}</span></div>
             <div class="status-row"><span class="dot ${latest ? "good" : "warn"}"></span><div><strong>${latest ? escapeHtml(latest.summary) : "No activity recorded"}</strong><span>${latest ? formatAge(latest.created_at_unix_seconds) : "waiting for agent events"}</span></div><span class="badge">${latest ? escapeHtml(latest.outcome) : "empty"}</span></div>
           </div>
@@ -958,6 +1031,15 @@ async function handleAction(button) {
       const result = await invoke("handoff_prepare", { projectId, targetDeviceId });
       if (!result.ok) throw new Error(result.message);
       toast("Handoff preparation started");
+      await refresh();
+    }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    return;
+  }
+  if (action === "handoff-continue-here") {
+    await runOperation("Continuing here", async () => {
+      const result = await invoke("handoff_continue_here", { projectId, handoffId });
+      if (!result.ok) throw new Error(result.message);
+      toast("Continuation verified");
       await refresh();
     }).catch((error) => toast(String(error?.message ?? error), "bad"));
     return;

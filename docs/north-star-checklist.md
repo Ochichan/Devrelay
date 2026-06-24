@@ -1146,7 +1146,7 @@ Conventions:
 - [x] Show target readiness.
 - [x] Show handoff-in-progress state.
 - [ ] Show environment warmth.
-- [ ] Add primary "Continue here" action.
+- [x] Add primary "Continue here" action.
 - [x] Add "Continue elsewhere" action.
 - [x] Add "Abort handoff" action.
 - [x] Add "Checkpoint" action.

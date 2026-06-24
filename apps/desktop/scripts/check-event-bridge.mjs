@@ -25,7 +25,13 @@ const bootstrap = {
   },
   agent: {
     connected: true,
-    methods: ["handoff.begin"],
+    methods: [
+      "apply.snapshot",
+      "handoff.begin",
+      "handoff.target.verify",
+      "handoff.source.ready",
+      "handoff.commit",
+    ],
     errors: [],
   },
   settings: {
@@ -119,6 +125,21 @@ const context = {
         invoke: async (name) => {
           invoked.push(name);
           if (name === "project_status") return cleanStatus;
+          if (name === "handoff_continue_here") {
+            return {
+              ok: true,
+              message: "continuation verified",
+              data: {
+                handoff: {
+                  handoff: {
+                    handoff_id: "handoff-local",
+                    state: "committed",
+                  },
+                  journal: [],
+                },
+              },
+            };
+          }
           return bootstrap;
         },
       },
@@ -163,6 +184,44 @@ render();
 );
 assert.match(app.innerHTML, /Abort handoff/, "open handoff did not render abort action");
 assert.doesNotMatch(app.innerHTML, /Prepare handoff/, "open handoff still rendered prepare action");
+vm.runInContext(
+  `
+state.bootstrap.handoffs = [{
+  record: {
+    handoff_id: "handoff-local",
+    project_id: "project-1",
+    state: "target-prepare",
+    target_device_id: "local-device",
+    expires_at_unix_seconds: ${nowSeconds + 300},
+  },
+  journal: [],
+}];
+render();
+`,
+  context
+);
+assert.match(app.innerHTML, /Continue here/, "incoming handoff did not render continue action");
+assert.match(
+  app.innerHTML,
+  /Ready to apply and verify/,
+  "incoming handoff did not render target readiness"
+);
+await vm.runInContext(
+  `
+handleAction({
+  dataset: {
+    action: "handoff-continue-here",
+    projectId: "project-1",
+    handoffId: "handoff-local",
+  },
+});
+`,
+  context
+);
+assert(
+  invoked.includes("handoff_continue_here"),
+  "continue here action did not invoke Tauri command"
+);
 
 for (const eventName of [
   "devrelay-tray-refresh",
