@@ -78,6 +78,16 @@ function formatAge(seconds) {
   return `${Math.floor(delta / 86400)}d ago`;
 }
 
+function formatUntil(seconds) {
+  if (!seconds) return "unknown";
+  const delta = Math.floor(seconds - Date.now() / 1000);
+  if (delta <= 0) return "expired";
+  if (delta < 60) return `${delta}s`;
+  if (delta < 3600) return `${Math.floor(delta / 60)}m`;
+  if (delta < 86400) return `${Math.floor(delta / 3600)}h`;
+  return `${Math.floor(delta / 86400)}d`;
+}
+
 function formatClock(milliseconds) {
   if (!milliseconds) return "never";
   return new Intl.DateTimeFormat(undefined, {
@@ -124,6 +134,10 @@ function snapshots() {
   return state.bootstrap?.snapshots ?? [];
 }
 
+function handoffs() {
+  return state.bootstrap?.handoffs ?? [];
+}
+
 function selectedProject() {
   const all = projects();
   if (!state.selectedProjectId && all.length > 0) {
@@ -166,6 +180,41 @@ function latestSnapshot(projectId) {
   return snapshots()
     .filter((snapshot) => snapshot.project_id === projectId)
     .sort((left, right) => (right.sequence_number ?? 0) - (left.sequence_number ?? 0))[0];
+}
+
+function latestHandoff(projectId) {
+  const entries = handoffs().filter((handoff) => handoff.record?.project_id === projectId);
+  const active = entries.find(
+    (handoff) => !["committed", "aborted"].includes(handoff.record?.state)
+  );
+  return (
+    active ??
+    entries.sort((left, right) => {
+      const leftTime = left.record?.expires_at_unix_seconds ?? 0;
+      const rightTime = right.record?.expires_at_unix_seconds ?? 0;
+      return rightTime - leftTime;
+    })[0]
+  );
+}
+
+function handoffTone(handoff) {
+  const state = handoff?.record?.state;
+  if (!state) return "warn";
+  if (state === "committed") return "good";
+  if (state === "aborted") return "bad";
+  return "warn";
+}
+
+function handoffRow(handoff) {
+  if (!handoff) {
+    return '<div class="status-row"><span class="dot warn"></span><div><strong>No handoff in progress</strong><span>Waiting for a verified target continuation.</span></div><span class="badge">idle</span></div>';
+  }
+  const record = handoff.record;
+  const tone = handoffTone(handoff);
+  const target = record.target_device_id ? `to ${record.target_device_id}` : "target pending";
+  const remaining = formatUntil(record.expires_at_unix_seconds);
+  const expires = remaining === "expired" ? "expired" : `expires in ${remaining}`;
+  return `<div class="status-row"><span class="dot ${tone}"></span><div><strong>${escapeHtml(titleize(record.state))}</strong><span>${escapeHtml(target)} - ${escapeHtml(expires)}</span></div><span class="badge ${tone}">${escapeHtml(shortId(record.handoff_id))}</span></div>`;
 }
 
 function recentlySeen(device) {
@@ -463,6 +512,7 @@ function renderContinue() {
   const device = currentDevice();
   const latest = activity().find((event) => event.project_id === project.project_id);
   const checkpoint = latestSnapshot(project.project_id);
+  const handoff = latestHandoff(project.project_id);
   const targetDevices = devices().filter((device) => device.device_id !== state.bootstrap?.settings?.device_id);
   const handoffReady = methods().has("handoff.begin");
   const suggestedSession = workspace?.workspace_id ?? checkpoint?.session_id ?? project.project_id;
@@ -499,6 +549,7 @@ function renderContinue() {
             <div class="status-row"><span class="dot good"></span><div><strong>${escapeHtml(device.display_name ?? "Local device")}</strong><span>${escapeHtml(device.platform_key ?? "unknown")} ${escapeHtml(device.architecture ?? "")}</span></div><span class="badge good">This device</span></div>
             <div class="status-row"><span class="dot ${suggestedSession ? "good" : "warn"}"></span><div><strong>Suggested session</strong><span>${escapeHtml(suggestedSession ?? "No continuation session recorded")}</span></div><span class="badge">${workspace?.state ? escapeHtml(workspace.state) : "selected"}</span></div>
             <div class="status-row"><span class="dot ${workspace?.state === "active" ? "good" : "warn"}"></span><div><strong>${escapeHtml(workspace?.device_id ?? "No device")}</strong><span>${escapeHtml(workspace?.local_path ?? "No workspace path")}</span></div><span class="badge">${escapeHtml(workspace?.state ?? "unknown")}</span></div>
+            ${handoffRow(handoff)}
             <div class="status-row"><span class="dot ${checkpoint ? "good" : "warn"}"></span><div><strong>${checkpoint ? escapeHtml(shortId(checkpoint.snapshot_id)) : "No checkpoint recorded"}</strong><span>${checkpoint ? `${formatAge(checkpoint.created_at_unix_seconds)} - ${escapeHtml(checkpoint.label ?? "unlabeled")}` : "Create a checkpoint before cross-device handoff."}</span></div><span class="badge">${checkpoint ? `#${checkpoint.sequence_number}` : "empty"}</span></div>
             <div class="status-row"><span class="dot ${latest ? "good" : "warn"}"></span><div><strong>${latest ? escapeHtml(latest.summary) : "No activity recorded"}</strong><span>${latest ? formatAge(latest.created_at_unix_seconds) : "waiting for agent events"}</span></div><span class="badge">${latest ? escapeHtml(latest.outcome) : "empty"}</span></div>
           </div>

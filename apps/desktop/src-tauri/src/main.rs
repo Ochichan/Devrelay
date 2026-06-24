@@ -2,15 +2,16 @@ use devrelay_core::{
     ActivityListParams, ActivityListResult, AgentRpcClient, CheckpointCreateParams,
     CheckpointCreateResult, DevRelayHome, DevicesListResult, DiagnosticsExportParams,
     DiagnosticsExportResult, EventReplayCursor, EventStreamMessage, EventsSubscribeParams,
-    EventsSubscribeResult, IpcConnection, IpcLimits, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH,
-    METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT,
-    METHOD_EVENTS_SUBSCRIBE, METHOD_PROJECTS_LIST, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST,
-    METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
-    ProjectRegistryEntry, ProjectsListResult, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcId,
-    RpcRequest, RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult,
-    RunsListParams, RunsListResult, SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult,
-    SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot,
-    UnixIpcConnection, detect_platform_identity,
+    EventsSubscribeResult, HandoffStatus, HandoffsListParams, HandoffsListResult, IpcConnection,
+    IpcLimits, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH, METHOD_CHECKPOINT_CREATE,
+    METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFFS_LIST,
+    METHOD_PROJECTS_LIST, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
+    METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, ProjectRegistryEntry,
+    ProjectsListResult, RPC_JSONRPC_VERSION, RPC_PROTOCOL_VERSION, RpcId, RpcRequest, RpcResponse,
+    RpcVersionNegotiationParams, RpcVersionNegotiationResult, RunsListParams, RunsListResult,
+    SettingsGetResult, SettingsUpdateParams, SettingsUpdateResult, SnapshotsListParams,
+    SnapshotsListResult, StatusGetParams, StatusGetResult, StoredSnapshot, UnixIpcConnection,
+    detect_platform_identity,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -53,6 +54,7 @@ struct UiBootstrap {
     agent: AgentUiStatus,
     projects: Vec<ProjectRegistryEntry>,
     snapshots: Vec<StoredSnapshot>,
+    handoffs: Vec<HandoffStatus>,
     devices: Vec<devrelay_core::DeviceIdentity>,
     runs: Vec<devrelay_core::TaskRunRecord>,
     activity: Vec<devrelay_core::AuditEventRecord>,
@@ -189,6 +191,7 @@ fn build_ui_bootstrap() -> UiBootstrap {
     let mut health = None;
     let mut projects = Vec::new();
     let mut snapshots = Vec::new();
+    let mut handoffs = Vec::new();
     let mut devices = Vec::new();
     let mut runs = Vec::new();
     let mut activity = Vec::new();
@@ -224,6 +227,17 @@ fn build_ui_bootstrap() -> UiBootstrap {
                 Ok(result) => snapshots.extend(result.snapshots),
                 Err(err) => errors.push(format!("snapshots.list {}: {err}", project.project_id)),
             }
+        }
+        match call_agent::<_, HandoffsListResult>(
+            &socket,
+            METHOD_HANDOFFS_LIST,
+            HandoffsListParams {
+                project: None,
+                include_journal: true,
+            },
+        ) {
+            Ok(result) => handoffs = result.handoffs,
+            Err(err) => errors.push(format!("handoffs.list: {err}")),
         }
         match call_agent::<_, DevicesListResult>(&socket, METHOD_DEVICES_LIST, json!({})) {
             Ok(result) => devices = result.devices,
@@ -270,6 +284,7 @@ fn build_ui_bootstrap() -> UiBootstrap {
         },
         projects,
         snapshots,
+        handoffs,
         devices,
         runs,
         activity,

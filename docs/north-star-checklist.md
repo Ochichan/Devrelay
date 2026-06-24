@@ -1142,6 +1142,7 @@ Conventions:
 - [x] Show latest checkpoint age.
 - [x] Show Git state summary.
 - [x] Show target readiness.
+- [x] Show handoff-in-progress state.
 - [ ] Show environment warmth.
 - [ ] Add primary "Continue here" action.
 - [ ] Add "Continue elsewhere" action.
