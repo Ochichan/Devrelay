@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build:ui": "node scripts/prepare-ui.mjs && npm run check:ui",
-    "check:ui": "node scripts/check-ui-source.mjs && node scripts/check-event-bridge.mjs",
+    "check:ui": "node scripts/check-ui-source.mjs && node scripts/check-ui-state-authority.mjs && node scripts/check-event-bridge.mjs",
     "dev": "tauri dev",
     "build": "tauri build",
     "build:dmg": "tauri build --bundles app,dmg"
