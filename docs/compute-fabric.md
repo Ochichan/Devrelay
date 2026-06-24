@@ -18,5 +18,14 @@ platform constraints, resource hints, cache/output/feature/sandbox settings,
 and the selected environment profile definition.
 
 Task run metadata can be recorded in the per-project SQLite database and read
-back through the existing run list APIs. Actual immutable execution snapshot
-creation is still open and must be completed before remote task scheduling.
+back through the existing run list APIs.
+
+## Execution Snapshots
+
+A task execution snapshot stores the current Git state as a pinned snapshot and
+binds it to the normalized task definition hash. The source workspace refs are
+removed after import, while the per-project snapshot store keeps the immutable
+refs and metadata for later scheduling or audit.
+
+Applying execution snapshots to remote workers, collecting logs/artifacts, and
+cache reuse are still open.

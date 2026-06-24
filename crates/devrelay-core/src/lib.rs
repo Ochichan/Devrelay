@@ -314,8 +314,9 @@ pub use submodule::{
     inspect_submodules_with_depth, restore_clean_submodule_recorded_commit,
 };
 pub use task_model::{
-    TASK_RUN_ID_PREFIX, TaskDefinition, TaskRunInput, TaskRunState, generate_task_run_id,
-    task_command_definition_hash, task_definition, task_definitions_from_manifest,
+    TASK_RUN_ID_PREFIX, TaskDefinition, TaskExecutionSnapshot, TaskRunInput, TaskRunState,
+    create_task_execution_snapshot, generate_task_run_id, task_command_definition_hash,
+    task_definition, task_definitions_from_manifest, task_execution_snapshot_label,
 };
 pub use transport_security::{
     AuthenticatedControlPlanePeer, CONTROL_ALPN_PROTOCOL, CONTROL_PROTOCOL_VERSION,

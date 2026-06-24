@@ -1473,7 +1473,7 @@ Conventions:
 - [x] Validate resource hints.
 - [x] Validate sandbox setting.
 - [x] Compute command definition hash.
-- [ ] Create immutable execution snapshot.
+- [x] Create immutable execution snapshot.
 - [x] Store task run metadata.
 - [x] Add task model tests.
 

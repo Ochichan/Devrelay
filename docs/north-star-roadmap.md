@@ -443,12 +443,13 @@ Completed capabilities:
   commands, platform constraints, resource hints, and sandbox settings.
 - Task-specific command definition hashes include the task command, task
   constraints, resource hints, and selected environment profile definition.
+- Immutable task execution snapshots can be created as pinned snapshots tied to
+  the task definition hash.
 - Task run metadata can be recorded and listed from the per-project metadata
   database.
 
 Open work:
 
-- Immutable execution snapshots.
 - Scheduler constraints and scoring.
 - Remote runner, logs, artifacts, and cache.
 

@@ -5,8 +5,8 @@
 //! a stable hash before any scheduler or remote runner chooses a device.
 
 use crate::{
-    DevRelayError, EnvironmentKind, EnvironmentProfile, Manifest, Result, TaskCacheMode,
-    TaskConfig, TaskSandbox,
+    DevRelayError, EnvironmentKind, EnvironmentProfile, GitRepo, Manifest, Result, SnapshotStore,
+    StoredSnapshot, TaskCacheMode, TaskConfig, TaskSandbox, create_snapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -31,6 +31,13 @@ pub struct TaskDefinition {
     pub features: Vec<String>,
     pub sandbox: Option<TaskSandbox>,
     pub command_definition_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskExecutionSnapshot {
+    pub definition: TaskDefinition,
+    pub snapshot: StoredSnapshot,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -141,6 +148,34 @@ pub fn task_command_definition_hash(manifest: &Manifest, task_name: &str) -> Res
         task,
         profile,
     ))
+}
+
+pub fn create_task_execution_snapshot(
+    source: &GitRepo,
+    manifest: &Manifest,
+    store: &mut SnapshotStore,
+    task_name: &str,
+    session_id: Option<String>,
+) -> Result<TaskExecutionSnapshot> {
+    let definition = task_definition(manifest, task_name)?;
+    let mut metadata = create_snapshot(source, manifest)?;
+    metadata.session_id = session_id;
+    metadata.validate()?;
+    let label = task_execution_snapshot_label(&definition);
+    let snapshot = store.store_snapshot(source, metadata, true, Some(label.clone()))?;
+    Ok(TaskExecutionSnapshot {
+        definition,
+        snapshot,
+        label,
+    })
+}
+
+pub fn task_execution_snapshot_label(definition: &TaskDefinition) -> String {
+    let hash_prefix = definition
+        .command_definition_hash
+        .get(..12)
+        .unwrap_or(&definition.command_definition_hash);
+    format!("task:{}:{hash_prefix}", definition.task_name)
 }
 
 pub fn generate_task_run_id() -> String {
@@ -278,6 +313,10 @@ fn unix_now_nanos() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DevRelayHome;
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
 
     fn manifest(raw: &str) -> Manifest {
         Manifest::parse(raw).unwrap()
@@ -365,9 +404,96 @@ sandbox = "container"
     }
 
     #[test]
+    fn creates_pinned_task_execution_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = DevRelayHome::new(temp.path().join("home"));
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        fs::write(source_path.join("tracked.txt"), "changed\n").unwrap();
+        let manifest = task_manifest(r#"["bash", "-lc", "pytest -q"]"#);
+        let mut store = SnapshotStore::open(&home, &manifest.project_id).unwrap();
+
+        let execution = create_task_execution_snapshot(
+            &source,
+            &manifest,
+            &mut store,
+            "test",
+            Some("se_task".to_string()),
+        )
+        .unwrap();
+
+        assert!(execution.snapshot.pinned);
+        assert_eq!(execution.snapshot.session_id.as_deref(), Some("se_task"));
+        assert_eq!(
+            execution.snapshot.label.as_deref(),
+            Some(execution.label.as_str())
+        );
+        assert_eq!(
+            execution.label,
+            task_execution_snapshot_label(&execution.definition)
+        );
+        assert!(execution.label.contains("test"));
+        assert_eq!(
+            execution.definition.command_definition_hash,
+            task_command_definition_hash(&manifest, "test").unwrap()
+        );
+        assert!(
+            source
+                .run(&[
+                    "rev-parse",
+                    "--verify",
+                    &execution.snapshot.metadata.index_ref()
+                ])
+                .is_err()
+        );
+        assert!(
+            GitRepo::new(store.snapshot_repo_path())
+                .run(&[
+                    "rev-parse",
+                    "--verify",
+                    &execution.snapshot.metadata.index_ref()
+                ])
+                .is_ok()
+        );
+        assert_eq!(
+            store
+                .list_snapshots()
+                .unwrap()
+                .into_iter()
+                .map(|snapshot| snapshot.snapshot_id)
+                .collect::<Vec<_>>(),
+            vec![execution.snapshot.snapshot_id]
+        );
+    }
+
+    #[test]
     fn task_run_ids_use_stable_prefix() {
         let id = generate_task_run_id();
         assert!(id.starts_with(TASK_RUN_ID_PREFIX));
         assert_eq!(id.len(), TASK_RUN_ID_PREFIX.len() + 24);
+    }
+
+    fn init_repo(path: &Path) -> GitRepo {
+        fs::create_dir_all(path).unwrap();
+        run_git(path, &["init", "-b", "main"]);
+        run_git(path, &["config", "user.name", "DevRelay Test"]);
+        run_git(
+            path,
+            &["config", "user.email", "devrelay-test@example.local"],
+        );
+        fs::write(path.join("tracked.txt"), "base\n").unwrap();
+        run_git(path, &["add", "tracked.txt"]);
+        run_git(path, &["commit", "-m", "base"]);
+        GitRepo::new(path)
+    }
+
+    fn run_git(path: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git command failed: {args:?}");
     }
 }
