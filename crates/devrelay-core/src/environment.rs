@@ -1082,6 +1082,7 @@ portable_paths = "strict"
                     status_code: Some(1),
                     stdout: "building\n".to_string(),
                     stderr: "tests failed\n".to_string(),
+                    timed_out: false,
                 },
             );
 
@@ -1296,6 +1297,7 @@ portable_paths = "strict"
                     status_code: Some(1),
                     stdout: "pulling image\n".to_string(),
                     stderr: "pull denied\n".to_string(),
+                    timed_out: false,
                 },
             );
 

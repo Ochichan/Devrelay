@@ -1,0 +1,265 @@
+use devrelay_core::{
+    AuditOutcome, CanonicalPublishRequest, DevRelayError, GitRepo, HandoffJournalPhase,
+    HandoffState, LeaseRecord, LeaseState, Manifest, MetadataDb, SnapshotMetadata, apply_snapshot,
+    classification_reason, create_snapshot,
+};
+use std::ffi::OsString;
+use std::fs;
+use std::path::Path;
+
+fn manifest() -> Manifest {
+    Manifest::parse(
+        r#"
+schema = 1
+project_id = "12345678"
+name = "safety"
+
+[workspace]
+untracked = "safe"
+portable_paths = "strict"
+"#,
+    )
+    .unwrap()
+}
+
+fn init_repo(path: &Path) -> GitRepo {
+    fs::create_dir_all(path).unwrap();
+    let repo = GitRepo::new(path);
+    repo.run(&["init", "-b", "main"]).unwrap();
+    repo.run(&["config", "user.name", "DevRelay Test"]).unwrap();
+    repo.run(&["config", "user.email", "devrelay-test@example.local"])
+        .unwrap();
+    repo
+}
+
+fn commit_base(repo: &GitRepo, path: &Path) {
+    fs::write(path.join("README.md"), "base\n").unwrap();
+    repo.run(&["add", "README.md"]).unwrap();
+    repo.run(&["commit", "-m", "base"]).unwrap();
+}
+
+fn clone_repo(source: &GitRepo, source_path: &Path, target_path: &Path) -> GitRepo {
+    source
+        .run_with_env(
+            [
+                OsString::from("clone"),
+                source_path.as_os_str().to_os_string(),
+                target_path.as_os_str().to_os_string(),
+            ],
+            &[],
+        )
+        .unwrap();
+    GitRepo::new(target_path)
+}
+
+fn anchor_db() -> (tempfile::TempDir, MetadataDb, String, LeaseRecord) {
+    let temp = tempfile::tempdir().unwrap();
+    let db = MetadataDb::open(temp.path().join("metadata.sqlite")).unwrap();
+    let session = db
+        .ensure_default_session("project123", "Safety Project", None)
+        .unwrap();
+    let lease = LeaseRecord {
+        lease_id: "lease-1".to_string(),
+        project_id: "project123".to_string(),
+        session_id: session.session_id.clone(),
+        state: LeaseState::Active,
+        epoch: 2,
+        holder_device_id: Some("device-a".to_string()),
+        latest_snapshot_id: None,
+        handoff_id: None,
+    };
+    db.upsert_lease(&lease).unwrap();
+    (temp, db, session.session_id, lease)
+}
+
+fn publish_metadata(snapshot_id: &str, session_id: &str) -> SnapshotMetadata {
+    let mut metadata: SnapshotMetadata =
+        serde_json::from_str(include_str!("fixtures/snapshot_metadata_v1.json")).unwrap();
+    metadata.project_id = "project123".to_string();
+    metadata.project_name = "Safety Project".to_string();
+    metadata.session_id = Some(session_id.to_string());
+    metadata.snapshot_id = snapshot_id.to_string();
+    metadata.parent_snapshot_id = None;
+    metadata
+}
+
+mod no_silent_overwrite {
+    //! Invariant: `safety/no_silent_overwrite`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    #[test]
+    fn dirty_target_apply_is_rejected_and_target_bytes_are_preserved() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let target_path = temp.path().join("target");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+
+        fs::write(source_path.join("README.md"), "source change\n").unwrap();
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+        let target = clone_repo(&source, &source_path, &target_path);
+        fs::write(target_path.join("README.md"), "target-only change\n").unwrap();
+        fs::write(target_path.join("local-notes.md"), "target local\n").unwrap();
+
+        let err = apply_snapshot(&target, &source, &snapshot).unwrap_err();
+
+        assert!(matches!(err, DevRelayError::TargetDirty(_)));
+        assert_eq!(
+            fs::read_to_string(target_path.join("README.md")).unwrap(),
+            "target-only change\n"
+        );
+        assert_eq!(
+            fs::read_to_string(target_path.join("local-notes.md")).unwrap(),
+            "target local\n"
+        );
+    }
+}
+
+mod no_unverified_handoff {
+    //! Invariant: `safety/no_unverified_handoff`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    #[test]
+    fn lease_cannot_transfer_before_target_verification_and_source_ready() {
+        let (_temp, mut db, _session_id, lease) = anchor_db();
+        let handoff = db
+            .begin_handoff(&lease.lease_id, "device-a", "device-b", "gen-1", 600)
+            .unwrap();
+
+        let err = db
+            .commit_handoff(
+                &handoff.handoff_id,
+                "gen-1",
+                handoff.expires_at_unix_seconds.saturating_sub(1),
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("handoff is not source-ready"));
+        let unchanged = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        assert_eq!(unchanged.holder_device_id.as_deref(), Some("device-a"));
+        assert_eq!(unchanged.epoch, 2);
+        assert_eq!(unchanged.state, LeaseState::HandoffPending);
+        assert_eq!(
+            unchanged.handoff_id.as_deref(),
+            Some(handoff.handoff_id.as_str())
+        );
+        assert_eq!(
+            db.get_handoff(&handoff.handoff_id).unwrap().unwrap().state,
+            HandoffState::TargetPrepare
+        );
+        assert!(
+            !db.list_handoff_journal(&handoff.handoff_id)
+                .unwrap()
+                .iter()
+                .any(|entry| entry.phase == HandoffJournalPhase::LeaseCommitted)
+        );
+    }
+}
+
+mod stale_publish_is_fork {
+    //! Invariant: `safety/stale_publish_is_fork`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    #[test]
+    fn stale_publish_is_stored_without_advancing_canonical_latest() {
+        let (_temp, mut db, session_id, lease) = anchor_db();
+        let canonical = publish_metadata("s1_000000000000000000000201", &session_id);
+        db.publish_snapshot_canonical(CanonicalPublishRequest {
+            lease_id: &lease.lease_id,
+            session_id: &session_id,
+            expected_epoch: 2,
+            holder_device_id: "device-a",
+            expected_latest_snapshot_id: None,
+            metadata: &canonical,
+            pinned: false,
+            label: Some("canonical"),
+        })
+        .unwrap();
+
+        let mut advanced = db.get_lease(&lease.lease_id).unwrap().unwrap();
+        advanced.epoch = 3;
+        db.upsert_lease(&advanced).unwrap();
+
+        let stale = publish_metadata("s1_000000000000000000000202", &session_id);
+        let err = db
+            .publish_snapshot_canonical(CanonicalPublishRequest {
+                lease_id: &lease.lease_id,
+                session_id: &session_id,
+                expected_epoch: 2,
+                holder_device_id: "device-a",
+                expected_latest_snapshot_id: Some(&canonical.snapshot_id),
+                metadata: &stale,
+                pinned: true,
+                label: Some("stale"),
+            })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("stale publish"));
+        let stored = db.list_stored_snapshots(Some("project123")).unwrap();
+        assert_eq!(
+            stored
+                .iter()
+                .map(|snapshot| snapshot.snapshot_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![canonical.snapshot_id.as_str(), stale.snapshot_id.as_str()]
+        );
+        assert_eq!(
+            db.get_lease(&lease.lease_id)
+                .unwrap()
+                .unwrap()
+                .latest_snapshot_id
+                .as_deref(),
+            Some(canonical.snapshot_id.as_str())
+        );
+        let blocked = db.list_audit_events(Some("project123"), 1).unwrap();
+        assert_eq!(blocked[0].outcome, AuditOutcome::Blocked);
+        assert_eq!(
+            blocked[0].snapshot_id.as_deref(),
+            Some(stale.snapshot_id.as_str())
+        );
+    }
+}
+
+mod no_plaintext_secret_snapshot {
+    //! Invariant: `safety/no_plaintext_secret_snapshot`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    #[test]
+    fn plaintext_secret_files_are_excluded_from_snapshot_work_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source");
+        let source = init_repo(&source_path);
+        commit_base(&source, &source_path);
+        fs::write(source_path.join("notes.md"), "carry me\n").unwrap();
+        fs::write(source_path.join(".env"), "DATABASE_URL=secret\n").unwrap();
+        fs::write(
+            source_path.join("private.pem"),
+            "-----BEGIN PRIVATE KEY-----\nsecret\n",
+        )
+        .unwrap();
+
+        let snapshot = create_snapshot(&source, &manifest()).unwrap();
+        let work_tree_paths = source
+            .run(&["ls-tree", "-r", "--name-only", &snapshot.work_tree_oid])
+            .unwrap();
+
+        assert!(
+            snapshot
+                .included_untracked
+                .contains(&"notes.md".to_string())
+        );
+        assert!(!snapshot.included_untracked.contains(&".env".to_string()));
+        assert!(snapshot.excluded.iter().any(|item| {
+            item.path == ".env" && item.reason == classification_reason::SECRET_FILENAME
+        }));
+        assert!(snapshot.excluded.iter().any(|item| {
+            item.path == "private.pem" && item.reason == classification_reason::PRIVATE_KEY_FILENAME
+        }));
+        assert!(!work_tree_paths.lines().any(|path| path == ".env"));
+        assert!(!work_tree_paths.lines().any(|path| path == "private.pem"));
+    }
+}

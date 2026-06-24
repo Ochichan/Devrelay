@@ -1829,6 +1829,36 @@ FROM leases
         }
     }
 
+    pub fn list_stored_snapshots(&self, project_id: Option<&str>) -> Result<Vec<StoredSnapshot>> {
+        let sql = r#"
+SELECT snapshot_id,
+       project_id,
+       session_id,
+       parent_snapshot_id,
+       sequence_number,
+       pinned,
+       label,
+       metadata_json,
+       created_at_unix_seconds
+FROM snapshots
+"#;
+        if let Some(project_id) = project_id {
+            let mut statement = self.conn.prepare(&format!(
+                "{sql} WHERE project_id = ?1 ORDER BY sequence_number ASC"
+            ))?;
+            let rows = statement.query_map([project_id], stored_snapshot_record_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into)
+        } else {
+            let mut statement = self.conn.prepare(&format!(
+                "{sql} ORDER BY project_id ASC, sequence_number ASC"
+            ))?;
+            let rows = statement.query_map([], stored_snapshot_record_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into)
+        }
+    }
+
     pub fn publish_snapshot_canonical(
         &mut self,
         request: CanonicalPublishRequest<'_>,
@@ -3027,6 +3057,24 @@ fn stored_session_from_row(row: &Row<'_>) -> rusqlite::Result<StoredSession> {
         archived_at_unix_seconds,
         created_at_unix_seconds: row.get::<_, i64>(7)?.max(0) as u64,
         updated_at_unix_seconds: row.get::<_, i64>(8)?.max(0) as u64,
+    })
+}
+
+fn stored_snapshot_record_from_row(row: &Row<'_>) -> rusqlite::Result<StoredSnapshot> {
+    let metadata_json: String = row.get(7)?;
+    let metadata: SnapshotMetadata = serde_json::from_str(&metadata_json).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err))
+    })?;
+    Ok(StoredSnapshot {
+        snapshot_id: row.get(0)?,
+        project_id: row.get(1)?,
+        session_id: row.get(2)?,
+        parent_snapshot_id: row.get(3)?,
+        sequence_number: row.get(4)?,
+        pinned: row.get(5)?,
+        label: row.get(6)?,
+        metadata,
+        created_at_unix_seconds: row.get::<_, i64>(8)?.max(0) as u64,
     })
 }
 

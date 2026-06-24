@@ -2091,7 +2091,7 @@ Conventions:
 - [ ] Decide macOS/Linux-first dogfood versus Windows IPC first.
 - [ ] Finish Windows named pipe transport and pipe ACL if 3-OS UI is required.
 - [ ] Implement resource benchmark harness and record idle CPU/RSS plus checkpoint burst results.
-- [ ] Add first safety suites: `no_silent_overwrite`, `no_unverified_handoff`, `stale_publish_is_fork`, and `no_plaintext_secret_snapshot`.
+- [x] Add first safety suites: `no_silent_overwrite`, `no_unverified_handoff`, `stale_publish_is_fork`, and `no_plaintext_secret_snapshot`.
 - [ ] Start Tauri shell with agent event subscription.
 - [ ] Implement tray and Continue screen for macOS/Linux handoff.
 - [ ] Dogfood clean-target handoff on real macOS/Linux devices.
@@ -2100,17 +2100,17 @@ Conventions:
 
 ## Non-Negotiable Safety Checklist
 
-- [ ] No implementation path can silently overwrite target work. Evidence suite: `safety/no_silent_overwrite`.
+- [x] No implementation path can silently overwrite target work. Evidence suite: `safety/no_silent_overwrite`.
 - [ ] No background path performs an automatic merge. Evidence suite: `safety/no_background_auto_merge`.
-- [ ] No plaintext secret is included in a snapshot by default. Evidence suite: `safety/no_plaintext_secret_snapshot`.
+- [x] No plaintext secret is included in a snapshot by default. Evidence suite: `safety/no_plaintext_secret_snapshot`.
 - [ ] No remote command runs without trust hash approval. Evidence suite: `safety/no_untrusted_remote_execution`.
 - [ ] No UI computes canonical state independently from the agent. Evidence suite: `safety/ui_has_no_state_authority`.
 - [ ] No watcher event is treated as the source of truth. Evidence suite: `safety/watcher_events_are_hints`.
-- [ ] No cross-device handoff succeeds before verification passes. Evidence suite: `safety/no_unverified_handoff`.
+- [x] No cross-device handoff succeeds before verification passes. Evidence suite: `safety/no_unverified_handoff`.
 - [ ] No compute task writes directly into the active session. Evidence suite: `safety/no_active_workspace_remote_task`.
 - [ ] Every destructive cleanup has explicit confirmation or prior snapshot. Evidence suite: `safety/destructive_cleanup_has_snapshot`.
 - [ ] Every recovery operation defaults to a new session or workspace. Evidence suite: `safety/recovery_defaults_new_workspace`.
 - [ ] Every published snapshot is immutable. Evidence suite: `safety/published_snapshots_immutable`.
 - [ ] Every lease epoch transition is monotonic. Evidence suite: `safety/lease_epoch_monotonic`.
-- [ ] Every stale publish preserves data as non-canonical work. Evidence suite: `safety/stale_publish_is_fork`.
+- [x] Every stale publish preserves data as non-canonical work. Evidence suite: `safety/stale_publish_is_fork`.
 - [ ] Every diagnostic export is redacted by default. Evidence suite: `safety/diagnostics_redacted_by_default`.
