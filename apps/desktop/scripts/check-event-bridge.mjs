@@ -344,6 +344,18 @@ assert.match(app.innerHTML, /2 commits not pushed/, "handoff dialog did not rend
 assert.match(app.innerHTML, /Environment readiness/, "handoff dialog did not render environment readiness");
 assert.match(app.innerHTML, /Editor context readiness/, "handoff dialog did not render editor context readiness");
 assert.match(app.innerHTML, /Target safety/, "handoff dialog did not render target safety");
+assert.match(app.innerHTML, /Separate target work/, "handoff dialog did not render target preservation copy");
+assert.match(app.innerHTML, /No overwrite/, "handoff dialog did not render no-overwrite target copy");
+assert.match(
+  app.innerHTML,
+  /preserve it separately, open incoming work in a new folder, or cancel safely/,
+  "handoff dialog did not render non-jargon target options"
+);
+assert.doesNotMatch(
+  app.innerHTML,
+  /snapshot-and-fork|new-workspace|lease|epoch|OID|CAS|canonical latest/i,
+  "handoff dialog exposed internal dirty-target terminology"
+);
 assert.match(app.innerHTML, /Saving state/, "handoff dialog did not render saving state progress");
 assert.match(app.innerHTML, /Preparing device/, "handoff dialog did not render preparing device progress");
 assert.match(app.innerHTML, /Moving control/, "handoff dialog did not render moving control progress");

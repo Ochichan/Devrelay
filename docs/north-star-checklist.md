@@ -1251,7 +1251,7 @@ Conventions:
 
 - [x] Same-LAN handoff can start from tray in two clicks.
 - [x] Critical state is not color-only.
-- [ ] Dirty target flow avoids Git jargon.
+- [x] Dirty target flow avoids Git jargon.
 - [x] UI state comes from agent events.
 - [x] Keyboard-only core flow works.
 - [x] Screen reader labels cover primary actions.

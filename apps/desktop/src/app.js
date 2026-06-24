@@ -477,8 +477,8 @@ function targetReadiness(device, context) {
     return {
       ready: false,
       tone: "warn",
-      label: "RPC missing",
-      detail: "This agent build does not expose handoff.begin yet.",
+      label: "Update needed",
+      detail: "This agent build cannot start device handoff yet.",
     };
   }
   if (openHandoff) {
@@ -486,23 +486,23 @@ function targetReadiness(device, context) {
       ready: false,
       tone: "warn",
       label: "Preparing",
-      detail: "A handoff is already waiting for target apply.",
+      detail: "A handoff is already waiting for the target device.",
     };
   }
   if (!lease || lease.state !== "active") {
     return {
       ready: false,
       tone: "warn",
-      label: "No writer",
-      detail: "This device does not hold an active writer lease.",
+      label: "Open here",
+      detail: "Open this project on this device before handoff.",
     };
   }
   if (lease.holder_device_id !== state.bootstrap?.settings?.device_id) {
     return {
       ready: false,
       tone: "warn",
-      label: "Not writer",
-      detail: "Only the active writer can prepare a handoff.",
+      label: "Start elsewhere",
+      detail: "Start handoff from the device that is currently editing this project.",
     };
   }
   return {
@@ -1045,6 +1045,7 @@ function renderHandoffDialog() {
               <div class="status-row"><span class="dot ${targetState.tone}"></span><div><strong>Environment readiness</strong><span>${escapeHtml(targetState.detail)}</span></div><span class="badge ${targetState.tone}">${escapeHtml(targetState.label)}</span></div>
               <div class="status-row"><span class="dot ${editorReady ? "good" : "warn"}"></span><div><strong>Editor context readiness</strong><span>${editorReady ? escapeHtml(editorCommand) : "Set an editor command before opening restored workspaces."}</span></div><span class="badge ${editorReady ? "good" : "warn"}">${editorReady ? "Ready" : "Missing"}</span></div>
               <div class="status-row"><span class="dot good"></span><div><strong>Target safety</strong><span>Before moving control, the target verifies its workspace. If local target changes are present, DevRelay stops and leaves them untouched.</span></div><span class="badge good">Protected</span></div>
+              <div class="status-row"><span class="dot good"></span><div><strong>Separate target work</strong><span>If the target has separate local work, DevRelay stops before moving control. You can preserve it separately, open incoming work in a new folder, or cancel safely.</span></div><span class="badge good">No overwrite</span></div>
             </div>
           </div>
           ${renderHandoffProgress(context)}
