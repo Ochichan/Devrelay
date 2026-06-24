@@ -292,9 +292,10 @@ pub use scheduler_constraints::{
 };
 pub use scheduler_score::{
     SchedulerScore, SchedulerScoreComponent, SchedulerScoreComponentKind,
-    SchedulerScoreMeasurements, SchedulerScoreWeights, SchedulerTaskClass,
-    SchedulerThermalPressure, infer_scheduler_task_class, scheduler_score_components,
-    score_scheduler_candidate, score_scheduler_candidate_with_class,
+    SchedulerScoreMeasurements, SchedulerScoreWeights, SchedulerTargetSelection,
+    SchedulerTaskClass, SchedulerThermalPressure, infer_scheduler_task_class,
+    scheduler_score_components, score_scheduler_candidate, score_scheduler_candidate_with_class,
+    select_scheduler_target,
 };
 pub use secret_provider::{
     RedactedSecretMaterializationReport, SecretFileMaterialization, SecretMaterializationReport,

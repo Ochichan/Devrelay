@@ -448,10 +448,10 @@ Completed capabilities:
 - Scheduler constraint filtering can collect static/dynamic device resources and
   reject incompatible platforms, missing features, insufficient resources, or
   locally disallowed devices.
-- Explainable scheduler scoring normalizes cache warmth, CPU, memory, power,
-  data locality, network quality, historical speed, user affinity, transfer
-  cost, foreground load, and thermal placeholder signals with task-class
-  weights.
+- Explainable scheduler target selection normalizes cache warmth, CPU, memory,
+  power, data locality, network quality, historical speed, user affinity,
+  transfer cost, foreground load, and thermal placeholder signals with
+  task-class weights.
 - Isolated runner workspaces apply immutable task execution snapshots from the
   snapshot store, gate the task environment profile, materialize required
   sidecars/secrets only when permitted, stay non-canonical, and clean up through

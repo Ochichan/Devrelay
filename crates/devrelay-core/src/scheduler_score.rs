@@ -9,6 +9,7 @@ use crate::{
     SchedulerNetworkRouteQuality, TaskCacheMode, TaskDefinition, evaluate_scheduler_constraints,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 const DEFAULT_UNKNOWN_SCORE: u16 = 600;
 const TRANSFER_COST_FULL_PENALTY_MIB: u64 = 8192;
@@ -169,6 +170,16 @@ pub struct SchedulerScore {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SchedulerTargetSelection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_device_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_score_per_mille: Option<u16>,
+    pub scores: Vec<SchedulerScore>,
+    pub explanation: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchedulerScoreComponent {
     pub kind: SchedulerScoreComponentKind,
     pub score_per_mille: u16,
@@ -233,6 +244,46 @@ pub fn score_scheduler_candidate(
         measurements,
         infer_scheduler_task_class(definition),
     )
+}
+
+pub fn select_scheduler_target(
+    definition: &TaskDefinition,
+    devices: &[SchedulerDeviceSnapshot],
+    measurements_by_device: &BTreeMap<String, SchedulerScoreMeasurements>,
+) -> SchedulerTargetSelection {
+    let scores = devices
+        .iter()
+        .map(|device| {
+            let measurements = measurements_by_device
+                .get(&device.device_id)
+                .cloned()
+                .unwrap_or_default();
+            score_scheduler_candidate(definition, device, &measurements)
+        })
+        .collect::<Vec<_>>();
+
+    let mut eligible = scores
+        .iter()
+        .filter(|score| score.eligible)
+        .collect::<Vec<_>>();
+    eligible.sort_by(|left, right| {
+        right
+            .total_score_per_mille
+            .cmp(&left.total_score_per_mille)
+            .then_with(|| left.device_id.cmp(&right.device_id))
+    });
+
+    let selected = eligible.first().copied();
+    let explanation = selected
+        .map(selection_explanation)
+        .unwrap_or_else(|| no_selection_explanation(&scores));
+
+    SchedulerTargetSelection {
+        selected_device_id: selected.map(|score| score.device_id.clone()),
+        selected_score_per_mille: selected.map(|score| score.total_score_per_mille),
+        scores,
+        explanation,
+    }
 }
 
 pub fn score_scheduler_candidate_with_class(
@@ -352,6 +403,30 @@ pub fn scheduler_score_components(
             "thermal pressure placeholder",
         ),
     ]
+}
+
+fn selection_explanation(score: &SchedulerScore) -> Vec<String> {
+    let mut explanation = vec![format!(
+        "selected {} with score {}/1000",
+        score.device_id, score.total_score_per_mille
+    )];
+    explanation.extend(score.components.iter().take(3).map(|component| {
+        format!(
+            "{:?}: {} ({}/1000, weight {})",
+            component.kind, component.explanation, component.score_per_mille, component.weight
+        )
+    }));
+    explanation
+}
+
+fn no_selection_explanation(scores: &[SchedulerScore]) -> Vec<String> {
+    if scores.is_empty() {
+        return vec!["no scheduler candidates were available".to_string()];
+    }
+    let rejected = scores.iter().filter(|score| !score.eligible).count();
+    vec![format!(
+        "no eligible scheduler target; {rejected} candidate(s) rejected by constraints"
+    )]
 }
 
 fn component(
@@ -543,6 +618,82 @@ mod tests {
         assert!(fast_score.total_score_per_mille > slow_score.total_score_per_mille);
         assert!(fast_score.total_score_per_mille > 800);
         assert!(slow_score.total_score_per_mille < 400);
+    }
+
+    #[test]
+    fn selects_highest_eligible_candidate_with_explanation() {
+        let definition = task_definition("build", false);
+        let fast = scheduler_device("fast");
+        let mut slow = scheduler_device("slow");
+        slow.dynamic.cpu_load_1m_milli = Some(7800);
+        slow.dynamic.memory_free_mib = Some(2048);
+        slow.dynamic.power_source = ResourcePowerSource::Battery;
+        slow.dynamic.foreground_load = ForegroundLoad::Busy;
+
+        let selection = select_scheduler_target(
+            &definition,
+            &[slow.clone(), fast.clone()],
+            &BTreeMap::from([
+                (
+                    "fast".to_string(),
+                    SchedulerScoreMeasurements {
+                        cache_warmth_per_mille: Some(900),
+                        data_locality_per_mille: Some(900),
+                        network_route_quality: Some(SchedulerNetworkRouteQuality::Good),
+                        historical_speed_per_mille: Some(850),
+                        user_affinity_per_mille: Some(500),
+                        transfer_cost_mib: Some(128),
+                        thermal_pressure: SchedulerThermalPressure::Nominal,
+                    },
+                ),
+                (
+                    "slow".to_string(),
+                    SchedulerScoreMeasurements {
+                        cache_warmth_per_mille: Some(200),
+                        data_locality_per_mille: Some(250),
+                        network_route_quality: Some(SchedulerNetworkRouteQuality::Poor),
+                        historical_speed_per_mille: Some(300),
+                        user_affinity_per_mille: Some(500),
+                        transfer_cost_mib: Some(8192),
+                        thermal_pressure: SchedulerThermalPressure::Serious,
+                    },
+                ),
+            ]),
+        );
+
+        assert_eq!(selection.selected_device_id.as_deref(), Some("fast"));
+        assert_eq!(selection.scores.len(), 2);
+        assert!(
+            selection
+                .selected_score_per_mille
+                .is_some_and(|score| score > 800)
+        );
+        assert!(selection.explanation[0].contains("selected fast"));
+        assert!(
+            selection
+                .explanation
+                .iter()
+                .any(|line| line.contains("cache warmth"))
+        );
+    }
+
+    #[test]
+    fn explains_when_no_scheduler_target_is_eligible() {
+        let mut definition = task_definition("test", false);
+        definition.platforms = vec!["linux-*".to_string()];
+        let device = scheduler_device("darwin");
+
+        let selection = select_scheduler_target(&definition, &[device], &BTreeMap::new());
+
+        assert_eq!(selection.selected_device_id, None);
+        assert_eq!(selection.selected_score_per_mille, None);
+        assert_eq!(selection.scores.len(), 1);
+        assert!(
+            selection
+                .explanation
+                .iter()
+                .any(|line| line.contains("no eligible scheduler target"))
+        );
     }
 
     #[test]

@@ -1601,11 +1601,11 @@ Conventions:
 
 ### M10 Exit Gate
 
-- [ ] Remote task cannot mutate canonical active session.
-- [ ] Scheduler explains chosen target.
-- [ ] Cancellation kills process tree.
-- [ ] Artifact capture cannot escape declared outputs.
-- [ ] Cache key excludes secret values.
+- [x] Remote task cannot mutate canonical active session.
+- [x] Scheduler explains chosen target.
+- [x] Cancellation kills process tree.
+- [x] Artifact capture cannot escape declared outputs.
+- [x] Cache key excludes secret values.
 
 ## M11. Cross-Platform Hardening
 
@@ -2114,7 +2114,7 @@ Conventions:
 - [x] No UI computes canonical state independently from the agent. Evidence suite: `safety/ui_has_no_state_authority`.
 - [x] No watcher event is treated as the source of truth. Evidence suite: `safety/watcher_events_are_hints`.
 - [x] No cross-device handoff succeeds before verification passes. Evidence suite: `safety/no_unverified_handoff`.
-- [ ] No compute task writes directly into the active session. Evidence suite: `safety/no_active_workspace_remote_task`.
+- [x] No compute task writes directly into the active session. Evidence suite: `safety/no_active_workspace_remote_task`.
 - [ ] Every destructive cleanup has explicit confirmation or prior snapshot. Evidence suite: `safety/destructive_cleanup_has_snapshot`.
 - [x] Every recovery operation defaults to a new session or workspace. Evidence suite: `safety/recovery_defaults_new_workspace`.
 - [x] Every published snapshot is immutable. Evidence suite: `safety/published_snapshots_immutable`.

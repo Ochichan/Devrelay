@@ -591,6 +591,32 @@ working_directory = "subdir"
         assert_eq!(result.exit_code, None);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn timeout_kills_child_process_group() {
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("survived");
+        let command = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "(sleep 2; printf survived > \"$1\") & wait".to_string(),
+            "_".to_string(),
+            marker.to_string_lossy().to_string(),
+        ];
+        let mut runner = SystemTaskCommandRunner;
+        let mut sink = NoopTaskExecutionLogSink;
+
+        let output = runner
+            .run(temp.path(), &command, &BTreeMap::new(), Some(1), &mut sink)
+            .unwrap();
+        thread::sleep(Duration::from_millis(2300));
+
+        assert!(output.timed_out);
+        assert!(output.canceled);
+        assert_eq!(output.exit_code, None);
+        assert!(!marker.exists());
+    }
+
     #[test]
     fn sandbox_container_and_vm_backends_are_explicit_placeholders() {
         for (sandbox, backend) in [

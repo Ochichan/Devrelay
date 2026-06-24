@@ -1,9 +1,12 @@
 use devrelay_core::{
     AuditOutcome, BackgroundCheckpointManager, BackgroundCheckpointOutcome, BackgroundWorkspace,
-    CanonicalPublishRequest, DebounceFlushReason, DebouncedCheckpoint, DevRelayError, DevRelayHome,
-    GitRepo, HandoffJournalPhase, HandoffState, LeaseRecord, LeaseState, Manifest, MetadataDb,
-    ProtectionStatus, SnapshotMetadata, SnapshotStore, apply_snapshot, classification_reason,
-    create_snapshot,
+    CanonicalPublishRequest, CodeChangingTaskTestCommand, DebounceFlushReason, DebouncedCheckpoint,
+    DevRelayError, DevRelayHome, EnvironmentKind, GitRepo, HandoffJournalPhase, HandoffState,
+    LeaseRecord, LeaseState, Manifest, MetadataDb, ProtectionStatus, SESSION_ID_PREFIX,
+    SnapshotMetadata, SnapshotStore, TaskRunnerEnvironmentState, TaskRunnerSecretState,
+    TaskRunnerSidecarState, TaskRunnerWorkspace, TaskRunnerWorkspaceRetentionPolicy,
+    VerificationDetails, apply_snapshot, classification_reason, create_snapshot,
+    plan_code_changing_task,
 };
 use std::ffi::OsString;
 use std::fs;
@@ -262,6 +265,92 @@ mod no_plaintext_secret_snapshot {
         }));
         assert!(!work_tree_paths.lines().any(|path| path == ".env"));
         assert!(!work_tree_paths.lines().any(|path| path == "private.pem"));
+    }
+}
+
+mod no_active_workspace_remote_task {
+    //! Invariant: `safety/no_active_workspace_remote_task`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    #[test]
+    fn code_changing_task_requires_noncanonical_runner_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let canonical_path = temp.path().join("canonical");
+        let runner_path = temp.path().join("runner");
+        let canonical_repo = init_repo(&canonical_path);
+        commit_base(&canonical_repo, &canonical_path);
+        fs::create_dir_all(&runner_path).unwrap();
+        fs::write(runner_path.join("README.md"), "runner-only change\n").unwrap();
+        let canonical_before = fs::read_to_string(canonical_path.join("README.md")).unwrap();
+
+        let canonical_workspace = task_workspace(&canonical_path, true);
+        let err = plan_code_changing_task(&canonical_workspace, None, Vec::new()).unwrap_err();
+
+        assert!(err.to_string().contains("canonical session"));
+        assert_eq!(
+            fs::read_to_string(canonical_path.join("README.md")).unwrap(),
+            canonical_before
+        );
+
+        let runner_workspace = task_workspace(&runner_path, false);
+        let plan = plan_code_changing_task(
+            &runner_workspace,
+            Some("se_parent".to_string()),
+            vec![CodeChangingTaskTestCommand {
+                name: "unit".to_string(),
+                command: vec!["cargo".to_string(), "test".to_string()],
+                timeout_seconds: Some(60),
+            }],
+        )
+        .unwrap();
+
+        assert!(plan.code_changing);
+        assert!(plan.task_session_id.starts_with(SESSION_ID_PREFIX));
+        assert_eq!(plan.parent_session_id.as_deref(), Some("se_parent"));
+        assert_eq!(plan.isolated_workspace, runner_path);
+        assert_ne!(plan.isolated_workspace, canonical_path);
+        assert!(!plan.auto_merge);
+        assert!(
+            plan.explanation
+                .iter()
+                .any(|line| line.contains("non-canonical"))
+        );
+        assert_eq!(
+            fs::read_to_string(canonical_path.join("README.md")).unwrap(),
+            canonical_before
+        );
+    }
+
+    fn task_workspace(path: &Path, canonical_session: bool) -> TaskRunnerWorkspace {
+        TaskRunnerWorkspace {
+            task_run_id: "tr_safety".to_string(),
+            project_id: "12345678".to_string(),
+            task_name: "agent-edit".to_string(),
+            path: path.to_path_buf(),
+            snapshot_id: "s1_0123456789abcdef01234567".to_string(),
+            canonical_session,
+            environment: TaskRunnerEnvironmentState {
+                profile_name: "dev".to_string(),
+                kind: EnvironmentKind::Native,
+                command_scope: "environment.profile.dev".to_string(),
+                hydrated: true,
+                explanation: Vec::new(),
+            },
+            sidecars: TaskRunnerSidecarState::NotRequired,
+            secrets: TaskRunnerSecretState::SkippedNotPermitted {
+                required: Vec::new(),
+            },
+            verification: VerificationDetails {
+                head_oid: "head".to_string(),
+                index_tree_oid: "index".to_string(),
+                work_tree_oid: "work".to_string(),
+                state_hash: "state".to_string(),
+                included_untracked: Vec::new(),
+                excluded_paths: Vec::new(),
+            },
+            retention_policy: TaskRunnerWorkspaceRetentionPolicy::delete_on_cleanup(),
+        }
     }
 }
 
