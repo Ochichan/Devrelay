@@ -1,14 +1,16 @@
 use devrelay_core::{
     AuditOutcome, BackgroundCheckpointManager, BackgroundCheckpointOutcome, BackgroundWorkspace,
     CanonicalPublishRequest, CodeChangingTaskTestCommand, CommandTrustDecision, CommandTrustStatus,
-    DebounceFlushReason, DebouncedCheckpoint, DevRelayError, DevRelayHome, EnvironmentKind,
-    EnvironmentSelectionContext, GitRepo, HandoffJournalPhase, HandoffState, LeaseRecord,
-    LeaseState, Manifest, MetadataDb, ProtectionStatus, SESSION_ID_PREFIX, SnapshotMetadata,
-    SnapshotStore, TaskRunnerEnvironmentState, TaskRunnerSecretState, TaskRunnerSidecarState,
-    TaskRunnerWorkspace, TaskRunnerWorkspaceRetentionPolicy, VerificationDetails, apply_snapshot,
-    classification_reason, create_snapshot, environment_profile_command_scope,
-    plan_code_changing_task, select_environment_profile,
+    DebounceFlushReason, DebouncedCheckpoint, DevRelayError, DevRelayHome, DiagnosticsExportParams,
+    EnvironmentKind, EnvironmentSelectionContext, GitRepo, HandoffJournalPhase, HandoffState,
+    LeaseRecord, LeaseState, LocalConfig, LogRedactor, Manifest, MetadataDb, ProjectRegistryEntry,
+    ProtectionStatus, SESSION_ID_PREFIX, SnapshotMetadata, SnapshotStore,
+    TaskRunnerEnvironmentState, TaskRunnerSecretState, TaskRunnerSidecarState, TaskRunnerWorkspace,
+    TaskRunnerWorkspaceRetentionPolicy, VerificationDetails, apply_snapshot, classification_reason,
+    create_snapshot, environment_profile_command_scope, plan_code_changing_task,
+    select_environment_profile,
 };
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -483,6 +485,58 @@ command = ["sh", "-lc", "./bootstrap.sh"]
 
         assert_eq!(selected.profile_name.as_deref(), Some("remote"));
         assert_eq!(selected.command_scope.as_deref(), Some(scope.as_str()));
+    }
+}
+
+mod diagnostics_redacted_by_default {
+    //! Invariant: `safety/diagnostics_redacted_by_default`; see `docs/data-loss-safety.md`.
+
+    use super::*;
+
+    #[test]
+    fn diagnostics_defaults_redact_paths_secrets_and_credentials() {
+        let params: DiagnosticsExportParams = serde_json::from_value(serde_json::json!({}))
+            .expect("default diagnostics params should deserialize");
+        assert!(!params.include_sensitive_paths);
+
+        let private_root = PathBuf::from("/Users/dev/private/project");
+        let mut config = LocalConfig::default();
+        config.project_registry.projects.insert(
+            "project123".to_string(),
+            ProjectRegistryEntry {
+                project_id: "project123".to_string(),
+                display_name: "Private Project".to_string(),
+                local_path: private_root.clone(),
+                workspaces: BTreeMap::new(),
+                manifest_path: Some(private_root.join("devrelay.toml")),
+                remote_url_fingerprint: Some("remote123".to_string()),
+                root_commit_fingerprint: Some("root123".to_string()),
+            },
+        );
+
+        let redacted_config = config.redacted_for_diagnostics();
+
+        assert_eq!(
+            redacted_config.projects["project123"].local_path,
+            "<redacted>"
+        );
+
+        let redactor = LogRedactor::for_diagnostics([private_root]);
+        let diagnostic_payload = serde_json::json!({
+            "path": "/Users/dev/private/project/src/main.rs",
+            "token": "secret-token",
+            "raw": "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+            "remote": "https://user:secret@example.com/repo.git"
+        });
+        let redacted_payload = redactor.redact_json_value(diagnostic_payload);
+
+        assert_eq!(redacted_payload["path"], "<path>/src/main.rs");
+        assert_eq!(redacted_payload["token"], "<redacted>");
+        assert_eq!(redacted_payload["raw"], "<redacted>");
+        assert_eq!(
+            redacted_payload["remote"],
+            "https://<redacted>@example.com/repo.git"
+        );
     }
 }
 

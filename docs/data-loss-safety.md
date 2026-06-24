@@ -80,9 +80,11 @@ The final safety checklist must be tied to integration suite names:
 | No lease transfer before verification | `safety/no_unverified_handoff` |
 | Stale/inactive publish does not advance latest | `safety/stale_publish_is_fork` |
 | Secret-like files stay out of snapshots by default | `safety/no_plaintext_secret_snapshot` |
+| Remote commands require trust hash approval | `safety/no_untrusted_remote_execution` |
 | UI state comes only from agent events/RPC | `safety/ui_has_no_state_authority` |
 | Watcher events are hints only | `safety/watcher_events_are_hints` |
 | Remote tasks do not mutate active sessions | `safety/no_active_workspace_remote_task` |
+| Diagnostic exports are redacted by default | `safety/diagnostics_redacted_by_default` |
 
 Existing unit and integration tests cover many underlying cases. The suite
 names above are still the required product-level evidence before beta.
