@@ -1287,15 +1287,15 @@ Conventions:
 
 ### M8.3 Unsaved Buffers
 
-- [ ] Detect unsaved dirty documents.
-- [ ] Capture unsaved text content.
-- [ ] Exclude untitled buffers unless user permits.
-- [ ] Encrypt buffer capsule placeholder or require local-only first pass.
-- [ ] Store buffer capsule separately from Git snapshot.
-- [ ] Restore buffer as dirty document.
-- [ ] Never write restored unsaved buffer to disk automatically.
-- [ ] Add user setting to disable unsaved buffer capture.
-- [ ] Add tests for dirty restore behavior.
+- [x] Detect unsaved dirty documents.
+- [x] Capture unsaved text content.
+- [x] Exclude untitled buffers unless user permits.
+- [x] Encrypt buffer capsule placeholder or require local-only first pass.
+- [x] Store buffer capsule separately from Git snapshot.
+- [x] Restore buffer as dirty document.
+- [x] Never write restored unsaved buffer to disk automatically.
+- [x] Add user setting to disable unsaved buffer capture.
+- [x] Add tests for dirty restore behavior.
 
 ### M8.4 Active/Inactive Indicator
 

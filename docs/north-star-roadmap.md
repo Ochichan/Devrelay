@@ -372,10 +372,11 @@ Completed capabilities:
   breakpoint, and terminal title/cwd capture from VS Code public APIs.
 - Size-limited editor context capsule upload through local
   `editor.context.update` RPC with durable audit evidence.
+- Unsaved dirty buffer capture and restore through local VS Code SecretStorage,
+  default-off settings, untitled-buffer opt-in, and dirty untitled restore.
 
 Open work:
 
-- Unsaved buffer handling.
 - Context restore UX.
 - Extension-host validation inside VS Code.
 

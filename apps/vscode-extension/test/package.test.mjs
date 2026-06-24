@@ -13,6 +13,8 @@ test("package exposes the VS Code extension entrypoint", () => {
     "onCommand:devrelay.refreshConnection",
     "onCommand:devrelay.explainState",
     "onCommand:devrelay.captureContext",
+    "onCommand:devrelay.captureUnsavedBuffers",
+    "onCommand:devrelay.restoreUnsavedBuffers",
   ]);
 });
 
@@ -22,6 +24,8 @@ test("contributed commands are registered by the extension", () => {
     "devrelay.refreshConnection",
     "devrelay.explainState",
     "devrelay.captureContext",
+    "devrelay.captureUnsavedBuffers",
+    "devrelay.restoreUnsavedBuffers",
   ]);
 
   for (const command of commands) {
@@ -34,4 +38,10 @@ test("extension surfaces local agent connection state", () => {
   assert.match(extensionSource, /client\.call<AgentHealthResult>\("agent\.health"\)/);
   assert.match(extensionSource, /client\.call<EditorContextUpdateResult>\(\s*"editor\.context\.update"/);
   assert.match(extensionSource, /statusBar\.command = "devrelay\.explainState"/);
+});
+
+test("package exposes unsaved buffer safety settings", () => {
+  const properties = packageJson.contributes.configuration.properties;
+  assert.equal(properties["devrelay.captureUnsavedBuffers"].default, false);
+  assert.equal(properties["devrelay.includeUntitledUnsavedBuffers"].default, false);
 });

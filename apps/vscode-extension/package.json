@@ -16,7 +16,9 @@
     "onStartupFinished",
     "onCommand:devrelay.refreshConnection",
     "onCommand:devrelay.explainState",
-    "onCommand:devrelay.captureContext"
+    "onCommand:devrelay.captureContext",
+    "onCommand:devrelay.captureUnsavedBuffers",
+    "onCommand:devrelay.restoreUnsavedBuffers"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -32,8 +34,31 @@
       {
         "command": "devrelay.captureContext",
         "title": "DevRelay: Capture Editor Context"
+      },
+      {
+        "command": "devrelay.captureUnsavedBuffers",
+        "title": "DevRelay: Capture Unsaved Buffers"
+      },
+      {
+        "command": "devrelay.restoreUnsavedBuffers",
+        "title": "DevRelay: Restore Unsaved Buffers"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "DevRelay",
+      "properties": {
+        "devrelay.captureUnsavedBuffers": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow DevRelay to capture dirty saved buffers into local VS Code SecretStorage."
+        },
+        "devrelay.includeUntitledUnsavedBuffers": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include untitled dirty buffers when DevRelay captures unsaved buffers."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "tsc -p .",
