@@ -51,8 +51,9 @@ The desktop slice may call only local agent APIs:
 - `handoffs.list`, `handoff.begin`, `handoff.abort`,
   `handoff.target.verify`, `handoff.source.ready`, and `handoff.commit` for
   handoff state transitions.
-- `devices.list`, `runs.list`, `activity.list`, `diagnostics.export`, and
-  `events.subscribe` for secondary views and support evidence.
+- `devices.list`, `environment.status`, `runs.list`, `activity.list`,
+  `diagnostics.export`, and `events.subscribe` for secondary views and support
+  evidence.
 
 The UI state must update from initial RPC state plus event stream messages. The
 first slice consumes:

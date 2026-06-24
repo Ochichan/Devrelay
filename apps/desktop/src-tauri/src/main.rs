@@ -1,13 +1,14 @@
 use devrelay_core::{
     ActivityListParams, ActivityListResult, AgentRpcClient, ApplySnapshotParams,
     ApplySnapshotResult, CheckpointCreateParams, CheckpointCreateResult, DevRelayHome,
-    DevicesListResult, DiagnosticsExportParams, DiagnosticsExportResult, EventReplayCursor,
-    EventStreamMessage, EventsSubscribeParams, EventsSubscribeResult, HandoffBeginParams,
-    HandoffCommitParams, HandoffIdParams, HandoffMutationResult, HandoffState, HandoffStatus,
-    HandoffsListParams, HandoffsListResult, IpcConnection, IpcLimits, LeaseRecord, LeaseState,
-    LeasesListParams, LeasesListResult, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH,
-    METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST,
-    METHOD_DIAGNOSTICS_EXPORT, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN,
+    DevicesListResult, DiagnosticsExportParams, DiagnosticsExportResult, EnvironmentStatusEntry,
+    EnvironmentStatusParams, EnvironmentStatusResult, EventReplayCursor, EventStreamMessage,
+    EventsSubscribeParams, EventsSubscribeResult, HandoffBeginParams, HandoffCommitParams,
+    HandoffIdParams, HandoffMutationResult, HandoffState, HandoffStatus, HandoffsListParams,
+    HandoffsListResult, IpcConnection, IpcLimits, LeaseRecord, LeaseState, LeasesListParams,
+    LeasesListResult, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT,
+    METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT,
+    METHOD_ENVIRONMENT_STATUS, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN,
     METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY,
     METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
     METHOD_RECOVER_OPEN, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
@@ -66,6 +67,7 @@ struct UiBootstrap {
     snapshots: Vec<StoredSnapshot>,
     leases: Vec<LeaseRecord>,
     handoffs: Vec<HandoffStatus>,
+    environments: Vec<EnvironmentStatusEntry>,
     devices: Vec<UiDeviceIdentity>,
     runs: Vec<devrelay_core::TaskRunRecord>,
     activity: Vec<devrelay_core::AuditEventRecord>,
@@ -532,6 +534,7 @@ fn build_ui_bootstrap() -> UiBootstrap {
     let mut snapshots = Vec::new();
     let mut leases = Vec::new();
     let mut handoffs = Vec::new();
+    let mut environments = Vec::new();
     let mut devices = Vec::new();
     let mut runs = Vec::new();
     let mut activity = Vec::new();
@@ -587,6 +590,17 @@ fn build_ui_bootstrap() -> UiBootstrap {
             Ok(result) => handoffs = result.handoffs,
             Err(err) => errors.push(format!("handoffs.list: {err}")),
         }
+        match call_agent::<_, EnvironmentStatusResult>(
+            &socket,
+            METHOD_ENVIRONMENT_STATUS,
+            EnvironmentStatusParams {
+                project: None,
+                workspace: None,
+            },
+        ) {
+            Ok(result) => environments = result.environments,
+            Err(err) => errors.push(format!("environment.status: {err}")),
+        }
         match call_agent::<_, DevicesListResult>(&socket, METHOD_DEVICES_LIST, json!({})) {
             Ok(result) => devices = result.devices,
             Err(err) => errors.push(format!("devices.list: {err}")),
@@ -637,6 +651,7 @@ fn build_ui_bootstrap() -> UiBootstrap {
         snapshots,
         leases,
         handoffs,
+        environments,
         devices: device_views,
         runs,
         activity,

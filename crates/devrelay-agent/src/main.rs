@@ -8,7 +8,8 @@ use devrelay_core::{
     DiagnosticsExportResult, EditorContextLatestParams, EditorContextLatestResult,
     EditorContextSnapshot, EditorContextUpdateParams, EditorContextUpdateResult, EditorEventKind,
     EditorEventRecordParams, EditorEventRecordResult, EditorRestoreAckParams,
-    EditorRestoreAckResult, EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage,
+    EditorRestoreAckResult, EnvironmentStatusEntry, EnvironmentStatusParams,
+    EnvironmentStatusResult, EventEnvelope, EventReplayCursor, EventSequence, EventStreamMessage,
     EventsSubscribeParams, EventsSubscribeResult, GitRepo, HandoffBeginParams, HandoffCommitParams,
     HandoffIdParams, HandoffMutationResult, HandoffRecord, HandoffRecoverParams,
     HandoffRecoverResult, HandoffState, HandoffStateChangedEvent, HandoffStatus,
@@ -23,20 +24,21 @@ use devrelay_core::{
     SnapshotStore, SnapshotsListParams, SnapshotsListResult, StatusGetParams, StatusGetResult,
     StoredSnapshot, StructuredLogFile, StructuredLogRecord, TypedEventPayload, UnixIpcConnection,
     UnixIpcListener, WorkspaceRegistryEntry, WorkspaceState, WorkspaceStateChangedEvent,
-    apply_snapshot, classify_untracked_paths, plan_apply_snapshot, workspace_id_for,
+    apply_snapshot, classify_untracked_paths, load_hydration_state, plan_apply_snapshot,
+    workspace_id_for,
 };
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, LogRedactor,
     METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
     METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EDITOR_CONTEXT_LATEST,
     METHOD_EDITOR_CONTEXT_UPDATE, METHOD_EDITOR_EVENT_RECORD, METHOD_EDITOR_RESTORE_ACK,
-    METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN, METHOD_HANDOFF_COMMIT,
-    METHOD_HANDOFF_RECOVER, METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY,
-    METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
-    METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
-    METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
-    METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, MetadataDb,
-    StructuredLogLevel, current_platform_key,
+    METHOD_ENVIRONMENT_STATUS, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN,
+    METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_RECOVER, METHOD_HANDOFF_SOURCE_READY,
+    METHOD_HANDOFF_TARGET_VERIFY, METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_PROJECTS_ADD,
+    METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST,
+    METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST,
+    METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET,
+    MetadataDb, StructuredLogLevel, current_platform_key,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -238,6 +240,7 @@ impl AgentState {
             METHOD_RECOVER_SHOW.to_string(),
             METHOD_RECOVER_OPEN.to_string(),
             METHOD_DIAGNOSTICS_EXPORT.to_string(),
+            METHOD_ENVIRONMENT_STATUS.to_string(),
             METHOD_EVENTS_SUBSCRIBE.to_string(),
             METHOD_DEVICES_LIST.to_string(),
             METHOD_ACTIVITY_LIST.to_string(),
@@ -708,6 +711,7 @@ fn handle_rpc_request(request: RpcRequest, state: &AgentState) -> RpcResponse {
         METHOD_RECOVER_SHOW => handle_recover_show(id, request.params, state),
         METHOD_RECOVER_OPEN => handle_recover_open(id, request.params, state),
         METHOD_DIAGNOSTICS_EXPORT => handle_diagnostics_export(id, request.params, state),
+        METHOD_ENVIRONMENT_STATUS => handle_environment_status(id, request.params, state),
         METHOD_DEVICES_LIST => handle_devices_list(id, state),
         METHOD_ACTIVITY_LIST => handle_activity_list(id, request.params, state),
         METHOD_RUNS_LIST => handle_runs_list(id, request.params, state),
@@ -1232,6 +1236,96 @@ fn registered_project_ids_for_query(
 }
 
 #[cfg(unix)]
+fn environment_status_entries(
+    state: &AgentState,
+    params: EnvironmentStatusParams,
+) -> anyhow::Result<Vec<EnvironmentStatusEntry>> {
+    let mut entries = Vec::new();
+    let config = state
+        .config
+        .lock()
+        .map_err(|err| anyhow::anyhow!("config lock poisoned: {err}"))?;
+
+    let projects = if let Some(project) = params.project.as_deref() {
+        let project = find_project(&config, project)
+            .ok_or_else(|| anyhow::anyhow!("unknown project {project}"))?;
+        vec![project.clone()]
+    } else {
+        config
+            .project_registry
+            .projects
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    for project in projects {
+        let workspace_ids =
+            environment_workspace_ids_for_project(&project, params.workspace.as_deref())?;
+        if workspace_ids.is_empty() && params.workspace.is_some() && params.project.is_some() {
+            anyhow::bail!(
+                "unknown workspace {} for project {}",
+                params.workspace.as_deref().unwrap_or_default(),
+                project.project_id
+            );
+        }
+
+        for workspace_id in workspace_ids {
+            let path = state
+                .home
+                .hydration_state_path(&project.project_id, workspace_id.as_deref());
+            if path.exists() {
+                let record = load_hydration_state(&path)?;
+                entries.push(EnvironmentStatusEntry::from_persisted(record));
+            } else {
+                entries.push(EnvironmentStatusEntry::not_started(
+                    project.project_id.clone(),
+                    workspace_id,
+                ));
+            }
+        }
+    }
+
+    if entries.is_empty()
+        && let Some(workspace) = params.workspace
+    {
+        anyhow::bail!("unknown workspace {workspace}");
+    }
+
+    entries.sort_by(|left, right| {
+        left.record
+            .project_id
+            .cmp(&right.record.project_id)
+            .then(left.record.workspace_id.cmp(&right.record.workspace_id))
+    });
+    Ok(entries)
+}
+
+#[cfg(unix)]
+fn environment_workspace_ids_for_project(
+    project: &ProjectRegistryEntry,
+    workspace: Option<&str>,
+) -> anyhow::Result<Vec<Option<String>>> {
+    if let Some(workspace) = workspace {
+        if project.workspaces.contains_key(workspace) {
+            return Ok(vec![Some(workspace.to_string())]);
+        }
+        return Ok(Vec::new());
+    }
+
+    if project.workspaces.is_empty() {
+        return Ok(vec![None]);
+    }
+
+    Ok(project
+        .workspaces
+        .keys()
+        .cloned()
+        .map(Some)
+        .collect::<Vec<_>>())
+}
+
+#[cfg(unix)]
 fn open_registered_project_db(state: &AgentState, project_id: &str) -> anyhow::Result<MetadataDb> {
     let is_registered = state
         .config
@@ -1536,6 +1630,27 @@ fn handle_diagnostics_export(
     };
 
     match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_environment_status(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: EnvironmentStatusParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let environments = match environment_status_entries(state, params) {
+        Ok(environments) => environments,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+
+    match serde_json::to_value(EnvironmentStatusResult { environments }) {
         Ok(result) => RpcResponse::success(id, result),
         Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }

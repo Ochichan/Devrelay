@@ -42,6 +42,9 @@ documented API boundary, auth middleware, schemas, and integration tests.
 - New optional params may be added without increasing the protocol version.
 - New result fields may be added without increasing the protocol version.
 - Clients must ignore unknown result fields.
+- `environment.status` is an additive local method in protocol version `1`; it
+  reports registered project/workspace hydration state and treats missing state
+  files as `cold`/`persisted: false`.
 
 ## Breaking Changes
 

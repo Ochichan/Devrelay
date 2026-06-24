@@ -138,6 +138,13 @@ fn foreground_serves_rpc_negotiate_and_agent_health() {
             .iter()
             .any(|method| method == "agent.health")
     );
+    assert!(
+        negotiate["result"]["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method == "environment.status")
+    );
 
     let health = rpc_call(
         &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
@@ -457,6 +464,90 @@ fn foreground_serves_checkpoint_create_and_snapshots_list_rpc() {
     );
     assert_eq!(listed["result"]["snapshots"][0]["snapshot_id"], snapshot_id);
     assert_eq!(listed["result"]["snapshots"][0]["sequence_number"], 1);
+
+    running.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn foreground_serves_environment_status_rpc() {
+    use devrelay_core::{
+        DevRelayHome, HydrationState, HydrationStateRecord, IpcLimits, UnixIpcConnection,
+        save_hydration_state,
+    };
+    use serde_json::json;
+
+    let mut running = RunningAgent::start("devrelay-agent-env-status-rpc-test");
+    let repo = running.root.join("env-project");
+    create_manifest_repo(&repo, "86421357", "Environment Project");
+
+    let added = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "env-project-add",
+            "method": "projects.add",
+            "params": {
+                "path": repo,
+                "manifest": repo.join("devrelay.toml")
+            }
+        }),
+    );
+    let workspace_id = added["result"]["project"]["workspaces"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap()
+        .to_string();
+
+    let cold = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "env-status-cold",
+            "method": "environment.status",
+            "params": { "project": "86421357" }
+        }),
+    );
+    assert_eq!(cold["result"]["environments"][0]["project_id"], "86421357");
+    assert_eq!(
+        cold["result"]["environments"][0]["workspace_id"],
+        workspace_id
+    );
+    assert_eq!(cold["result"]["environments"][0]["state"], "cold");
+    assert_eq!(cold["result"]["environments"][0]["attempt"], 0);
+    assert_eq!(cold["result"]["environments"][0]["persisted"], false);
+
+    let home = DevRelayHome::new(&running.root);
+    let mut record = HydrationStateRecord::new("86421357", Some(workspace_id.clone()), 123);
+    record.state = HydrationState::ShellReady;
+    record.attempt = 2;
+    save_hydration_state(
+        &home.hydration_state_path("86421357", Some(&workspace_id)),
+        &record,
+    )
+    .unwrap();
+
+    let ready = rpc_call(
+        &mut UnixIpcConnection::connect(&running.socket, IpcLimits::default()).unwrap(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "env-status-ready",
+            "method": "environment.status",
+            "params": {
+                "project": "86421357",
+                "workspace": workspace_id
+            }
+        }),
+    );
+    assert_eq!(ready["result"]["environments"][0]["state"], "shell-ready");
+    assert_eq!(ready["result"]["environments"][0]["attempt"], 2);
+    assert_eq!(
+        ready["result"]["environments"][0]["updated_at_unix_seconds"],
+        123
+    );
+    assert_eq!(ready["result"]["environments"][0]["persisted"], true);
 
     running.stop();
 }

@@ -190,6 +190,10 @@ function handoffs() {
   return state.bootstrap?.handoffs ?? [];
 }
 
+function environments() {
+  return state.bootstrap?.environments ?? [];
+}
+
 function selectedProject() {
   const all = projects();
   if (!state.selectedProjectId && all.length > 0) {
@@ -211,6 +215,40 @@ function activeWorkspace(project) {
     entries[0] ??
     null
   );
+}
+
+function projectEnvironment(project, workspace) {
+  if (!project) return null;
+  const workspaceId = workspace?.workspace_id ?? null;
+  return (
+    environments().find(
+      (entry) => entry.project_id === project.project_id && (entry.workspace_id ?? null) === workspaceId
+    ) ??
+    environments().find((entry) => entry.project_id === project.project_id && !entry.workspace_id) ??
+    null
+  );
+}
+
+function hydrationTone(entry) {
+  if (!entry) return "warn";
+  if (entry.state === "failed") return "bad";
+  if (["shell-ready", "app-ready"].includes(entry.state)) return "good";
+  return "warn";
+}
+
+function hydrationLabel(entry) {
+  if (!entry) return "Unknown";
+  if (!entry.persisted && entry.state === "cold") return "Not started";
+  return titleize(entry.state);
+}
+
+function hydrationDetail(entry, resourceDetail) {
+  const resource = resourceDetail ? ` - ${resourceDetail}` : "";
+  if (!entry) return `No hydration state reported by this agent${resource}`;
+  if (entry.failure) return `${entry.failure}${resource}`;
+  if (!entry.persisted) return `No persisted hydration attempt${resource}`;
+  const updated = entry.updated_at_unix_seconds ? formatAge(entry.updated_at_unix_seconds) : "unknown";
+  return `Attempt ${entry.attempt}, updated ${updated}${resource}`;
 }
 
 function projectLeases(projectId) {
@@ -1322,6 +1360,8 @@ function renderContinue() {
   const environmentDetail = environmentReported
     ? `${environmentWarmth} - ${environmentCpu} - ${environmentPower}`
     : "No environment summary reported by this agent.";
+  const hydration = projectEnvironment(project, workspace);
+  const hydrationToneValue = hydrationTone(hydration);
   const handoffReady = methods().has("handoff.begin");
   const suggestedSession = workspace?.workspace_id ?? checkpoint?.session_id ?? project.project_id;
   const handoffPanelCopy = openHandoff
@@ -1363,7 +1403,7 @@ function renderContinue() {
           <div class="panel-head"><div><h3>Continuation state</h3><p>${escapeHtml(suggestedSession)}</p></div></div>
           <div class="panel-body status-stack">
             <div class="status-row"><span class="dot good"></span><div><strong>${escapeHtml(device.display_name ?? "Local device")}</strong><span>${escapeHtml(device.platform_key ?? "unknown")} ${escapeHtml(device.architecture ?? "")}</span></div><span class="badge good">This device</span></div>
-            <div class="status-row"><span class="dot ${environmentReported ? "good" : "warn"}"></span><div><strong>Environment warmth</strong><span>${escapeHtml(environmentDetail)}</span></div><span class="badge ${environmentReported ? "good" : "warn"}">${environmentReported ? "Reported" : "Unknown"}</span></div>
+            <div class="status-row"><span class="dot ${hydrationToneValue}"></span><div><strong>Environment hydration</strong><span>${escapeHtml(hydrationDetail(hydration, environmentReported ? environmentDetail : ""))}</span></div><span class="badge ${hydrationToneValue}">${escapeHtml(hydrationLabel(hydration))}</span></div>
             <div class="status-row"><span class="dot ${suggestedSession ? "good" : "warn"}"></span><div><strong>Suggested session</strong><span>${escapeHtml(suggestedSession ?? "No continuation session recorded")}</span></div><span class="badge">${workspace?.state ? escapeHtml(workspace.state) : "selected"}</span></div>
             ${activeWriterRow(workspace, lease)}
             ${handoffRow(handoff)}

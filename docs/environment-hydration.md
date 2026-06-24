@@ -17,9 +17,18 @@ can take the `retry` transition, which clears the failure, increments the
 attempt counter, and returns the record to `cold`.
 
 Hydration state can be saved and loaded as JSON through the core persistence
-helpers. The agent or UI layer owns where that JSON record lives on disk.
-Progress updates can be wrapped in the stable `environment.progress` event
-payload so CLI, desktop, and editor clients can render the same state names.
+helpers. Project/workspace state files live under
+`$DEVRELAY_HOME/projects/<project-id>/hydration/`; workspace IDs are encoded as
+safe file names before being used on disk. Progress updates can be wrapped in
+the stable `environment.progress` event payload so CLI, desktop, and editor
+clients can render the same state names.
+
+The local agent exposes `environment.status` for registered project/workspace
+hydration state. Missing state files are reported as `cold` with
+`persisted: false`, which lets CLI and desktop distinguish "not started" from a
+failed or partially ready hydration attempt. The CLI command is
+`devrelay environment status --project <project-id> --json`; the desktop
+Continue view renders the same state in its environment row.
 
 ## Environment Doctor
 

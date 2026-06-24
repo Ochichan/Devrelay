@@ -73,6 +73,12 @@ impl DevRelayHome {
         self.project_data_dir(project_id).join("metadata.sqlite")
     }
 
+    pub fn hydration_state_path(&self, project_id: &str, workspace_id: Option<&str>) -> PathBuf {
+        self.project_data_dir(project_id)
+            .join("hydration")
+            .join(hydration_state_file_name(workspace_id))
+    }
+
     pub fn cas_dir(&self, project_id: &str) -> PathBuf {
         self.project_data_dir(project_id).join("cas")
     }
@@ -242,6 +248,33 @@ fn require_env_path(name: &str, value: Option<OsString>) -> Result<PathBuf> {
     Ok(PathBuf::from(value))
 }
 
+fn hydration_state_file_name(workspace_id: Option<&str>) -> String {
+    match workspace_id {
+        Some(workspace_id) => format!("workspace-{}.json", safe_path_component(workspace_id)),
+        None => "project.json".to_string(),
+    }
+}
+
+fn safe_path_component(value: &str) -> String {
+    let safe = !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        && value != "."
+        && value != "..";
+    if safe {
+        return value.to_string();
+    }
+
+    let mut encoded = String::with_capacity("hex-".len() + value.len().saturating_mul(2));
+    encoded.push_str("hex-");
+    for byte in value.bytes() {
+        use std::fmt::Write;
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    encoded
+}
+
 fn unix_nanos() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -281,6 +314,22 @@ mod tests {
         assert_eq!(
             home.metadata_db_path("project123"),
             PathBuf::from("/tmp/devrelay-test/projects/project123/metadata.sqlite")
+        );
+        assert_eq!(
+            home.hydration_state_path("project123", None),
+            PathBuf::from("/tmp/devrelay-test/projects/project123/hydration/project.json")
+        );
+        assert_eq!(
+            home.hydration_state_path("project123", Some("ws_abcdef-123")),
+            PathBuf::from(
+                "/tmp/devrelay-test/projects/project123/hydration/workspace-ws_abcdef-123.json"
+            )
+        );
+        assert_eq!(
+            home.hydration_state_path("project123", Some("../escape")),
+            PathBuf::from(
+                "/tmp/devrelay-test/projects/project123/hydration/workspace-hex-2e2e2f657363617065.json"
+            )
         );
         assert_eq!(
             home.cas_dir("project123"),

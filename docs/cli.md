@@ -23,6 +23,7 @@ devrelay recover show <snapshot-id> --json
 devrelay recover open <snapshot-id> --path ../recovery --register --name review --json
 devrelay doctor environment --repo . --manifest devrelay.toml --json
 devrelay doctor environment --repo . --manifest devrelay.toml --run-healthcheck --json
+devrelay environment status --project <project-id> --json
 devrelay continue --source ../source --target ../target --config devrelay.local.toml --json
 devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --dry-run
 devrelay apply --repo ../target --source . --snapshot snapshot.json --dirty-policy snapshot-and-fork --json
@@ -83,6 +84,11 @@ Git state. It checks declared profile compatibility, local adapter tools, local
 secret provider mappings, and existing command trust records. Healthchecks run
 only with `--run-healthcheck`; Dev Container image preparation also requires
 `--allow-devcontainer-prepare`.
+
+`environment status` reports the persisted hydration state for registered
+projects and workspaces. It uses the local agent by default through
+`environment.status`; `--direct` reads the same state files from
+`$DEVRELAY_HOME/projects/<project-id>/hydration/`.
 
 ## Exit Codes
 

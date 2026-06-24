@@ -14,24 +14,25 @@ use devrelay_core::{
     AuditOutcome, CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome,
     DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord, DiagnosticsExportParams,
     DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole, DiscoveryService,
-    EnvironmentDoctorOptions, EnvironmentDoctorReport, ErrorInfo, FabricIdentityBundle,
+    EnvironmentDoctorOptions, EnvironmentDoctorReport, EnvironmentStatusEntry,
+    EnvironmentStatusParams, EnvironmentStatusResult, ErrorInfo, FabricIdentityBundle,
     FabricIdentityStore, GitPerformanceDoctorReport, GitRepo, LineEndingDoctorReport, LocalConfig,
     LogRedactor, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
-    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
-    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest,
-    MetadataDb, PairingSession, PairingStartRequest, PathDecision, PathPortabilityDoctorReport,
-    PatternConfig, PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
-    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RecoverListParams,
-    RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
-    SecretProviderLocalConfig, SecretScannerConfig, ServiceTemplate, ServiceTemplateInput,
-    ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetParams, StatusGetResult,
-    StatusSummary, StoredSession, StoredSnapshot, SystemEnvironmentCommandRunner, UntrackedPolicy,
-    WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, WslFilesystemDoctorReport,
-    apply_snapshot, build_discovery_advertisement, classify_untracked_paths, create_snapshot,
-    current_platform_key, linux_systemd_user_template, macos_launch_agent_template,
-    plan_apply_snapshot, read_snapshot_file, run_environment_doctor, run_git_performance_doctor,
-    run_line_ending_doctor, run_path_portability_doctor, run_wsl_filesystem_doctor,
-    workspace_id_for, write_snapshot_file,
+    METHOD_ENVIRONMENT_STATUS, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE,
+    METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW,
+    METHOD_STATUS_GET, Manifest, MetadataDb, PairingSession, PairingStartRequest, PathDecision,
+    PathPortabilityDoctorReport, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
+    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
+    RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
+    RecoverShowResult, SecretProviderLocalConfig, SecretScannerConfig, ServiceTemplate,
+    ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetParams,
+    StatusGetResult, StatusSummary, StoredSession, StoredSnapshot, SystemEnvironmentCommandRunner,
+    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
+    WslFilesystemDoctorReport, apply_snapshot, build_discovery_advertisement,
+    classify_untracked_paths, create_snapshot, current_platform_key, linux_systemd_user_template,
+    load_hydration_state, macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file,
+    run_environment_doctor, run_git_performance_doctor, run_line_ending_doctor,
+    run_path_portability_doctor, run_wsl_filesystem_doctor, workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -94,6 +95,10 @@ enum Command {
     Discovery {
         #[command(subcommand)]
         command: DiscoveryCommand,
+    },
+    Environment {
+        #[command(subcommand)]
+        command: EnvironmentCommand,
     },
     Identity {
         #[command(subcommand)]
@@ -390,6 +395,18 @@ impl From<DiscoveryRoleArg> for DiscoveryRole {
             DiscoveryRoleArg::Peer => Self::Peer,
         }
     }
+}
+
+#[derive(Debug, Subcommand)]
+enum EnvironmentCommand {
+    Status {
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -813,6 +830,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Device { command } => handle_device_command(command)?,
         Command::Devices { command } => handle_devices_command(command)?,
         Command::Discovery { command } => handle_discovery_command(command)?,
+        Command::Environment { command } => handle_environment_command(command, &agent_options)?,
         Command::Identity { command } => handle_identity_command(command)?,
         Command::Manifest { command } => match command {
             ManifestCommand::Check { path, json } => {
@@ -1914,6 +1932,147 @@ fn render_discovery_browser(
         }
     }
     Ok(())
+}
+
+fn handle_environment_command(
+    command: EnvironmentCommand,
+    agent_options: &AgentOptions,
+) -> anyhow::Result<()> {
+    match command {
+        EnvironmentCommand::Status {
+            project,
+            workspace,
+            json,
+        } => {
+            let params = EnvironmentStatusParams { project, workspace };
+            let result = if agent_options.direct {
+                environment_status_direct(params)?
+            } else {
+                call_agent(agent_options, METHOD_ENVIRONMENT_STATUS, params)?
+            };
+            render_environment_status(&result, json)
+        }
+    }
+}
+
+fn environment_status_direct(
+    params: EnvironmentStatusParams,
+) -> anyhow::Result<EnvironmentStatusResult> {
+    let (_, config) = load_or_default_config(None)?;
+    let home = DevRelayHome::resolve()?;
+    let mut environments = Vec::new();
+    let projects = if let Some(project) = params.project.as_deref() {
+        vec![find_project(&config, project)?.clone()]
+    } else {
+        config
+            .project_registry
+            .projects
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    for project in projects {
+        let workspace_ids =
+            environment_workspace_ids_for_project(&project, params.workspace.as_deref());
+        if workspace_ids.is_empty() && params.workspace.is_some() && params.project.is_some() {
+            return Err(DevRelayError::Config(format!(
+                "unknown workspace {} for project {}",
+                params.workspace.as_deref().unwrap_or_default(),
+                project.project_id
+            ))
+            .into());
+        }
+        for workspace_id in workspace_ids {
+            let path = home.hydration_state_path(&project.project_id, workspace_id.as_deref());
+            if path.exists() {
+                environments.push(EnvironmentStatusEntry::from_persisted(
+                    load_hydration_state(&path)?,
+                ));
+            } else {
+                environments.push(EnvironmentStatusEntry::not_started(
+                    project.project_id.clone(),
+                    workspace_id,
+                ));
+            }
+        }
+    }
+
+    if environments.is_empty()
+        && let Some(workspace) = params.workspace
+    {
+        return Err(DevRelayError::Config(format!("unknown workspace {workspace}")).into());
+    }
+
+    environments.sort_by(|left, right| {
+        left.record
+            .project_id
+            .cmp(&right.record.project_id)
+            .then(left.record.workspace_id.cmp(&right.record.workspace_id))
+    });
+    Ok(EnvironmentStatusResult { environments })
+}
+
+fn environment_workspace_ids_for_project(
+    project: &ProjectRegistryEntry,
+    workspace: Option<&str>,
+) -> Vec<Option<String>> {
+    if let Some(workspace) = workspace {
+        return project
+            .workspaces
+            .contains_key(workspace)
+            .then(|| Some(workspace.to_string()))
+            .into_iter()
+            .collect();
+    }
+    if project.workspaces.is_empty() {
+        return vec![None];
+    }
+    project.workspaces.keys().cloned().map(Some).collect()
+}
+
+fn render_environment_status(result: &EnvironmentStatusResult, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(result)?);
+        return Ok(());
+    }
+
+    if result.environments.is_empty() {
+        println!("environment status: no registered projects");
+        return Ok(());
+    }
+
+    println!("environment status");
+    for entry in &result.environments {
+        let workspace = entry.record.workspace_id.as_deref().unwrap_or("project");
+        let source = if entry.persisted {
+            "persisted"
+        } else {
+            "not-started"
+        };
+        println!("  {} / {}", entry.record.project_id, workspace);
+        println!("    state: {}", hydration_state_label(entry.record.state));
+        println!("    attempt: {}", entry.record.attempt);
+        println!("    source: {source}");
+        if let Some(failure) = &entry.record.failure {
+            println!("    failure: {failure}");
+        }
+        if entry.record.updated_at_unix_seconds > 0 {
+            println!("    updated: {}", entry.record.updated_at_unix_seconds);
+        }
+    }
+    Ok(())
+}
+
+fn hydration_state_label(state: devrelay_core::HydrationState) -> &'static str {
+    match state {
+        devrelay_core::HydrationState::Cold => "cold",
+        devrelay_core::HydrationState::MetadataReady => "metadata-ready",
+        devrelay_core::HydrationState::CacheReady => "cache-ready",
+        devrelay_core::HydrationState::ShellReady => "shell-ready",
+        devrelay_core::HydrationState::AppReady => "app-ready",
+        devrelay_core::HydrationState::Failed => "failed",
+    }
 }
 
 fn handle_identity_command(command: IdentityCommand) -> anyhow::Result<()> {

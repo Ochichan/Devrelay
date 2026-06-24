@@ -14,9 +14,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
     AnchorMode, ApplyPlan, AuditEventRecord, ClassifiedPath, DeviceIdentity, HandoffJournalRecord,
-    HandoffRecord, HandoffRecoveryOutcome, LeaseRecord, ProjectRegistryEntry, ResourceProfile,
-    StatusEntry, StatusSummary, StoredSnapshot, TaskRunRecord, VerificationDetails,
-    WorkspaceRegistryEntry,
+    HandoffRecord, HandoffRecoveryOutcome, HydrationState, HydrationStateRecord, LeaseRecord,
+    ProjectRegistryEntry, ResourceProfile, StatusEntry, StatusSummary, StoredSnapshot,
+    TaskRunRecord, VerificationDetails, WorkspaceRegistryEntry,
 };
 #[cfg(unix)]
 use crate::{DevRelayError, IpcConnection, IpcLimits, Result, UnixIpcConnection};
@@ -46,6 +46,7 @@ pub const METHOD_RECOVER_LIST: &str = "recover.list";
 pub const METHOD_RECOVER_SHOW: &str = "recover.show";
 pub const METHOD_RECOVER_OPEN: &str = "recover.open";
 pub const METHOD_DIAGNOSTICS_EXPORT: &str = "diagnostics.export";
+pub const METHOD_ENVIRONMENT_STATUS: &str = "environment.status";
 pub const METHOD_EVENTS_SUBSCRIBE: &str = "events.subscribe";
 pub const METHOD_DEVICES_LIST: &str = "devices.list";
 pub const METHOD_ACTIVITY_LIST: &str = "activity.list";
@@ -415,6 +416,47 @@ pub struct DiagnosticsExportResult {
     pub include_sensitive_paths: bool,
     pub source_code_included: bool,
     pub snapshot_objects_included: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentStatusParams {
+    pub project: Option<String>,
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentStatusEntry {
+    #[serde(flatten)]
+    pub record: HydrationStateRecord,
+    pub persisted: bool,
+}
+
+impl EnvironmentStatusEntry {
+    pub fn from_persisted(record: HydrationStateRecord) -> Self {
+        Self {
+            record,
+            persisted: true,
+        }
+    }
+
+    pub fn not_started(project_id: String, workspace_id: Option<String>) -> Self {
+        Self {
+            record: HydrationStateRecord {
+                project_id,
+                workspace_id,
+                state: HydrationState::Cold,
+                attempt: 0,
+                failure: None,
+                updated_at_unix_seconds: 0,
+            },
+            persisted: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentStatusResult {
+    pub environments: Vec<EnvironmentStatusEntry>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -849,6 +891,32 @@ mod tests {
 
         assert_eq!(params.out, None);
         assert!(!params.include_sensitive_paths);
+    }
+
+    #[test]
+    fn environment_status_params_and_entries_use_stable_fields() {
+        let params: EnvironmentStatusParams = serde_json::from_value(json!({
+            "project": "project123",
+            "workspace": "ws_123"
+        }))
+        .unwrap();
+        assert_eq!(params.project.as_deref(), Some("project123"));
+        assert_eq!(params.workspace.as_deref(), Some("ws_123"));
+
+        let entry = EnvironmentStatusEntry::not_started(
+            "project123".to_string(),
+            Some("ws_123".to_string()),
+        );
+        let encoded = serde_json::to_value(EnvironmentStatusResult {
+            environments: vec![entry],
+        })
+        .unwrap();
+
+        assert_eq!(encoded["environments"][0]["project_id"], "project123");
+        assert_eq!(encoded["environments"][0]["workspace_id"], "ws_123");
+        assert_eq!(encoded["environments"][0]["state"], "cold");
+        assert_eq!(encoded["environments"][0]["attempt"], 0);
+        assert_eq!(encoded["environments"][0]["persisted"], false);
     }
 
     #[test]

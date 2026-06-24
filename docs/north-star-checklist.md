@@ -1460,7 +1460,7 @@ Conventions:
 - [x] Required secrets materialize locally and remain excluded from snapshots.
 - [ ] Environment failure leaves code state intact.
 - [ ] Warm target can enter dev shell within SLO on representative project.
-- [ ] Hydration state is visible in CLI and UI.
+- [x] Hydration state is visible in CLI and UI.
 
 ## M10. Compute Fabric
 

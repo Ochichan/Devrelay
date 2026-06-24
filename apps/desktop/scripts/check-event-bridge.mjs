@@ -100,6 +100,17 @@ const bootstrap = {
     },
   ],
   handoffs: [],
+  environments: [
+    {
+      project_id: "project-1",
+      workspace_id: "session-1",
+      state: "shell-ready",
+      attempt: 2,
+      failure: null,
+      updated_at_unix_seconds: nowSeconds - 15,
+      persisted: true,
+    },
+  ],
   devices: [
     {
       device_id: "local-device",
@@ -304,7 +315,8 @@ assert.match(
   /target apply and verification remain pending/,
   "handoff panel did not keep verification pending"
 );
-assert.match(app.innerHTML, /Environment warmth/, "continue view did not render environment warmth");
+assert.match(app.innerHTML, /Environment hydration/, "continue view did not render environment hydration");
+assert.match(app.innerHTML, /Shell Ready/, "continue view did not render hydration state");
 assert.match(app.innerHTML, /Checkpoint metadata ready/, "continue view did not render warmth summary");
 assert.match(app.innerHTML, /Run elsewhere/, "continue view did not render run elsewhere placeholder");
 assert.match(app.innerHTML, /aria-label="Review handoff to Target device"/, "handoff review action lacked target label");

@@ -592,6 +592,88 @@ required = true
 }
 
 #[test]
+fn environment_status_reports_persisted_hydration_state() {
+    use devrelay_core::{DevRelayHome, HydrationState, HydrationStateRecord, save_hydration_state};
+
+    let root = std::env::temp_dir().join(format!(
+        "devrelay-environment-status-test-{}",
+        std::process::id()
+    ));
+    let repo = root.join("repo");
+    let home = root.join("home");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&repo).unwrap();
+    init_git_repo(&repo);
+    write_manifest(&repo, "env-status-project", "Environment Status Project");
+    git(&repo, &["add", "devrelay.toml"]);
+    git(&repo, &["commit", "-m", "manifest"]);
+
+    let add = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "--direct",
+            "project",
+            "add",
+            repo.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let project: serde_json::Value = serde_json::from_slice(&add.stdout).unwrap();
+    let workspace_id = project["added"]["workspaces"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap()
+        .to_string();
+
+    let devrelay_home = DevRelayHome::new(&home);
+    let mut record =
+        HydrationStateRecord::new("env-status-project", Some(workspace_id.clone()), 456);
+    record.state = HydrationState::AppReady;
+    record.attempt = 3;
+    save_hydration_state(
+        &devrelay_home.hydration_state_path("env-status-project", Some(&workspace_id)),
+        &record,
+    )
+    .unwrap();
+
+    let status = devrelay()
+        .env("DEVRELAY_HOME", &home)
+        .args([
+            "--direct",
+            "environment",
+            "status",
+            "--project",
+            "env-status-project",
+            "--workspace",
+            &workspace_id,
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(value["environments"][0]["project_id"], "env-status-project");
+    assert_eq!(value["environments"][0]["workspace_id"], workspace_id);
+    assert_eq!(value["environments"][0]["state"], "app-ready");
+    assert_eq!(value["environments"][0]["attempt"], 3);
+    assert_eq!(value["environments"][0]["persisted"], true);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn audit_list_and_export_redact_by_default() {
     use devrelay_core::{AuditEventInput, AuditEventType, AuditOutcome, DevRelayHome, MetadataDb};
 
