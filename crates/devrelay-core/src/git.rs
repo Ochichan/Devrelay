@@ -23,6 +23,8 @@ pub struct GitStatus {
     pub head_oid: String,
     pub branch: Option<String>,
     pub upstream: Option<String>,
+    pub ahead: Option<usize>,
+    pub behind: Option<usize>,
     pub entries: Vec<StatusEntry>,
     pub counts: StatusCounts,
 }
@@ -60,6 +62,8 @@ pub struct StatusSummary {
     pub head_oid: String,
     pub branch: Option<String>,
     pub upstream: Option<String>,
+    pub ahead: Option<usize>,
+    pub behind: Option<usize>,
     pub counts: StatusCounts,
     pub clean: bool,
     pub initial: bool,
@@ -96,6 +100,8 @@ impl GitStatus {
             head_oid: self.head_oid.clone(),
             branch: self.branch.clone(),
             upstream: self.upstream.clone(),
+            ahead: self.ahead,
+            behind: self.behind,
             counts: self.counts.clone(),
             clean: self.is_clean(),
             initial: self.is_initial(),
@@ -206,6 +212,8 @@ pub fn parse_status_porcelain_v2(raw: &str) -> Result<GitStatus> {
     let mut head_oid = String::new();
     let mut branch = None;
     let mut upstream = None;
+    let mut ahead = None;
+    let mut behind = None;
     let mut entries = Vec::new();
     let mut counts = StatusCounts::default();
     let mut index = 0;
@@ -226,6 +234,13 @@ pub fn parse_status_porcelain_v2(raw: &str) -> Result<GitStatus> {
         }
         if let Some(value) = record.strip_prefix("# branch.upstream ") {
             upstream = Some(value.to_string());
+            index += 1;
+            continue;
+        }
+        if let Some(value) = record.strip_prefix("# branch.ab ") {
+            let (parsed_ahead, parsed_behind) = parse_branch_ahead_behind(value);
+            ahead = parsed_ahead;
+            behind = parsed_behind;
             index += 1;
             continue;
         }
@@ -307,9 +322,24 @@ pub fn parse_status_porcelain_v2(raw: &str) -> Result<GitStatus> {
         head_oid,
         branch,
         upstream,
+        ahead,
+        behind,
         entries,
         counts,
     })
+}
+
+fn parse_branch_ahead_behind(value: &str) -> (Option<usize>, Option<usize>) {
+    let mut ahead = None;
+    let mut behind = None;
+    for part in value.split_whitespace() {
+        if let Some(raw) = part.strip_prefix('+') {
+            ahead = raw.parse::<usize>().ok();
+        } else if let Some(raw) = part.strip_prefix('-') {
+            behind = raw.parse::<usize>().ok();
+        }
+    }
+    (ahead, behind)
 }
 
 fn add_xy_counts(xy: &str, counts: &mut StatusCounts) {
@@ -371,11 +401,15 @@ mod tests {
         assert_eq!(status.head_oid, "abc");
         assert_eq!(status.branch.as_deref(), Some("main"));
         assert_eq!(status.upstream.as_deref(), Some("origin/main"));
+        assert_eq!(status.ahead, Some(1));
+        assert_eq!(status.behind, Some(0));
         assert_eq!(status.counts.unstaged, 1);
         assert_eq!(status.counts.untracked, 1);
 
         let summary = status.summary();
         assert_eq!(summary.branch.as_deref(), Some("main"));
+        assert_eq!(summary.ahead, Some(1));
+        assert_eq!(summary.behind, Some(0));
         assert!(!summary.clean);
         assert!(!summary.initial);
     }

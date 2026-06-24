@@ -224,6 +224,11 @@ const cleanStatus = {
   ok: true,
   data: {
     status: {
+      head_oid: "status-head",
+      branch: "main",
+      upstream: "origin/main",
+      ahead: 2,
+      behind: 0,
       clean: true,
       counts: {
         staged: 0,
@@ -287,7 +292,7 @@ vm.createContext(context);
 vm.runInContext(source, context, { filename: "app.js" });
 await new Promise((resolve) => setTimeout(resolve, 20));
 
-assert.match(app.innerHTML, /Prepare handoff/, "ready target handoff action did not render");
+assert.match(app.innerHTML, /Review handoff/, "ready target handoff review action did not render");
 assert.match(
   app.innerHTML,
   /target apply and verification remain pending/,
@@ -308,6 +313,38 @@ handleAction({
   context
 );
 assert.match(app.innerHTML, /Run elsewhere is not wired to the agent yet/, "run placeholder did not warn");
+await vm.runInContext(
+  `
+handleAction({
+  dataset: {
+    action: "handoff-dialog",
+    projectId: "project-1",
+    targetDeviceId: "target-device",
+  },
+});
+`,
+  context
+);
+assert.match(app.innerHTML, /Handoff review/, "handoff dialog did not render");
+assert.match(app.innerHTML, /Source device/, "handoff dialog did not render source device");
+assert.match(app.innerHTML, /Target device/, "handoff dialog did not render target device");
+assert.match(app.innerHTML, /Project\/session/, "handoff dialog did not render project session");
+assert.match(app.innerHTML, /Checkpoint age/, "handoff dialog did not render checkpoint age");
+assert.match(app.innerHTML, /0 staged/, "handoff dialog did not render staged count");
+assert.match(app.innerHTML, /0 modified, 0 new/, "handoff dialog did not render modified and untracked counts");
+assert.match(app.innerHTML, /2 commits not pushed/, "handoff dialog did not render unpushed commits");
+assert.match(app.innerHTML, /Environment readiness/, "handoff dialog did not render environment readiness");
+assert.match(app.innerHTML, /Editor context readiness/, "handoff dialog did not render editor context readiness");
+assert.match(app.innerHTML, /Target safety/, "handoff dialog did not render target safety");
+assert.match(app.innerHTML, /Saving state/, "handoff dialog did not render saving state progress");
+assert.match(app.innerHTML, /Preparing device/, "handoff dialog did not render preparing device progress");
+assert.match(app.innerHTML, /Moving control/, "handoff dialog did not render moving control progress");
+assert.match(app.innerHTML, /Start handoff/, "handoff dialog did not render start action");
+vm.runInContext('state.handoffDialog.phase = "failure"; state.handoffDialog.message = "handoff failed"; render();', context);
+assert.match(app.innerHTML, /Handoff failed/, "handoff dialog did not render failure state");
+vm.runInContext('state.handoffDialog.phase = "success"; state.handoffDialog.message = "Target preparation has started"; render();', context);
+assert.match(app.innerHTML, /Handoff started/, "handoff dialog did not render success state");
+vm.runInContext("state.handoffDialog = null; render();", context);
 vm.runInContext('state.view = "runs"; render();', context);
 assert.match(app.innerHTML, /Recent runs/, "runs view did not render recent runs");
 assert.match(app.innerHTML, /Queued runs/, "runs view did not render queued runs");

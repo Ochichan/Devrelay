@@ -1184,23 +1184,23 @@ Conventions:
 
 ### M7.6 Handoff Dialog
 
-- [ ] Show source device.
-- [ ] Show target device.
-- [ ] Show project/session.
-- [ ] Show checkpoint age.
-- [ ] Show staged count.
-- [ ] Show unstaged count.
-- [ ] Show untracked count.
-- [ ] Show unpushed commit count when available.
-- [ ] Show environment readiness.
-- [ ] Show editor context readiness.
-- [ ] Show dirty target safe actions.
-- [ ] Show progress phase "saving state".
-- [ ] Show progress phase "preparing device".
-- [ ] Show progress phase "moving control".
-- [ ] Handle abort.
-- [ ] Handle failure.
-- [ ] Handle success.
+- [x] Show source device.
+- [x] Show target device.
+- [x] Show project/session.
+- [x] Show checkpoint age.
+- [x] Show staged count.
+- [x] Show unstaged count.
+- [x] Show untracked count.
+- [x] Show unpushed commit count when available.
+- [x] Show environment readiness.
+- [x] Show editor context readiness.
+- [x] Show dirty target safe actions.
+- [x] Show progress phase "saving state".
+- [x] Show progress phase "preparing device".
+- [x] Show progress phase "moving control".
+- [x] Handle abort.
+- [x] Handle failure.
+- [x] Handle success.
 
 ### M7.7 Runs View
 

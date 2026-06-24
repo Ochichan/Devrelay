@@ -1462,6 +1462,8 @@ large_file_threshold_mib = 1
             head_oid: "abc".to_string(),
             branch: Some("main".to_string()),
             upstream: None,
+            ahead: None,
+            behind: None,
             entries: Vec::new(),
             counts: StatusCounts {
                 unmerged: 1,
@@ -1506,6 +1508,8 @@ large_file_threshold_mib = 1
                 head_oid: "abc".to_string(),
                 branch: Some("main".to_string()),
                 upstream: None,
+                ahead: None,
+                behind: None,
                 entries: Vec::new(),
                 counts: StatusCounts {
                     unmerged: 1,

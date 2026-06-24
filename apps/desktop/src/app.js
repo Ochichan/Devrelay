@@ -20,6 +20,7 @@ const state = {
   recoveryProjectId: null,
   recoverySnapshotId: null,
   activityFilter: "all",
+  handoffDialog: null,
   bootstrap: null,
   projectStatus: new Map(),
   runtimeError: null,
@@ -796,6 +797,25 @@ function statusCounts(statusResult) {
   };
 }
 
+function statusUnpushedCount(statusResult) {
+  const status = statusResult?.status ?? {};
+  const value =
+    status.ahead ??
+    status.ahead_count ??
+    status.aheadCount ??
+    status.unpushed ??
+    status.unpushed_count ??
+    status.unpushedCount;
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : null;
+}
+
+function unpushedLabel(count) {
+  if (count === null) return "Not reported by this Git remote";
+  return `${count} ${count === 1 ? "commit" : "commits"} not pushed`;
+}
+
 function statusBadge(statusResult, loading, error) {
   if (loading) return '<span class="badge">Loading</span>';
   if (error) return '<span class="badge bad">Status error</span>';
@@ -803,6 +823,213 @@ function statusBadge(statusResult, loading, error) {
   return statusResult.status?.clean
     ? '<span class="badge good">Clean</span>'
     : '<span class="badge warn">Local changes</span>';
+}
+
+function handoffDialogContext() {
+  const dialog = state.handoffDialog;
+  if (!dialog) return null;
+  const project = projects().find((item) => item.project_id === dialog.projectId) ?? selectedProject();
+  if (!project) return null;
+  const status = projectStatus(project.project_id);
+  const counts = statusCounts(status?.data);
+  const unpushed = statusUnpushedCount(status?.data);
+  const workspace = activeWorkspace(project);
+  const lease = activeLease(project.project_id);
+  const checkpoint = latestSnapshot(project.project_id);
+  const handoff = latestHandoff(project.project_id);
+  const record = handoff?.record ?? {};
+  const sourceDeviceId = record.source_device_id ?? state.bootstrap?.settings?.device_id;
+  const targetDeviceId = dialog.targetDeviceId ?? record.target_device_id;
+  const source = devices().find((device) => device.device_id === sourceDeviceId) ?? currentDevice();
+  const target =
+    devices().find((device) => device.device_id === targetDeviceId) ??
+    (targetDeviceId
+      ? {
+          device_id: targetDeviceId,
+          display_name: targetDeviceId,
+          platform_key: "unknown",
+          architecture: "",
+          last_seen_unix_seconds: null,
+        }
+      : null);
+  const handoffReady = methods().has("handoff.begin");
+  const openHandoff = handoffIsOpen(handoff);
+  const targetState = target
+    ? targetReadiness(target, { handoffReady, lease, openHandoff })
+    : {
+        ready: false,
+        tone: "warn",
+        label: "No target",
+        detail: "Select a paired target before starting handoff.",
+      };
+  const session = projectSession(project);
+  const editorCommand = String(state.bootstrap?.settings?.editor_command ?? "").trim();
+  const editorReady = editorCommand.length > 0;
+  const phase = dialog.phase ?? "review";
+  const statusReady = !status?.loading && !status?.error && counts.unmerged === 0;
+  const canConfirm =
+    phase === "review" &&
+    !state.operation &&
+    Boolean(target?.device_id) &&
+    targetState.ready &&
+    statusReady &&
+    !openHandoff;
+  return {
+    dialog: { ...dialog, phase },
+    project,
+    status,
+    counts,
+    unpushed,
+    workspace,
+    lease,
+    checkpoint,
+    handoff,
+    source,
+    target,
+    targetState,
+    session,
+    editorCommand,
+    editorReady,
+    canConfirm,
+  };
+}
+
+function progressStep(label, tone, stateLabel, detail) {
+  return `<div class="progress-step"><span class="dot ${tone}"></span><div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(detail)}</span></div><span class="badge ${tone}">${escapeHtml(stateLabel)}</span></div>`;
+}
+
+function renderHandoffProgress(context) {
+  const phase = context.dialog.phase;
+  const handoffState = context.handoff?.record?.state;
+  const failed = phase === "failure";
+  const savingDone = Boolean(context.checkpoint || context.handoff || phase === "success");
+  const preparingStarted =
+    phase === "running" ||
+    phase === "success" ||
+    ["target-prepare", "target-verified", "source-ready", "committed"].includes(handoffState);
+  const preparingDone = ["source-ready", "committed"].includes(handoffState);
+  const movingStarted = ["source-ready", "committed"].includes(handoffState);
+  const movingDone = handoffState === "committed";
+  const savingTone = failed ? "bad" : savingDone ? "good" : phase === "running" ? "warn" : "warn";
+  const preparingTone = failed ? "bad" : preparingDone ? "good" : preparingStarted ? "warn" : "warn";
+  const movingTone = failed ? "bad" : movingDone ? "good" : movingStarted ? "warn" : "warn";
+  return `<div class="progress-list">
+    ${progressStep(
+      "Saving state",
+      savingTone,
+      savingDone ? "Ready" : phase === "running" ? "Running" : "Pending",
+      savingDone ? "A source checkpoint is available for handoff." : "DevRelay will checkpoint the source before preparing the target."
+    )}
+    ${progressStep(
+      "Preparing device",
+      preparingTone,
+      preparingDone ? "Ready" : preparingStarted ? "Running" : "Pending",
+      preparingDone ? "The target has verified the prepared workspace." : "The target is prepared before control can move."
+    )}
+    ${progressStep(
+      "Moving control",
+      movingTone,
+      movingDone ? "Done" : movingStarted ? "Running" : "Pending",
+      movingDone ? "Control moved to the target device." : "Control moves only after target verification succeeds."
+    )}
+  </div>`;
+}
+
+function renderHandoffDialog() {
+  const context = handoffDialogContext();
+  if (!context) return "";
+  const {
+    dialog,
+    project,
+    counts,
+    unpushed,
+    checkpoint,
+    handoff,
+    source,
+    target,
+    targetState,
+    session,
+    editorCommand,
+    editorReady,
+    canConfirm,
+  } = context;
+  const localChangeTotal = counts.staged + counts.unstaged + counts.untracked;
+  const hasConflict = counts.unmerged > 0;
+  const checkpointLabel = checkpoint
+    ? `${formatAge(checkpoint.created_at_unix_seconds)} - ${checkpoint.label ?? "unlabeled"}`
+    : "Created when preparation starts";
+  const statusTone = hasConflict ? "bad" : localChangeTotal > 0 ? "warn" : "good";
+  const statusDetail = hasConflict
+    ? "Resolve conflicts before handoff can start."
+    : localChangeTotal > 0
+      ? "Local source changes are captured before target preparation starts."
+      : "No local source changes are waiting.";
+  const message =
+    dialog.phase === "failure"
+      ? `<div class="error-box"><strong>Handoff failed</strong><span>${escapeHtml(dialog.message ?? "The handoff did not start.")}</span></div>`
+      : dialog.phase === "success"
+        ? `<div class="success-box"><strong>Handoff started</strong><span>${escapeHtml(dialog.message ?? "Target preparation is in progress.")}</span></div>`
+        : dialog.phase === "running"
+          ? `<div class="loading-line"><span class="small-spinner"></span><span>Starting handoff</span></div>`
+          : "";
+  const activeHandoff = handoffIsOpen(handoff);
+  return `
+    <div class="modal-backdrop" data-handoff-dialog>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="handoff-dialog-title" aria-describedby="handoff-dialog-description">
+        <div class="modal-head">
+          <div>
+            <h3 id="handoff-dialog-title">Handoff review</h3>
+            <p id="handoff-dialog-description">Check source, target, and safety state before starting device handoff.</p>
+          </div>
+          <button class="button icon-only" data-action="handoff-dialog-close" aria-label="Close handoff review">${icons.x}</button>
+        </div>
+        <div class="modal-body">
+          ${message}
+          <div class="handoff-route">
+            <div class="route-node">
+              <span>Source device</span>
+              <strong>${escapeHtml(source.display_name ?? "Source device")}</strong>
+              <small>${escapeHtml(source.platform_key ?? "unknown")} ${escapeHtml(source.architecture ?? "")}</small>
+            </div>
+            <div class="route-arrow" aria-hidden="true">&rarr;</div>
+            <div class="route-node">
+              <span>Target device</span>
+              <strong>${escapeHtml(target?.display_name ?? "No target selected")}</strong>
+              <small>${escapeHtml(target?.platform_key ?? "unknown")} ${escapeHtml(target?.architecture ?? "")}</small>
+            </div>
+          </div>
+          <div class="handoff-dialog-grid">
+            <div class="status-stack">
+              <div class="status-row"><span class="dot good"></span><div><strong>Project/session</strong><span>${escapeHtml(project.display_name)} - ${escapeHtml(session.label)}</span></div><span class="badge">${escapeHtml(session.state)}</span></div>
+              <div class="status-row"><span class="dot ${checkpoint ? "good" : "warn"}"></span><div><strong>Checkpoint age</strong><span>${escapeHtml(checkpointLabel)}</span></div><span class="badge ${checkpoint ? "good" : "warn"}">${checkpoint ? "Available" : "On start"}</span></div>
+              <div class="status-row"><span class="dot ${statusTone}"></span><div><strong>Source changes</strong><span>${escapeHtml(statusDetail)}</span></div><span class="badge ${statusTone}">${counts.staged} staged</span></div>
+              <div class="status-row"><span class="dot ${counts.unstaged > 0 ? "warn" : "good"}"></span><div><strong>Modified files</strong><span>${counts.unstaged} modified, ${counts.untracked} new</span></div><span class="badge">${counts.untracked} new</span></div>
+              <div class="status-row"><span class="dot ${unpushed === null ? "warn" : unpushed > 0 ? "warn" : "good"}"></span><div><strong>Unpushed commits</strong><span>${escapeHtml(unpushedLabel(unpushed))}</span></div><span class="badge">${unpushed === null ? "Not reported" : unpushed}</span></div>
+            </div>
+            <div class="status-stack">
+              <div class="status-row"><span class="dot ${targetState.tone}"></span><div><strong>Environment readiness</strong><span>${escapeHtml(targetState.detail)}</span></div><span class="badge ${targetState.tone}">${escapeHtml(targetState.label)}</span></div>
+              <div class="status-row"><span class="dot ${editorReady ? "good" : "warn"}"></span><div><strong>Editor context readiness</strong><span>${editorReady ? escapeHtml(editorCommand) : "Set an editor command before opening restored workspaces."}</span></div><span class="badge ${editorReady ? "good" : "warn"}">${editorReady ? "Ready" : "Missing"}</span></div>
+              <div class="status-row"><span class="dot good"></span><div><strong>Target safety</strong><span>Before moving control, the target verifies its workspace. If local target changes are present, DevRelay stops and leaves them untouched.</span></div><span class="badge good">Protected</span></div>
+            </div>
+          </div>
+          ${renderHandoffProgress(context)}
+        </div>
+        <div class="modal-foot">
+          <button class="button" data-action="handoff-dialog-close">Close</button>
+          ${
+            activeHandoff
+              ? `<button class="button danger" data-action="handoff-abort" data-project-id="${escapeHtml(project.project_id)}" data-handoff-id="${escapeHtml(handoff.record.handoff_id)}" ${state.operation ? "disabled" : ""}>${icons.x}<span>Abort handoff</span></button>`
+              : ""
+          }
+          ${
+            dialog.phase === "success"
+              ? ""
+              : `<button class="button primary" data-action="handoff-confirm" data-project-id="${escapeHtml(project.project_id)}" data-target-device-id="${escapeHtml(target?.device_id ?? "")}" ${canConfirm ? "" : "disabled"}>${icons.play}<span>Start handoff</span></button>`
+          }
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 function sequenceLabel(value) {
@@ -989,6 +1216,7 @@ function shell() {
         </main>
       </section>
     </div>
+    ${renderHandoffDialog()}
     ${renderToasts()}
   `;
 }
@@ -1126,7 +1354,7 @@ function renderContinue() {
                         <div><strong>${escapeHtml(device.display_name)}</strong><span>${escapeHtml(device.platform_key)} ${escapeHtml(device.architecture)} - ${escapeHtml(readiness.detail)}</span></div>
                         <span class="badge ${readiness.tone}">${escapeHtml(readiness.label)}</span>
                       </div>
-                      <button class="button ${readiness.ready ? "primary" : ""}" data-action="handoff-prepare" data-project-id="${escapeHtml(project.project_id)}" data-target-device-id="${escapeHtml(device.device_id)}" ${disabled ? "disabled" : ""}>${icons.play}<span>${readiness.ready ? "Prepare handoff" : readiness.label}</span></button>
+                      <button class="button ${readiness.ready ? "primary" : ""}" data-action="handoff-dialog" data-project-id="${escapeHtml(project.project_id)}" data-target-device-id="${escapeHtml(device.device_id)}" ${disabled ? "disabled" : ""}>${icons.play}<span>${readiness.ready ? "Review handoff" : readiness.label}</span></button>
                     </div>`;
                   })
                   .join("")}</div>`
@@ -1712,6 +1940,21 @@ async function handleAction(button) {
   const projectId = button.dataset.projectId;
   const targetDeviceId = button.dataset.targetDeviceId;
   const handoffId = button.dataset.handoffId;
+  if (action === "handoff-dialog-close") {
+    state.handoffDialog = null;
+    render();
+    return;
+  }
+  if (action === "handoff-dialog") {
+    state.handoffDialog = {
+      projectId,
+      targetDeviceId,
+      phase: "review",
+      message: null,
+    };
+    render();
+    return;
+  }
   if (action === "refresh") {
     await refresh();
     return;
@@ -1767,6 +2010,38 @@ async function handleAction(button) {
     }).catch((error) => toast(String(error?.message ?? error), "bad"));
     return;
   }
+  if (action === "handoff-confirm") {
+    const dialog = state.handoffDialog;
+    state.handoffDialog = {
+      projectId: projectId || dialog?.projectId,
+      targetDeviceId: targetDeviceId || dialog?.targetDeviceId,
+      phase: "running",
+      message: null,
+    };
+    render();
+    await runOperation("Preparing handoff", async () => {
+      const result = await invoke("handoff_prepare", { projectId, targetDeviceId });
+      if (!result.ok) throw new Error(result.message);
+      state.handoffDialog = {
+        projectId,
+        targetDeviceId,
+        phase: "success",
+        message: "Target preparation has started. Continue on the target device when ready.",
+      };
+      toast("Handoff preparation started");
+      await refresh();
+    }).catch((error) => {
+      state.handoffDialog = {
+        projectId: projectId || dialog?.projectId,
+        targetDeviceId: targetDeviceId || dialog?.targetDeviceId,
+        phase: "failure",
+        message: String(error?.message ?? error),
+      };
+      toast(String(error?.message ?? error), "bad");
+      render();
+    });
+    return;
+  }
   if (action === "handoff-prepare") {
     await runOperation("Preparing handoff", async () => {
       const result = await invoke("handoff_prepare", { projectId, targetDeviceId });
@@ -1786,9 +2061,18 @@ async function handleAction(button) {
     return;
   }
   if (action === "handoff-abort") {
+    const dialog = state.handoffDialog;
     await runOperation("Aborting handoff", async () => {
       const result = await invoke("handoff_abort", { projectId, handoffId });
       if (!result.ok) throw new Error(result.message);
+      if (dialog) {
+        state.handoffDialog = {
+          projectId: dialog.projectId ?? projectId,
+          targetDeviceId: dialog.targetDeviceId,
+          phase: "success",
+          message: "Handoff aborted. Source control stayed on this device.",
+        };
+      }
       toast("Handoff aborted");
       await refresh();
     }).catch((error) => toast(String(error?.message ?? error), "bad"));
