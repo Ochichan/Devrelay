@@ -1,5 +1,8 @@
 .DS_Store
 target/
+# The root target entry may be a symlink to an external build volume; the
+# trailing-slash pattern above only matches real directories.
+/target
 .devrelay/
 *.log
-
+/.cargo/config.local.toml

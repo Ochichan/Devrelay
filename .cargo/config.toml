@@ -1,0 +1,3 @@
+# Pull in machine-local build acceleration (sccache + lld) when present.
+# config.local.toml is gitignored; copy settings from a sibling repo to opt in.
+include = [{ path = "config.local.toml", optional = true }]
