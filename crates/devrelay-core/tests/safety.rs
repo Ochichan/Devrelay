@@ -846,3 +846,103 @@ mod published_snapshots_immutable {
         );
     }
 }
+
+/// Invariant: environment hydration failure leaves code state intact.
+///
+/// A failing or timing-out bootstrap command must never change the
+/// workspace's Git worktree, index, HEAD, or snapshot refs. See
+/// docs/data-loss-safety.md.
+mod environment_failure_leaves_code_intact {
+    use super::*;
+    use devrelay_core::{
+        EnvironmentProfile, NativeBootstrapState, SystemEnvironmentCommandRunner,
+        inspect_native_environment,
+    };
+
+    fn failing_profile(command: Vec<String>) -> EnvironmentProfile {
+        EnvironmentProfile {
+            kind: EnvironmentKind::Script,
+            targets: vec!["darwin-*".to_string(), "linux-*".to_string()],
+            command,
+            fingerprint_files: Vec::new(),
+            healthcheck: Some(vec!["sh".to_string(), "-c".to_string(), "true".to_string()]),
+            working_directory: None,
+            timeout_seconds: Some(5),
+        }
+    }
+
+    fn code_state(repo: &GitRepo) -> (String, String, String) {
+        let status = repo.run(&["status", "--porcelain=v2", "--branch"]).unwrap();
+        let head = repo.run(&["rev-parse", "HEAD"]).unwrap();
+        let refs = repo.run(&["for-each-ref", "refs/"]).unwrap();
+        (status, head, refs)
+    }
+
+    #[test]
+    fn failed_bootstrap_does_not_change_worktree_index_head_or_refs() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let repo = init_repo(&workspace);
+        commit_base(&repo, &workspace);
+        fs::write(workspace.join("staged.txt"), "staged\n").unwrap();
+        repo.run(&["add", "staged.txt"]).unwrap();
+        fs::write(workspace.join("README.md"), "base\nunstaged edit\n").unwrap();
+        fs::write(workspace.join("untracked.txt"), "untracked\n").unwrap();
+        let before = code_state(&repo);
+
+        let report = inspect_native_environment(
+            &workspace,
+            &failing_profile(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo bootstrap exploded >&2; exit 7".to_string(),
+            ]),
+            true,
+            &SystemEnvironmentCommandRunner,
+        )
+        .unwrap();
+
+        assert_eq!(report.bootstrap.state, NativeBootstrapState::Failed);
+        assert_eq!(report.bootstrap.exit_code, Some(7));
+        assert_eq!(code_state(&repo), before);
+        assert_eq!(
+            fs::read_to_string(workspace.join("README.md")).unwrap(),
+            "base\nunstaged edit\n"
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join("staged.txt")).unwrap(),
+            "staged\n"
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join("untracked.txt")).unwrap(),
+            "untracked\n"
+        );
+    }
+
+    #[test]
+    fn timed_out_bootstrap_does_not_change_code_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let repo = init_repo(&workspace);
+        commit_base(&repo, &workspace);
+        fs::write(workspace.join("README.md"), "base\ndirty\n").unwrap();
+        let before = code_state(&repo);
+
+        let mut profile = failing_profile(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "sleep 30".to_string(),
+        ]);
+        profile.timeout_seconds = Some(1);
+        let report =
+            inspect_native_environment(&workspace, &profile, true, &SystemEnvironmentCommandRunner)
+                .unwrap();
+
+        assert_eq!(report.bootstrap.state, NativeBootstrapState::TimedOut);
+        assert_eq!(code_state(&repo), before);
+        assert_eq!(
+            fs::read_to_string(workspace.join("README.md")).unwrap(),
+            "base\ndirty\n"
+        );
+    }
+}

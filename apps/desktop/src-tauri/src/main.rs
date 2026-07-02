@@ -1522,6 +1522,45 @@ fn main() {
 mod tests {
     use super::*;
 
+    /// Invariant: UI state comes only from agent events/RPC. The desktop
+    /// backend must never open Git, DevRelay metadata, or snapshot storage
+    /// directly. See docs/data-loss-safety.md.
+    mod ui_has_no_state_authority {
+        /// Backend source up to the test module boundary; the conformance
+        /// rules apply to production code, not to tests.
+        fn backend_source() -> &'static str {
+            let source = include_str!("main.rs");
+            &source[..source.find("#[cfg(test)]").unwrap()]
+        }
+
+        #[test]
+        fn backend_reaches_state_only_through_the_agent_rpc_client() {
+            assert!(
+                backend_source().contains("AgentRpcClient"),
+                "desktop backend must route state reads through the agent RPC client"
+            );
+        }
+
+        #[test]
+        fn backend_never_opens_git_metadata_or_snapshot_state_directly() {
+            for forbidden in [
+                "GitRepo",
+                "MetadataDb",
+                "SnapshotStore",
+                "rusqlite",
+                "create_snapshot",
+                "apply_snapshot(",
+                "porcelain",
+                "Command::new(\"git\")",
+            ] {
+                assert!(
+                    !backend_source().contains(forbidden),
+                    "desktop backend must not use {forbidden}; UI has no state authority"
+                );
+            }
+        }
+    }
+
     #[test]
     fn tray_target_ids_round_trip() {
         let id = tray_target_menu_id(TRAY_HANDOFF_PREFIX, "project-1", "device-2");

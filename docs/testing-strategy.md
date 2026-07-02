@@ -46,9 +46,16 @@ Use named suites for non-negotiable invariants:
 - `safety/ui_has_no_state_authority`
 - `safety/watcher_events_are_hints`
 - `safety/no_active_workspace_remote_task`
+- `safety/no_untrusted_remote_execution`
+- `safety/destructive_cleanup_has_snapshot`
+- `safety/diagnostics_redacted_by_default`
+- `safety/no_background_auto_merge`
+- `safety/environment_failure_leaves_code_intact`
 
-Each suite should include a short README or module doc that names the invariant
-and links back to [data-loss-safety.md](data-loss-safety.md).
+Each suite includes a module doc that names the invariant and links back to
+[data-loss-safety.md](data-loss-safety.md). Core suites live in
+`crates/devrelay-core/tests/safety.rs`; `ui_has_no_state_authority` is a
+conformance suite in the desktop backend crate.
 
 ## Fuzzing
 

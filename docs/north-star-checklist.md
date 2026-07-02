@@ -1458,7 +1458,7 @@ Conventions:
 
 - [x] Manifest command changes require explicit trust.
 - [x] Required secrets materialize locally and remain excluded from snapshots.
-- [ ] Environment failure leaves code state intact.
+- [x] Environment failure leaves code state intact.
 - [ ] Warm target can enter dev shell within SLO on representative project.
 - [x] Hydration state is visible in CLI and UI.
 

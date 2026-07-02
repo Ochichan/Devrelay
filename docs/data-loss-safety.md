@@ -86,6 +86,11 @@ The final safety checklist must be tied to integration suite names:
 | Remote tasks do not mutate active sessions | `safety/no_active_workspace_remote_task` |
 | Destructive dirty-target cleanup requires a recoverable pinned backup | `safety/destructive_cleanup_has_snapshot` |
 | Diagnostic exports are redacted by default | `safety/diagnostics_redacted_by_default` |
+| Background protection never auto-merges or rewrites working state | `safety/no_background_auto_merge` |
+| Environment hydration failure leaves code state intact | `safety/environment_failure_leaves_code_intact` |
 
-Existing unit and integration tests cover many underlying cases. The suite
-names above are still the required product-level evidence before beta.
+Every suite above is implemented with its stable name:
+`crates/devrelay-core/tests/safety.rs` holds the core suites, and
+`ui_has_no_state_authority` runs as a conformance suite inside the desktop
+backend crate, asserting the UI reaches state only through the agent RPC
+client.
