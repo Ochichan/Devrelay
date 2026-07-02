@@ -51,17 +51,9 @@ pub struct TaskResultCacheSidecarInput {
     pub cas_manifest_id: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TaskResultCachePolicy {
     pub allow_secret_sensitive: bool,
-}
-
-impl Default for TaskResultCachePolicy {
-    fn default() -> Self {
-        Self {
-            allow_secret_sensitive: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

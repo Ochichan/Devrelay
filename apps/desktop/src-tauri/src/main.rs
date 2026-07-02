@@ -1053,7 +1053,7 @@ fn build_tray_run_submenu<R: Runtime, M: Manager<R>>(
     Ok(submenu)
 }
 
-fn tray_active_project<'a>(state: &'a UiBootstrap) -> Option<&'a ProjectRegistryEntry> {
+fn tray_active_project(state: &UiBootstrap) -> Option<&ProjectRegistryEntry> {
     if let Some(local_device_id) = state
         .settings
         .as_ref()
@@ -1493,6 +1493,31 @@ fn run_event_bridge_once(
     }
 }
 
+fn main() {
+    tauri::Builder::default()
+        .setup(|app| {
+            setup_tray(app)?;
+            spawn_agent_event_bridge(app.handle().clone());
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            runtime_status,
+            ui_bootstrap,
+            project_add,
+            recover_open,
+            checkpoint_create,
+            handoff_prepare,
+            handoff_continue_here,
+            handoff_abort,
+            project_status,
+            open_project,
+            settings_update,
+            diagnostics_export,
+        ])
+        .run(tauri::generate_context!())
+        .expect("failed to run DevRelay desktop app");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1530,29 +1555,4 @@ mod tests {
         assert_eq!(format_tray_age(now - 7_200, now), "2h ago");
         assert_eq!(format_tray_age(now - 172_800, now), "2d ago");
     }
-}
-
-fn main() {
-    tauri::Builder::default()
-        .setup(|app| {
-            setup_tray(app)?;
-            spawn_agent_event_bridge(app.handle().clone());
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            runtime_status,
-            ui_bootstrap,
-            project_add,
-            recover_open,
-            checkpoint_create,
-            handoff_prepare,
-            handoff_continue_here,
-            handoff_abort,
-            project_status,
-            open_project,
-            settings_update,
-            diagnostics_export,
-        ])
-        .run(tauri::generate_context!())
-        .expect("failed to run DevRelay desktop app");
 }

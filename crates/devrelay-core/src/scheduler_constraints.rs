@@ -63,20 +63,15 @@ pub struct SchedulerDynamicResources {
     pub network_route_quality: SchedulerNetworkRouteQuality,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SchedulerNetworkRouteQuality {
+    #[default]
     Unknown,
     Poor,
     Fair,
     Good,
     Excellent,
-}
-
-impl Default for SchedulerNetworkRouteQuality {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

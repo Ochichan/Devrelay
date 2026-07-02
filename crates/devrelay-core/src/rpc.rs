@@ -1043,7 +1043,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(params.event_kind, EditorEventKind::TextDocumentChanged);
-        assert_eq!(params.meaningful_edit, true);
+        assert!(params.meaningful_edit);
         assert_eq!(params.document_version, Some(12));
     }
 

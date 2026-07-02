@@ -24,20 +24,15 @@ pub enum SchedulerTaskClass {
     Background,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SchedulerThermalPressure {
+    #[default]
     Unknown,
     Nominal,
     Fair,
     Serious,
     Critical,
-}
-
-impl Default for SchedulerThermalPressure {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

@@ -417,7 +417,7 @@ pub fn preflight_remote_rpc_request(
     policy: &ControlPlaneTransportPolicy,
     now_unix_seconds: u64,
     replay_cache: &mut ControlPlaneReplayCache,
-) -> std::result::Result<RemoteRpcRequestContext, RpcResponse> {
+) -> std::result::Result<RemoteRpcRequestContext, Box<RpcResponse>> {
     let peer = require_authenticated_control_channel(peer)
         .map_err(|err| RpcResponse::error(None, remote_rpc_error_from_devrelay(err)))?;
     validate_control_request_envelope(policy, control_envelope, now_unix_seconds, replay_cache)
@@ -427,10 +427,10 @@ pub fn preflight_remote_rpc_request(
         .required_id()
         .map_err(|err| RpcResponse::error(request.id.clone(), err))?;
     if !is_remote_rpc_method_allowed(&request.method) {
-        return Err(RpcResponse::error(
+        return Err(Box::new(RpcResponse::error(
             Some(request_id),
             RpcError::method_not_found(&request.method),
-        ));
+        )));
     }
     Ok(RemoteRpcRequestContext { peer, request })
 }

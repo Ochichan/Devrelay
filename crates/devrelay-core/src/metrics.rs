@@ -341,11 +341,15 @@ fn checkpoint_metrics(
     snapshots: &[StoredSnapshot],
     audits: &[AuditEventRecord],
 ) -> CheckpointMetrics {
-    let failure_reasons = reason_counts(audits.iter().filter_map(|event| {
-        (event.event_type == AuditEventType::SnapshotPublished
-            && event.outcome != AuditOutcome::Succeeded)
-            .then(|| event.summary.clone())
-    }));
+    let failure_reasons = reason_counts(
+        audits
+            .iter()
+            .filter(|event| {
+                event.event_type == AuditEventType::SnapshotPublished
+                    && event.outcome != AuditOutcome::Succeeded
+            })
+            .map(|event| event.summary.clone()),
+    );
     CheckpointMetrics {
         successes: snapshots.len(),
         failure_reasons,
@@ -604,8 +608,8 @@ mod tests {
             ],
         });
 
-        assert_eq!(report.privacy.local_by_default, true);
-        assert_eq!(report.privacy.source_code_included, false);
+        assert!(report.privacy.local_by_default);
+        assert!(!report.privacy.source_code_included);
         assert_eq!(report.continuation.verified_attempts, 1);
         assert_eq!(report.continuation.successes, 1);
         assert_eq!(report.checkpoints.successes, 2);
