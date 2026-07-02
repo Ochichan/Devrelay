@@ -92,6 +92,7 @@ mod task_logs;
 mod task_model;
 mod task_runner_execution;
 mod task_runner_workspace;
+mod tls_identity;
 mod transport_security;
 mod watcher;
 mod wsl_doctor;
@@ -412,6 +413,7 @@ pub use task_runner_workspace::{
     TaskRunnerWorkspaceOptions, TaskRunnerWorkspaceRetentionPolicy, cleanup_task_runner_workspace,
     prepare_task_runner_workspace, task_runner_workspace_path,
 };
+pub use tls_identity::{DEVRELAY_CONTROL_SERVER_NAME, extract_single_ed25519_spki};
 pub use transport_security::{
     AuthenticatedControlPlanePeer, CONTROL_ALPN_PROTOCOL, CONTROL_PROTOCOL_VERSION,
     ControlPlaneReplayCache, ControlPlaneRequestEnvelope, ControlPlaneTransportPolicy,

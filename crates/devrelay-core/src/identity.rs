@@ -161,6 +161,49 @@ impl FabricIdentityStore {
         })
     }
 
+    /// Deterministic fabric X.509 CA certificate for the mTLS control plane.
+    ///
+    /// Every holder of the fabric root secret regenerates identical DER, so
+    /// paired dev-mode devices share one trust root without extra exchange.
+    pub fn fabric_tls_ca_der(&self) -> Result<Vec<u8>> {
+        let secrets = self.load_secrets()?;
+        crate::tls_identity::fabric_tls_ca_der(&secrets.root_secret_key, &secrets.fabric_id)
+    }
+
+    /// TLS identity (leaf certificate and PKCS#8 key) for this device.
+    ///
+    /// The leaf carries the device ed25519 signing key so remote peers can
+    /// bind the TLS channel to this device's `DeviceCertificate`.
+    pub fn device_tls_identity(&self, device_id: &str) -> Result<crate::RustlsIdentity> {
+        let secrets = self.load_secrets()?;
+        crate::tls_identity::device_tls_identity(
+            &secrets.root_secret_key,
+            &secrets.fabric_id,
+            device_id,
+            &secrets.device_signing_secret_key,
+        )
+    }
+
+    /// Issues a control-plane TLS leaf certificate for a paired peer device.
+    ///
+    /// Only the peer's public signing key is required; the private key stays
+    /// on the peer device.
+    pub fn issue_peer_tls_certificate_der(
+        &self,
+        peer_device_id: &str,
+        peer_signing_public_key_hex: &str,
+    ) -> Result<Vec<u8>> {
+        let secrets = self.load_secrets()?;
+        let peer_public_key =
+            decode_key_hex("peer_signing_public_key_hex", peer_signing_public_key_hex)?;
+        crate::tls_identity::issue_device_tls_leaf_der(
+            &secrets.root_secret_key,
+            &secrets.fabric_id,
+            peer_device_id,
+            &peer_public_key,
+        )
+    }
+
     fn create_secrets(&self) -> Result<FabricSecrets> {
         fs::create_dir_all(self.home.identity_dir())?;
         set_private_dir_permissions(&self.home.identity_dir())?;
