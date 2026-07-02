@@ -6,9 +6,11 @@ DevRelay M4.1 creates a dev-mode fabric root key, device signing key, and
 network certificate key. Rotation is intentionally a later operation; this note
 records the constraints so the first persisted schema does not block it.
 
-M4 pairing, mTLS primitives, revocation records, and audit events exist, but
-production trust still depends on recovery export, rotation UX, secure key
-storage, and the unresolved M4.5 Control API boundary.
+M4 pairing, mTLS primitives, revocation records, audit events, and the M4.5
+remote Control API boundary exist, but production trust still depends on
+recovery export, rotation UX, and secure key storage. The fabric X.509 CA key
+is derived from the fabric root secret, so root rotation also rotates the
+control-plane TLS trust root.
 
 ## Rotation Rules
 

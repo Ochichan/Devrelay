@@ -7,8 +7,9 @@ transport is local-machine only; compatibility rules here cover the JSON
 request, response, method, and error contract.
 
 Local RPC is not the M4.5 remote Control API. ADR 0005 selects JSON-RPC 2.0
-over mTLS for the remote Control API, but the remote server, method allowlist,
-auth boundary, schemas, and integration tests are still unimplemented.
+over mTLS for the remote Control API; that boundary is implemented with its
+own explicit method allowlist and schema contract in
+`docs/remote-rpc-api.md`.
 
 ## Transport Scope
 

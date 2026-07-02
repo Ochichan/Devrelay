@@ -57,22 +57,22 @@ These may change freely as long as the product-stable contracts remain true:
 - retention planner internals
 - CAS chunking strategy while manifest compatibility is preserved
 
-## Remote Control API Gap
+## Remote Control API
 
 ADR 0005 selects a versioned remote JSON-RPC 2.0 boundary over mTLS for M4.5.
-DevRelay will not implement a separate HTTP `/v1` REST API for the first remote
+DevRelay does not implement a separate HTTP `/v1` REST API for the remote
 Control API.
 
-M4.5 is still not implemented. The core now has pre-dispatch helpers for the
-remote method allowlist, mTLS peer requirement, control-envelope validation,
-JSON error mapping, request ID behavior, and read handlers for `devices.list`,
-`projects.list`, `workspaces.list`, `sessions.snapshots.list`, and role-gated
-handoff handlers, but the project still needs a remote RPC server over mTLS,
-remote recovery handlers, and integration tests around that server.
+The boundary is implemented. The agent serves the remote allowlist over mTLS
+behind `devrelay-agent --remote-listen`, authenticating every framed request
+(fabric-pinned device certificate, revocation, TLS channel key binding,
+replay/skew checks, request ID) before dispatch. The core exposes the frame
+schema, `authenticate_remote_control_frame`, the fabric TLS certificate
+issuance helpers, and a minimal `RemoteControlClient`; agent integration tests
+cover the boundary, and `docs/remote-rpc-api.md` is the schema contract.
 
-Until that implementation exists, do not claim that a remote Control API
-rejects unauthenticated requests. The mTLS transport primitives reject invalid
-peers, but that is not the same as an implemented API boundary.
+Unauthenticated requests are rejected through this implemented API boundary,
+never dispatched, and recorded as security-blocked audit events.
 
 ## Local Agent RPC
 
@@ -117,6 +117,6 @@ Review this document before:
 - changing any `--json` output
 - adding or renaming an agent RPC method
 - changing event payload fields
-- implementing M4.5 Control API
+- changing the remote Control API allowlist, framing, or auth checks
 - starting the Tauri UI
 - freezing a release candidate schema

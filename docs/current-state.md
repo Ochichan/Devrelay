@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-06-24
+Last updated: 2026-07-02
 
 This document is the short status source for contributors. The North Star spec
 describes the target product; this file describes what the repository currently
@@ -23,7 +23,7 @@ or anxiety around dirty target preservation.
 | M1 Local CLI, SQLite, recovery | Complete | Project registry, snapshot store, recovery, dirty policies, and local continue flow are implemented. |
 | M2 Agent, IPC, RPC, events | Nearly complete | Agent, JSON-RPC, local lease and handoff state RPC, event stream with handoff state events, diagnostics, local metrics export, and macOS/Linux local IPC exist. Windows named pipe and pipe ACL remain open. |
 | M3 Anchor and single-writer lease | Complete | Canonical publish, stale publish, handoff, inactive edit fork, and crash recovery are implemented. |
-| M4 Pairing, mTLS, revocation | Mostly complete | Identity, pairing, discovery, mTLS transport, revocation, audit, and the remote Control API shape decision are present. M4.5 remote RPC server implementation remains open, so the M4 exit gate is open. |
+| M4 Pairing, mTLS, revocation | Complete | Identity, pairing, discovery, mTLS transport, revocation, audit, and the remote Control API are implemented. The agent serves the M4.5 remote JSON-RPC boundary over mTLS with per-request certificate validation, TLS key binding, replay/skew checks, and security-blocked audit records, covered by integration tests. Real two-device manual boundary evidence still runs through the manual verification runbook. |
 | M5 Git object and CAS data plane | Complete | Per-project bare repo strategy, route selection, CAS, sidecars, materialization, and partial upload safety are implemented. |
 | M6 Background protection | Nearly complete | Debounce, checkpoint, resource policy, retention, quota, crash journal, and native macOS/Linux filesystem watchers exist. Initial macOS resource smoke evidence exists; Windows watcher coverage and representative resource evidence remain open. |
 | M7 Desktop UX | Started | A Tauri shell exists with tray status, refresh, continue targets, run shortcuts, background profile toggle, open/quit, reduced-motion handling, generated app icon placeholder, prototype-aligned visual polish, agent-backed bootstrap, event subscription status/gap recovery, lease-backed writer state, snapshot-backed checkpoint age, handoff state visibility, target readiness, keyboard-safe handoff review, screen-reader action labels, dirty-target-safe copy, source-side prepare/abort actions, target-side apply/verify/commit, project status, checkpoint, diagnostics, settings, and overflow-tested screens. The first-slice macOS/Linux policy, agent contract, activity failure payload, and dogfood scripts are documented. Real remote run dispatch and real-device cross-device dogfood evidence remain open. |
@@ -71,6 +71,5 @@ The next implementation path is:
 - Representative resource benchmark results beyond the initial macOS smoke run.
 - Integration-level safety suites mapped to the non-negotiable checklist.
 - Manual verification evidence for desktop runtime, real-device dogfood,
-  packaging, rollback, resource, UX, and security gates.
-- M4.5 remote JSON-RPC server over mTLS and its method schema/integration
-  tests.
+  packaging, rollback, resource, UX, and security gates, including the remote
+  Control API manual boundary checks on real devices.

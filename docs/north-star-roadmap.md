@@ -1,6 +1,6 @@
 # DevRelay North Star Roadmap
 
-Last updated: 2026-06-24
+Last updated: 2026-07-02
 
 This roadmap turns the bundled North Star spec into a live execution plan. The
 spec is the product target. This roadmap is the implementation path from the
@@ -107,7 +107,6 @@ Current gaps that matter before product claims:
 
 - Windows named pipe IPC and pipe ACL.
 - Linux/Windows watcher backend completeness.
-- M4.5 Control API endpoints and schema, or a renamed remote RPC boundary.
 - Idle CPU/RSS and checkpoint burst evidence.
 - Product-level safety suites named from the non-negotiable invariants.
 - Production desktop UI.
@@ -235,7 +234,7 @@ Exit gate: closed.
 
 ### M4. LAN Pairing And Secure Control Plane
 
-Status: mostly complete, but exit gate is open.
+Status: complete.
 
 Goal: make multiple devices usable without manual trust shortcuts.
 
@@ -247,15 +246,13 @@ Completed capabilities:
 - mTLS transport primitives and replay controls.
 - Revocation.
 - Audit log.
+- M4.5 remote JSON-RPC server over mTLS with the method allowlist,
+  per-request auth, schema documentation, JSON error mapping, and
+  integration tests.
 
-Open work:
-
-- M4.5 remote JSON-RPC server over mTLS.
-- Remote method allowlist, auth middleware, schema documentation, JSON error
-  mapping, and integration tests.
-
-Exit gate: open until unauthenticated Control API requests are rejected by an
-implemented API boundary with integration tests.
+Exit gate: met. Unauthenticated Control API requests are rejected by the
+implemented API boundary, covered by agent integration tests; real two-device
+manual boundary evidence runs through the manual verification runbook.
 
 ### M5. Data Plane: Git Object Transfer And Sidecar CAS
 

@@ -36,6 +36,12 @@ devrelay-agent --foreground
 devrelay agent status
 ```
 
+To accept remote Control RPC calls from paired devices, add
+`--remote-listen <ip:port>` (port `0` picks an ephemeral port). The agent
+writes the bound address to `DEVRELAY_HOME/agent-remote.addr`, and only mTLS
+peers holding fabric-issued certificates can connect; see
+`docs/remote-rpc-api.md`.
+
 Use `--json` for machine-readable output and `--json-errors` for stable error
 envelopes.
 

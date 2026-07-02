@@ -1,6 +1,6 @@
 # DevRelay North Star Checklist
 
-Last updated: 2026-06-24
+Last updated: 2026-07-02
 
 This is the execution checklist for `docs/north-star-roadmap.md`. The roadmap
 explains why and when. This file tracks what must be built, tested, documented,
@@ -833,18 +833,18 @@ Conventions:
 ### M4.5 Control API
 
 - [x] Decide whether M4.5 is HTTP `/v1` or versioned remote RPC over mTLS.
-- [ ] Add remote JSON-RPC server over mTLS.
+- [x] Add remote JSON-RPC server over mTLS.
 - [x] Add remote `devices.list`.
 - [x] Add remote `projects.list`.
 - [x] Add remote `workspaces.list`.
 - [x] Add remote `sessions.snapshots.list`.
 - [x] Add remote handoff methods.
-- [ ] Add remote recovery methods.
+- [x] Add remote recovery methods.
 - [x] Add API auth middleware.
 - [x] Add request ID middleware.
 - [x] Add JSON error mapping.
 - [x] Add remote RPC schema documentation.
-- [ ] Add API integration tests.
+- [x] Add API integration tests.
 
 ### M4.6 Revocation
 
@@ -876,7 +876,7 @@ Conventions:
 - [x] Revoked device cannot connect.
 - [x] mDNS TXT records do not leak sensitive data.
 - [x] Transport tests cover expired, wrong-fabric, and revoked certificates.
-- [ ] Control API rejects unauthenticated requests through an implemented API boundary.
+- [x] Control API rejects unauthenticated requests through an implemented API boundary.
 
 ## M5. Data Plane: Git Object Transfer And Sidecar CAS
 

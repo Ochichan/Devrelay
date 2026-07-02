@@ -8,8 +8,9 @@ ownership.
 The repository has moved past the original local round-trip proof. The current
 core includes the Rust CLI/core, local agent RPC, SQLite metadata, recovery,
 single-writer lease state, pairing and mTLS primitives, revocation, audit logs,
-per-project bare Git object storage, sidecar CAS, route selection, retention,
-cross-platform doctors, and advanced Git-state capture. The desktop Tauri shell
+the remote Control RPC server over mTLS with fabric-issued device
+certificates, per-project bare Git object storage, sidecar CAS, route
+selection, retention, cross-platform doctors, and advanced Git-state capture. The desktop Tauri shell
 now includes the tray/dashboard first slice: agent-backed runtime, project
 status, checkpoint, source-side handoff prepare/abort, target-side
 apply/verify/commit, diagnostics, settings, accessibility, and overflow-safe

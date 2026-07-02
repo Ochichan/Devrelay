@@ -155,7 +155,8 @@ Evidence:
 
 ## Remote Control API
 
-Prerequisite: M4.5 remote JSON-RPC server over mTLS is implemented.
+Prerequisite: met. The agent serves the remote JSON-RPC boundary over mTLS
+via `devrelay-agent --remote-listen`; see `docs/remote-rpc-api.md`.
 
 Manual checks:
 
@@ -182,8 +183,9 @@ Evidence:
 
 Blocks:
 
-- North Star M4.5 remains open until API integration tests and this manual
-  boundary evidence exist.
+- M4.5 code and API integration tests are complete. This manual boundary
+  evidence remains a security-gate prerequisite for broad LAN trust claims
+  and the release candidate.
 
 ## Pairing, Discovery, And Revocation
 

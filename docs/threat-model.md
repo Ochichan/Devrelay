@@ -1,6 +1,6 @@
 # DevRelay Threat Model
 
-Last updated: 2026-06-24
+Last updated: 2026-07-02
 
 This document records the current implementation-grounded threat model for
 DevRelay. It is not a release security sign-off; it is the baseline that future
@@ -20,7 +20,9 @@ Covered:
 
 Not fully covered:
 
-- A production remote Control API surface. M4.5 remains undecided/open.
+- Real two-device manual boundary evidence for the remote Control API. The
+  M4.5 boundary is implemented with integration tests; the manual verification
+  runbook still gates broad LAN trust claims.
 - Signed release/update supply chain.
 - Backup anchor replication and restore.
 - Independent third-party security review.
@@ -71,7 +73,7 @@ Not fully covered:
 
 | Threat | Attacker / Failure | Impact | Current Mitigations | Residual Risk |
 | --- | --- | --- | --- | --- |
-| Same-LAN attacker | Network peer can observe or attempt local-network traffic. | Unauthorized control requests, replay, or data fetch attempts. | Pairing transcript/SAS, mTLS configs with required trust roots, validated device certificates, replay nonces, bounded clock skew, revocation checks, namespace-limited Git refs. | Production Control API boundary remains open; complete M4.5 before broad LAN trust claims. |
+| Same-LAN attacker | Network peer can observe or attempt local-network traffic. | Unauthorized control requests, replay, or data fetch attempts. | Pairing transcript/SAS, mTLS with fabric-pinned certificates and TLS key binding, per-request device certificate and revocation checks, replay nonces, bounded clock skew, security-blocked audit records, namespace-limited Git refs. | Manual two-device boundary evidence pending before broad LAN trust claims. |
 | Malicious project manifest | Repository changes manifest commands, bootstrap scripts, fingerprint files, secret targets, sidecars, or task definitions. | Unexpected command execution or secret/file escape. | Execution trust hash changes on executable edits and fingerprint-file content edits; native bootstrap requires trust approval; script profiles require trusted command scope; Dev Container image build/pull requires approval; manifest secret targets must stay inside workspace. | Trust prompt UX and false-positive override design remain open. |
 | Stale device | Previously paired or offline device uses old state after lease/session changed. | Lost updates or stale canonical publish. | Lease epochs are monotonic; stale publishes are stored without advancing canonical latest; handoff source generation is checked; revocation blocks publish/handoff; replay nonce cache rejects reused control envelopes. | Revoked/old devices may still hold local copies; user-facing device trust doctor remains open. |
 | Compromised device | Trusted endpoint is malicious after pairing. | It can request allowed operations until revoked. | Revocation records, mTLS certificate validation against revocation, audit events, dirty target blocking, immutable snapshot IDs, stale publish fork behavior, no background auto-merge. | Endpoint compromise cannot be fully mitigated locally; response depends on fast revocation and recovery. |
@@ -108,7 +110,7 @@ Not fully covered:
 
 ## Open Security Work
 
-- Implement or explicitly replace the M4.5 remote Control API boundary.
+- Collect real-device manual boundary evidence for the remote Control API.
 - Build command trust prompt and device trust doctor UX.
 - Design safe false-positive overrides for secret scanning.
 - Decide encrypted one-time sidecar and opaque anchor tradeoffs.

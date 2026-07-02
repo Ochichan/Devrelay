@@ -17,8 +17,8 @@ The fuzz crate lives in [`fuzz/`](../fuzz) and currently defines these targets:
   accepted paths cannot be absolute or contain traversal components.
 - `cas_manifest`: deserializes and validates CAS manifests.
 - `network_api_payload`: parses local JSON-RPC requests and deserializes known
-  method params. This target does not cover the unimplemented M4.5 remote
-  Control API.
+  method params. This target does not yet cover the M4.5 remote control frame
+  parsing; extending it is open hardening work.
 
 Each target has seed inputs under `fuzz/corpus/<target>/`.
 

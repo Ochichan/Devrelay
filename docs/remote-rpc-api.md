@@ -1,20 +1,16 @@
 # Remote Control RPC API
 
-Last updated: 2026-06-24
+Last updated: 2026-07-02
 
-Status: schema plan, core pre-dispatch policy, and core read handlers for
-`devices.list`, `projects.list`, `workspaces.list`, and
-`sessions.snapshots.list`, plus role-gated core handoff handlers, accepted;
-server not implemented.
+Status: implemented. The agent serves this API over mTLS when started with
+`--remote-listen`, every method in the allowlist below is dispatched, and the
+boundary is covered by agent integration tests
+(`crates/devrelay-agent/tests/remote_rpc.rs`) plus core unit tests for the
+authentication and preflight paths.
 
 ADR 0005 selects JSON-RPC 2.0 over mTLS for the remote Control API. This
-document defines the first remote method allowlist and schema rules required
-before M4.5 can close.
-
-The core pre-dispatch helper enforces the method allowlist, authenticated mTLS
-peer requirement, control-envelope validation, request ID requirement, and JSON
-error mapping. A remote socket server still has to call that helper before
-method dispatch.
+document defines the remote method allowlist and schema rules for protocol
+version 1.
 
 The core read handlers for `devices.list`, `projects.list`,
 `workspaces.list`, and `sessions.snapshots.list` return remote-safe data only.
@@ -31,19 +27,55 @@ expected handoff role before mutating state: source for `handoff.begin`,
 
 Remote Control RPC runs only over the mTLS control transport.
 
-Before method dispatch, the server must verify:
+The agent binds the listener given by `devrelay-agent --remote-listen
+<ip:port>` (port `0` selects an ephemeral port) and writes the bound address to
+`DEVRELAY_HOME/agent-remote.addr`; `agent.health` reports it as
+`remote_listen_address`. The TLS server identity is the device leaf
+certificate issued by the deterministic fabric X.509 CA, and client
+certificates must chain to that same CA. Both leaf certificates carry the
+device's ed25519 signing key, which is also recorded in the fabric-signed
+application-level device certificate.
 
-- TLS is active.
-- The client certificate chains to the pinned fabric root.
-- The client device is not revoked.
-- Protocol version negotiation has succeeded.
+Before method dispatch, the server verifies:
+
+- TLS is active and the client certificate chains to the fabric X.509 CA.
+- The application-level device certificate in the request frame validates
+  against the pinned fabric root (issuer, signature, validity window).
+- The device is not revoked; revocation state is reloaded per request and
+  failures to load it fail closed.
+- The TLS peer leaf public key equals the device certificate's signing key,
+  binding the channel to the claimed device.
 - Request timestamp is inside the clock-skew window.
-- Replay nonce has not been used.
-- JSON-RPC request ID is present and stable.
+- Replay nonce has not been used inside the replay window.
+- JSON-RPC request ID is present and the method is in the allowlist.
+
+Rejected requests receive a mapped JSON-RPC error response and are recorded as
+`security.blocked` audit events on the serving agent.
 
 Remote RPC is not local IPC. Local-only methods such as editor context,
 settings mutation, diagnostics export, metrics export, and direct filesystem
-status are not in the first remote allowlist.
+status are not in the remote allowlist.
+
+## Wire Framing
+
+Each request is one length-prefixed (u32 big-endian) JSON frame:
+
+```json
+{
+  "control": {
+    "protocol_version": 1,
+    "sent_at_unix_seconds": 1710000000,
+    "replay_nonce": "f3a09c2d5b1e48d7a6c40b91e2d35f80"
+  },
+  "device_certificate": { "certificate_id": "cert_..." },
+  "rpc": { "jsonrpc": "2.0", "id": "client-1", "method": "devices.list", "params": {} }
+}
+```
+
+Responses are plain length-prefixed JSON-RPC 2.0 responses. A connection may
+carry many sequential requests; it stays usable after a rejected request.
+Message size, connection, and request timeouts follow the shared control
+transport policy (1 MiB, 10 s, 30 s by default).
 
 ## Envelope
 
