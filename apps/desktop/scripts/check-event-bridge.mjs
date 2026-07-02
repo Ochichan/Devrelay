@@ -320,11 +320,18 @@ assert.match(app.innerHTML, /Shell Ready/, "continue view did not render hydrati
 assert.match(app.innerHTML, /Checkpoint metadata ready/, "continue view did not render warmth summary");
 assert.match(app.innerHTML, /Run elsewhere/, "continue view did not render run elsewhere placeholder");
 assert.match(app.innerHTML, /aria-label="Review handoff to Target device"/, "handoff review action lacked target label");
+assert.match(app.innerHTML, /Not built yet/, "continue view did not render the not-built marker copy");
+assert.match(
+  app.innerHTML,
+  /data-feature-pending="continue.run-elsewhere"/,
+  "run elsewhere did not carry the standard pending marker"
+);
 await vm.runInContext(
   `
 handleAction({
   dataset: {
-    action: "run-elsewhere-placeholder",
+    action: "feature-pending",
+    feature: "continue.run-elsewhere",
     projectId: "project-1",
   },
 });
@@ -398,11 +405,22 @@ assert.match(app.innerHTML, /Cancel/, "runs view did not render cancel placehold
 assert.match(app.innerHTML, /Artifacts/, "runs view did not render artifact placeholder");
 assert.match(app.innerHTML, /Target device/, "runs view did not render target device name");
 assert.match(app.innerHTML, /aria-label="Cancel run run-queued-1"/, "run cancel action lacked run label");
+assert.match(
+  app.innerHTML,
+  /data-feature-pending="runs.start"/,
+  "run task did not carry the standard pending marker"
+);
+assert.match(
+  app.innerHTML,
+  /data-feature-pending="runs.cancel"/,
+  "run cancel did not carry the standard pending marker"
+);
 await vm.runInContext(
   `
 handleAction({
   dataset: {
-    action: "run-task-placeholder",
+    action: "feature-pending",
+    feature: "runs.start",
   },
 });
 `,
@@ -418,6 +436,11 @@ assert.match(app.innerHTML, /Editor context/, "settings view did not render edit
 assert.match(app.innerHTML, /Advanced diagnostics/, "settings view did not render advanced diagnostics settings");
 assert.match(app.innerHTML, /Save settings/, "settings view did not render save action");
 assert.match(app.innerHTML, /Checkpoint cache/, "settings view did not render cache state");
+assert.match(
+  app.innerHTML,
+  /data-feature-pending="settings.retention"/,
+  "retention controls did not carry the standard pending marker"
+);
 assert.equal(
   vm.runInContext(
     'validateSettingsInput({ get: (name) => name === "resource_profile" ? "adaptive" : name === "editor_command" ? "code" : null })',
@@ -449,11 +472,22 @@ assert.match(app.innerHTML, /16 GB total/, "devices view did not render memory s
 assert.match(app.innerHTML, /420 GB free/, "devices view did not render disk summary");
 assert.match(app.innerHTML, /AC, low power off/, "devices view did not render battery or AC state");
 assert.match(app.innerHTML, /Warm cache/, "devices view did not render cache warmth");
+assert.match(
+  app.innerHTML,
+  /data-feature-pending="devices.pair"/,
+  "pair device did not carry the standard pending marker"
+);
+assert.match(
+  app.innerHTML,
+  /data-feature-pending="devices.revoke"/,
+  "device revoke did not carry the standard pending marker"
+);
 await vm.runInContext(
   `
 handleAction({
   dataset: {
-    action: "device-pair-placeholder",
+    action: "feature-pending",
+    feature: "devices.pair",
   },
 });
 `,
@@ -728,5 +762,18 @@ assert.match(
   /Event stream reconnecting|Events reconnecting/,
   "event bridge reconnect state did not render"
 );
+
+documentHandlers.get("keydown")({
+  key: "k",
+  metaKey: true,
+  preventDefault: () => {},
+});
+assert.match(app.innerHTML, /data-palette-input/, "command menu did not open on the keyboard shortcut");
+assert.match(app.innerHTML, /Not built yet/, "command menu did not mark not-built commands");
+documentHandlers.get("keydown")({
+  key: "Escape",
+  preventDefault: () => {},
+});
+assert.equal(vm.runInContext("state.palette", context), null, "Escape did not close the command menu");
 
 console.log("event bridge check passed");

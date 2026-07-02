@@ -1,18 +1,147 @@
+/*
+ * DevRelay desktop frontend.
+ *
+ * Contract (enforced by scripts/check-ui-state-authority.mjs and
+ * scripts/check-event-bridge.mjs):
+ *   - The local agent is the only state authority. This file may call the
+ *     whitelisted Tauri commands and fold agent events into `state`; it must
+ *     never read Git, the filesystem, shells, or durable browser storage.
+ *   - The UI never declares that work moved. Handoff progress is rendered
+ *     from agent handoff records and events only, and target apply plus
+ *     verification stay visibly pending until the agent confirms them.
+ *   - Rendered copy never exposes internal wire terminology.
+ *
+ * Complete-product shell with explicit not-built markers:
+ *   The layout below is the final product surface. Features the agent cannot
+ *   back yet are declared once in the FEATURES registry and must render the
+ *   standard "Not built yet" marker. scripts/check-feature-status.mjs keeps
+ *   the registry and the markers in sync. Removal procedure for finished
+ *   features lives in apps/desktop/AGENTS.md.
+ */
+
 const app = document.querySelector("#app");
 
+/* FEATURE-REGISTRY-START
+ * Registry of product surfaces that are designed but not wired to the local
+ * agent yet. Every entry must be rendered with pendingChip(id) and routed
+ * through data-action="feature-pending". When the agent gains the backing
+ * RPC, wire the real action, delete the entry here, delete its markers, and
+ * update scripts/check-event-bridge.mjs plus apps/desktop/AGENTS.md.
+ */
+const FEATURES = {
+  "fabric.switch": {
+    title: "Fabric switching",
+    area: "shell",
+    toast: "Fabric switching is not wired to the agent yet",
+    note: "The agent manages a single local fabric today.",
+  },
+  "continue.run-elsewhere": {
+    title: "Run elsewhere",
+    area: "continue",
+    toast: "Run elsewhere is not wired to the agent yet",
+    note: "Remote run dispatch has no agent RPC yet.",
+  },
+  "continue.route-telemetry": {
+    title: "Route telemetry",
+    area: "continue",
+    toast: "Route telemetry is not wired to the agent yet",
+    note: "The agent does not report link timing or transfer volume yet.",
+  },
+  "insights.protection-trend": {
+    title: "Protection trend",
+    area: "continue",
+    toast: "Protection trend is not wired to the agent yet",
+    note: "Local metrics aggregation is not exposed to the desktop yet.",
+  },
+  "scheduler.controls": {
+    title: "Scheduler controls",
+    area: "continue",
+    toast: "Scheduler controls are not wired to the agent yet",
+    note: "The agent explains past target choices but takes no scheduling commands.",
+  },
+  "projects.pick-folder": {
+    title: "Folder picker",
+    area: "projects",
+    toast: "Folder picking is not wired to the agent yet",
+    note: "The UI cannot browse the filesystem; type the project path instead.",
+  },
+  "devices.pair": {
+    title: "Pair device",
+    area: "devices",
+    toast: "Pair device is not wired to the agent yet",
+    note: "Pairing runs through the CLI until the desktop pairing flow lands.",
+  },
+  "devices.revoke": {
+    title: "Device revoke",
+    area: "devices",
+    toast: "Device revoke is not wired to the agent yet",
+    note: "Revocation runs through the CLI until the desktop flow lands.",
+  },
+  "devices.policy": {
+    title: "Resource policy",
+    area: "devices",
+    toast: "Resource policy is not wired to the agent yet",
+    note: "Per-device resource policy editing has no agent RPC yet.",
+  },
+  "runs.start": {
+    title: "Run task",
+    area: "runs",
+    toast: "Run task is not wired to the agent yet",
+    note: "The agent has no task-start RPC yet.",
+  },
+  "runs.cancel": {
+    title: "Run cancel",
+    area: "runs",
+    toast: "Run cancel is not wired to the agent yet",
+    note: "The agent has no run-cancel RPC yet.",
+  },
+  "runs.artifacts": {
+    title: "Run artifacts",
+    area: "runs",
+    toast: "Run artifacts are not wired to the agent yet",
+    note: "Artifact retrieval is not exposed to the desktop yet.",
+  },
+  "runs.cache-history": {
+    title: "Cache history",
+    area: "runs",
+    toast: "Cache history is not wired to the agent yet",
+    note: "Result-cache history is not exposed to the desktop yet.",
+  },
+  "settings.retention": {
+    title: "Retention controls",
+    area: "settings",
+    toast: "Retention controls are not wired to the agent yet",
+    note: "Retention runs on agent defaults; advanced controls come later.",
+  },
+  "settings.standby-target": {
+    title: "Standby target",
+    area: "settings",
+    toast: "Standby target is not wired to the agent yet",
+    note: "A default continue target cannot be pinned through the agent yet.",
+  },
+  "editor.context-restore": {
+    title: "Editor context restore",
+    area: "settings",
+    toast: "Editor context restore is not wired to the agent yet",
+    note: "Editor context restore is driven from the VS Code extension today.",
+  },
+};
+/* FEATURE-REGISTRY-END */
+
 const views = [
-  ["continue", "Continue", "play"],
-  ["projects", "Projects", "folder"],
-  ["devices", "Devices", "monitor"],
-  ["runs", "Runs", "terminal"],
-  ["activity", "Activity", "pulse"],
-  ["settings", "Settings", "settings"],
+  ["continue", "Continue", "play", "Workspace"],
+  ["projects", "Projects", "folder", "Workspace"],
+  ["devices", "Devices", "monitor", "Workspace"],
+  ["runs", "Runs", "terminal", "Workspace"],
+  ["activity", "Activity", "pulse", "System"],
+  ["settings", "Settings", "settings", "System"],
 ];
 
 const resourceProfiles = ["adaptive", "instant", "eco", "custom", "balanced", "performance"];
 
 const state = {
   view: "continue",
+  theme: "auto",
   loading: true,
   operation: null,
   selectedProjectId: null,
@@ -21,11 +150,13 @@ const state = {
   recoverySnapshotId: null,
   activityFilter: "all",
   handoffDialog: null,
+  palette: null,
   bootstrap: null,
   projectStatus: new Map(),
   runtimeError: null,
   eventBridge: {
     connected: false,
+    everConnected: false,
     refreshing: false,
     stale: false,
     lastConnectedAt: null,
@@ -40,20 +171,7 @@ const state = {
   pendingFocusSelector: null,
 };
 
-const icons = {
-  play: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5v14l11-7-11-7Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
-  folder: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
-  monitor: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5h16v11H4V5Zm5 15h6m-3-4v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  terminal: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 7 5 5-5 5m8 0h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  pulse: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h4l2-6 4 12 2-6h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  settings: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z" stroke="currentColor" stroke-width="2"/><path d="M19 12a7.4 7.4 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7.3 7.3 0 0 0-1.8-1L14.4 3h-4.8l-.3 3.1a7.3 7.3 0 0 0-1.8 1l-2.4-1-2 3.4 2 1.5a7.4 7.4 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7.3 7.3 0 0 0 1.8 1l.3 3.1h4.8l.3-3.1a7.3 7.3 0 0 0 1.8-1l2.4 1 2-3.4-2-1.5c.1-.3.1-.7.1-1Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
-  refresh: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 12a8 8 0 0 1-13.7 5.7M4 12A8 8 0 0 1 17.7 6.3M18 3v4h-4M6 21v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  check: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 12 4 4 10-9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  x: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-  box: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm0 9 8-4.5M12 12 4 7.5m8 4.5v9" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
-  external: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 4h6v6M10 14 20 4M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  download: '<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-};
+/* ------------------------------------------------------------ runtime */
 
 function invoke(name, params) {
   const runtimeInvoke = window.__TAURI__?.core?.invoke || window.__TAURI__?.tauri?.invoke;
@@ -69,6 +187,8 @@ function listen(name, handler) {
   return runtimeListen(name, handler);
 }
 
+/* -------------------------------------------------------------- utils */
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -76,6 +196,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function icon(name, extra = "") {
+  return `<svg class="icon${extra ? ` ${extra}` : ""}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 }
 
 function selectorValue(value) {
@@ -154,6 +278,65 @@ function titleize(value) {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+function plural(count, word) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+function parseJsonObject(value) {
+  if (!value || typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+let toastCounter = 0;
+
+function toast(message, kind = "good") {
+  const id = crypto.randomUUID?.() ?? `toast-${(toastCounter += 1)}`;
+  state.toasts.push({ id, message, kind });
+  render();
+  window.setTimeout(() => {
+    state.toasts = state.toasts.filter((entry) => entry.id !== id);
+    render();
+  }, 5000);
+}
+
+/* --------------------------------------------- not-built-yet markers */
+
+function featureEntry(featureId) {
+  return FEATURES[featureId] ?? null;
+}
+
+function pendingChip(featureId) {
+  const entry = featureEntry(featureId);
+  if (!entry) return "";
+  return `<span class="pending-chip" data-feature-pending="${escapeHtml(featureId)}" title="${escapeHtml(
+    `${entry.title}: designed for the complete product, not backed by the local agent yet. ${entry.note}`
+  )}">${icon("cone")}Not built yet</span>`;
+}
+
+function pendingAction(featureId, label, extraClass = "", extraAria = "") {
+  const entry = featureEntry(featureId);
+  if (!entry) return "";
+  const aria = extraAria || label;
+  return `<button type="button" class="button ${extraClass}" data-action="feature-pending" data-feature="${escapeHtml(
+    featureId
+  )}" aria-label="${escapeHtml(aria)}" title="${escapeHtml(entry.note)}">${escapeHtml(label)}${pendingChip(featureId)}</button>`;
+}
+
+function pendingPanel(featureId, body) {
+  const entry = featureEntry(featureId);
+  if (!entry) return "";
+  return `<div class="pending-panel" data-feature-pending="${escapeHtml(featureId)}">${icon("cone")}<div><strong>${escapeHtml(
+    entry.title
+  )}</strong> is not built yet. ${escapeHtml(body || entry.note)}</div></div>`;
+}
+
+/* ---------------------------------------------------- bootstrap reads */
+
 function methods() {
   return new Set(state.bootstrap?.agent?.methods ?? []);
 }
@@ -164,18 +347,6 @@ function projects() {
 
 function devices() {
   return state.bootstrap?.devices ?? [];
-}
-
-function runs() {
-  return state.bootstrap?.runs ?? [];
-}
-
-function activity() {
-  return state.bootstrap?.activity ?? [];
-}
-
-function liveEvents() {
-  return state.eventBridge.events ?? [];
 }
 
 function snapshots() {
@@ -194,551 +365,194 @@ function environments() {
   return state.bootstrap?.environments ?? [];
 }
 
-function selectedProject() {
-  const all = projects();
-  if (!state.selectedProjectId && all.length > 0) {
-    state.selectedProjectId = all[0].project_id;
-  }
-  return all.find((project) => project.project_id === state.selectedProjectId) ?? all[0] ?? null;
+function runs() {
+  return state.bootstrap?.runs ?? [];
 }
 
-function projectStatus(projectId) {
-  return state.projectStatus.get(projectId);
+function activity() {
+  return state.bootstrap?.activity ?? [];
 }
 
-function activeWorkspace(project) {
-  const entries = Object.values(project?.workspaces ?? {});
-  const deviceId = state.bootstrap?.settings?.device_id;
-  return (
-    entries.find((workspace) => workspace.state === "active" && workspace.device_id === deviceId) ??
-    entries.find((workspace) => workspace.state === "active") ??
-    entries[0] ??
-    null
-  );
+function settings() {
+  return state.bootstrap?.settings ?? null;
 }
 
-function projectEnvironment(project, workspace) {
-  if (!project) return null;
-  const workspaceId = workspace?.workspace_id ?? null;
-  return (
-    environments().find(
-      (entry) => entry.project_id === project.project_id && (entry.workspace_id ?? null) === workspaceId
-    ) ??
-    environments().find((entry) => entry.project_id === project.project_id && !entry.workspace_id) ??
-    null
-  );
+function liveEvents() {
+  return state.eventBridge.events;
 }
 
-function hydrationTone(entry) {
-  if (!entry) return "warn";
-  if (entry.state === "failed") return "bad";
-  if (["shell-ready", "app-ready"].includes(entry.state)) return "good";
-  return "warn";
+function localDeviceId() {
+  return settings()?.device_id ?? null;
 }
 
-function hydrationLabel(entry) {
-  if (!entry) return "Unknown";
-  if (!entry.persisted && entry.state === "cold") return "Not started";
-  return titleize(entry.state);
-}
-
-function hydrationDetail(entry, resourceDetail) {
-  const resource = resourceDetail ? ` - ${resourceDetail}` : "";
-  if (!entry) return `No hydration state reported by this agent${resource}`;
-  if (entry.failure) return `${entry.failure}${resource}`;
-  if (!entry.persisted) return `No persisted hydration attempt${resource}`;
-  const updated = entry.updated_at_unix_seconds ? formatAge(entry.updated_at_unix_seconds) : "unknown";
-  return `Attempt ${entry.attempt}, updated ${updated}${resource}`;
-}
-
-function projectLeases(projectId) {
-  return leases().filter((lease) => lease.project_id === projectId);
-}
-
-function activeLease(projectId) {
-  const entries = projectLeases(projectId);
-  return (
-    entries.find((lease) => lease.state === "active") ??
-    entries.find((lease) => lease.state === "handoff-pending") ??
-    entries[0] ??
-    null
-  );
-}
-
-function targetDevices() {
-  const currentDeviceId = state.bootstrap?.settings?.device_id;
-  return devices().filter((device) => device.device_id !== currentDeviceId);
-}
-
-function currentDevice() {
-  const settings = state.bootstrap?.settings;
-  const runtime = state.bootstrap?.runtime;
-  const deviceId = settings?.device_id;
-  return (
-    devices().find((device) => device.device_id === deviceId) ?? {
-      device_id: deviceId ?? "local",
-      display_name: settings?.device_name ?? "Local device",
-      platform_key: runtime?.platform_key ?? "unknown",
-      architecture: runtime?.architecture ?? "",
-      last_seen_unix_seconds: null,
-    }
-  );
-}
-
-function latestSnapshot(projectId) {
-  return snapshots()
-    .filter((snapshot) => snapshot.project_id === projectId)
-    .sort((left, right) => (right.sequence_number ?? 0) - (left.sequence_number ?? 0))[0];
-}
-
-function recoverySnapshots(projectId) {
-  return snapshots()
-    .filter((snapshot) => !projectId || snapshot.project_id === projectId)
-    .sort((left, right) => {
-      const rightTime = right.created_at_unix_seconds ?? 0;
-      const leftTime = left.created_at_unix_seconds ?? 0;
-      if (rightTime !== leftTime) return rightTime - leftTime;
-      return (right.sequence_number ?? 0) - (left.sequence_number ?? 0);
-    });
-}
-
-function selectedRecoveryProject() {
-  const all = projects();
-  if (!state.recoveryProjectId || !all.some((project) => project.project_id === state.recoveryProjectId)) {
-    state.recoveryProjectId = selectedProject()?.project_id ?? all[0]?.project_id ?? null;
-  }
-  return all.find((project) => project.project_id === state.recoveryProjectId) ?? all[0] ?? null;
-}
-
-function selectedRecoverySnapshot(projectId) {
-  const entries = recoverySnapshots(projectId);
-  if (!state.recoverySnapshotId || !entries.some((snapshot) => snapshot.snapshot_id === state.recoverySnapshotId)) {
-    state.recoverySnapshotId = entries[0]?.snapshot_id ?? null;
-  }
-  return entries.find((snapshot) => snapshot.snapshot_id === state.recoverySnapshotId) ?? entries[0] ?? null;
-}
-
-function latestHandoff(projectId) {
-  const entries = handoffs().filter((handoff) => handoff.record?.project_id === projectId);
-  const active = entries.find(
-    (handoff) => !["committed", "aborted"].includes(handoff.record?.state)
-  );
-  return (
-    active ??
-    entries.sort((left, right) => {
-      const leftTime = left.record?.expires_at_unix_seconds ?? 0;
-      const rightTime = right.record?.expires_at_unix_seconds ?? 0;
-      return rightTime - leftTime;
-    })[0]
-  );
-}
-
-function incomingHandoff(projectId) {
-  const localDeviceId = state.bootstrap?.settings?.device_id;
-  if (!localDeviceId) return null;
-  return (
-    handoffs()
-      .filter(
-        (handoff) =>
-          handoff.record?.project_id === projectId &&
-          handoff.record?.target_device_id === localDeviceId &&
-          handoffIsOpen(handoff)
-      )
-      .sort((left, right) => {
-        const leftTime = left.record?.expires_at_unix_seconds ?? 0;
-        const rightTime = right.record?.expires_at_unix_seconds ?? 0;
-        return leftTime - rightTime;
-      })[0] ?? null
-  );
-}
-
-function handoffIsOpen(handoff) {
-  return Boolean(handoff && !["committed", "aborted"].includes(handoff.record?.state));
+function deviceById(deviceId) {
+  return devices().find((device) => device.device_id === deviceId) ?? null;
 }
 
 function deviceName(deviceId) {
-  if (!deviceId) return "No writer recorded";
-  const found = devices().find((device) => device.device_id === deviceId);
-  return found?.display_name ?? deviceId;
+  if (!deviceId) return "Unknown device";
+  return deviceById(deviceId)?.display_name ?? shortId(deviceId);
 }
 
-function eventDeviceName(deviceId) {
-  const found = devices().find((device) => device.device_id === deviceId);
-  return found?.display_name ?? deviceId ?? "Unknown device";
+function projectById(projectId) {
+  return projects().find((project) => project.project_id === projectId) ?? null;
 }
 
-function activeWriterRow(workspace, lease) {
-  if (lease) {
-    const tone = lease.state === "active" ? "good" : "warn";
-    return `<div class="status-row"><span class="dot ${tone}"></span><div><strong>${escapeHtml(deviceName(lease.holder_device_id))}</strong><span>${escapeHtml(titleize(lease.state))} writer from agent state</span></div><span class="badge ${tone}">Writer</span></div>`;
-  }
-  return `<div class="status-row"><span class="dot ${workspace?.state === "active" ? "good" : "warn"}"></span><div><strong>${escapeHtml(workspace?.device_id ?? "No writer recorded")}</strong><span>${escapeHtml(workspace?.local_path ?? "No workspace path")}</span></div><span class="badge">${escapeHtml(workspace?.state ?? "unknown")}</span></div>`;
+function projectName(projectId) {
+  if (!projectId) return "Unknown project";
+  return projectById(projectId)?.display_name ?? shortId(projectId);
 }
 
-function handoffTone(handoff) {
-  const state = handoff?.record?.state;
-  if (!state) return "warn";
-  if (state === "committed") return "good";
-  if (state === "aborted") return "bad";
-  return "warn";
+function selectedProject() {
+  const list = projects();
+  if (list.length === 0) return null;
+  return list.find((project) => project.project_id === state.selectedProjectId) ?? list[0];
 }
 
-function handoffRow(handoff) {
-  if (!handoff) {
-    return '<div class="status-row"><span class="dot warn"></span><div><strong>No handoff in progress</strong><span>Waiting for a verified target continuation.</span></div><span class="badge">idle</span></div>';
-  }
-  const record = handoff.record;
-  const tone = handoffTone(handoff);
-  const target = record.target_device_id ? `to ${record.target_device_id}` : "target pending";
-  const remaining = formatUntil(record.expires_at_unix_seconds);
-  const expires = remaining === "expired" ? "expired" : `expires in ${remaining}`;
-  const action = handoffIsOpen(handoff)
-    ? `<button class="button danger" data-action="handoff-abort" data-project-id="${escapeHtml(record.project_id)}" data-handoff-id="${escapeHtml(record.handoff_id)}" ${state.operation ? "disabled" : ""}>${icons.x}<span>Abort handoff</span></button>`
-    : `<span class="badge ${tone}">${escapeHtml(shortId(record.handoff_id))}</span>`;
-  return `<div class="status-row"><span class="dot ${tone}"></span><div><strong>${escapeHtml(titleize(record.state))}</strong><span>${escapeHtml(target)} - ${escapeHtml(expires)}</span></div>${action}</div>`;
+/* --------------------------------------------------- derived insight */
+
+const ONLINE_WINDOW_SECONDS = 300;
+
+function deviceOnline(device) {
+  if (!device?.last_seen_unix_seconds) return false;
+  return Date.now() / 1000 - device.last_seen_unix_seconds < ONLINE_WINDOW_SECONDS;
 }
 
-function recentlySeen(device) {
-  return Math.floor(Date.now() / 1000) - (device?.last_seen_unix_seconds ?? 0) < 300;
+function deviceOsFamily(device) {
+  const key = String(device?.platform_key ?? "").toLowerCase();
+  if (key.includes("darwin") || key.includes("macos")) return "macOS";
+  if (key.includes("wsl")) return "WSL";
+  if (key.includes("windows") || key.includes("msvc")) return "Windows";
+  if (key.includes("linux")) return "Linux";
+  return titleize(device?.platform_key ?? "Unknown");
 }
 
-function parseJsonObject(value) {
-  if (!value) return {};
-  if (typeof value === "object" && !Array.isArray(value)) return value;
-  if (typeof value !== "string") return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
+function deviceGlyphTone(device) {
+  const family = deviceOsFamily(device);
+  if (family === "macOS") return "mac";
+  if (family === "Linux") return "linux";
+  if (family === "Windows" || family === "WSL") return "win";
+  return "generic";
 }
 
-function capabilityLabel(key) {
-  if (key === "wsl") return "WSL";
-  if (key === "fsmonitor") return "FSMonitor";
-  return titleize(key);
+function deviceGlyphIcon(device) {
+  const family = deviceOsFamily(device);
+  if (family === "macOS") return "laptop";
+  if (family === "Linux") return "server";
+  return "monitor";
 }
 
-function deviceCapabilityLabels(device) {
-  const capabilities = parseJsonObject(device.capabilities ?? device.capabilities_json);
-  const roles = Array.isArray(capabilities.roles) ? capabilities.roles.map(titleize) : [];
-  const enabled = Object.entries(capabilities)
-    .filter(([, value]) => value === true)
-    .map(([key]) => capabilityLabel(key));
-  const labels = [...roles, ...enabled].filter(Boolean);
-  return labels.length > 0 ? labels : ["Identity"];
+function deviceCapabilities(device) {
+  return Object.entries(parseJsonObject(device?.capabilities_json))
+    .filter(([, enabled]) => Boolean(enabled))
+    .map(([name]) => titleize(name));
 }
 
-function deviceState(device) {
-  if (recentlySeen(device)) {
-    return {
-      tone: "good",
-      label: "Online",
-      detail: `Last seen ${formatAge(device.last_seen_unix_seconds)}`,
-    };
-  }
-  return {
-    tone: "warn",
-    label: "Offline",
-    detail: `Last seen ${formatAge(device?.last_seen_unix_seconds)}`,
-  };
+function remoteDevices() {
+  const local = localDeviceId();
+  return devices().filter((device) => device.device_id !== local);
 }
 
-function osFamily(platformKey) {
-  const key = String(platformKey ?? "");
-  if (key.startsWith("darwin") || key === "macos") return "macOS";
-  if (key.startsWith("linux")) return "Linux";
-  if (key.startsWith("wsl")) return "WSL";
-  if (key.startsWith("windows")) return "Windows";
-  return key || "Unknown OS";
+function readyTargets() {
+  return remoteDevices().filter((device) => deviceOnline(device));
 }
 
-function resourceValueLabel(value) {
-  if (value === null || value === undefined || value === "") return null;
-  if (typeof value === "object") {
-    return value.summary ?? value.label ?? value.value ?? null;
-  }
-  return String(value);
+function targetAvailability() {
+  const remote = remoteDevices();
+  return { ready: readyTargets().length, total: remote.length };
 }
 
-function deviceResource(device, key) {
-  const summary = device.resource_summary ?? device.resourceSummary ?? device.resources ?? {};
-  const aliases = {
-    cpu: ["cpu", "cpu_summary", "cpuSummary"],
-    memory: ["memory", "memory_summary", "memorySummary"],
-    disk: ["disk", "disk_summary", "diskSummary"],
-    power: ["power", "power_source", "powerSource", "battery", "battery_ac", "batteryAc"],
-    cache: ["cache_warmth", "cacheWarmth", "cache", "cache_summary", "cacheSummary"],
-  }[key];
-  for (const alias of aliases ?? [key]) {
-    const label = resourceValueLabel(summary[alias] ?? device[alias]);
-    if (label) return label;
-  }
-  return "Not reported";
+function projectSnapshots(projectId) {
+  return snapshots()
+    .filter((snapshot) => snapshot.project_id === projectId)
+    .sort((a, b) => (b.created_at_unix_seconds ?? 0) - (a.created_at_unix_seconds ?? 0));
 }
 
-function capabilityBadges(device) {
-  return deviceCapabilityLabels(device)
-    .map((label) => `<span class="badge">${escapeHtml(label)}</span>`)
-    .join("");
+function latestSnapshot(projectId) {
+  return projectSnapshots(projectId)[0] ?? null;
 }
 
-function macLinuxTarget(device) {
-  const platform = String(device?.platform_key ?? "");
-  return (
-    ["darwin", "macos", "linux", "linux-gnu"].includes(platform) ||
-    platform.startsWith("darwin-") ||
-    platform.startsWith("linux-gnu-")
+function projectWriter(projectId) {
+  const active = leases().find(
+    (entry) => entry.project_id === projectId && (entry.state === "active" || entry.state === "handoff-pending")
   );
-}
-
-function targetReadiness(device, context) {
-  const { handoffReady, lease, openHandoff } = context;
-  if (!macLinuxTarget(device)) {
-    return {
-      ready: false,
-      tone: "warn",
-      label: "Later OS",
-      detail: "Windows and WSL UI wait for named pipe IPC hardening.",
-    };
-  }
-  if (!recentlySeen(device)) {
-    return {
-      ready: false,
-      tone: "warn",
-      label: "Offline",
-      detail: `Last seen ${formatAge(device.last_seen_unix_seconds)}`,
-    };
-  }
-  if (!handoffReady) {
-    return {
-      ready: false,
-      tone: "warn",
-      label: "Update needed",
-      detail: "This agent build cannot start device handoff yet.",
-    };
-  }
-  if (openHandoff) {
-    return {
-      ready: false,
-      tone: "warn",
-      label: "Preparing",
-      detail: "A handoff is already waiting for the target device.",
-    };
-  }
-  if (!lease || lease.state !== "active") {
-    return {
-      ready: false,
-      tone: "warn",
-      label: "Open here",
-      detail: "Open this project on this device before handoff.",
-    };
-  }
-  if (lease.holder_device_id !== state.bootstrap?.settings?.device_id) {
-    return {
-      ready: false,
-      tone: "warn",
-      label: "Start elsewhere",
-      detail: "Start handoff from the device that is currently editing this project.",
-    };
-  }
+  if (!active) return null;
   return {
-    ready: true,
-    tone: "good",
-    label: "Ready",
-    detail: "Fresh checkpoint and target preparation can start.",
+    deviceId: active.holder_device_id ?? null,
+    state: active.state,
+    local: active.holder_device_id === localDeviceId(),
   };
 }
 
-function projectTargetAvailability(project) {
-  const targets = targetDevices();
-  const lease = activeLease(project.project_id);
-  const openHandoff = handoffIsOpen(latestHandoff(project.project_id));
-  const handoffReady = methods().has("handoff.begin");
-  const entries = targets.map((device) => ({
-    device,
-    readiness: targetReadiness(device, { handoffReady, lease, openHandoff }),
-  }));
-  const readyCount = entries.filter((entry) => entry.readiness.ready).length;
-  const label = targets.length === 0 ? "No targets" : `${readyCount}/${targets.length} ready`;
-  const detail =
-    entries.length === 0
-      ? "Pair another device before starting a desktop handoff."
-      : entries.map((entry) => `${entry.device.display_name}: ${entry.readiness.label}`).join("; ");
-  return {
-    entries,
-    readyCount,
-    total: targets.length,
-    tone: readyCount > 0 ? "good" : "warn",
-    label,
-    detail,
-  };
+function openHandoffs(projectId) {
+  return handoffs().filter((entry) => {
+    const record = entry.record ?? entry;
+    if (projectId && record.project_id !== projectId) return false;
+    return record.state === "target-prepare" || record.state === "target-verified" || record.state === "source-ready";
+  });
 }
 
-function projectSession(project) {
-  const workspace = activeWorkspace(project);
-  const checkpoint = latestSnapshot(project.project_id);
-  return {
-    workspace,
-    label: workspace?.workspace_id ?? checkpoint?.session_id ?? "No session recorded",
-    detail: workspace?.local_path ?? project.local_path,
-    state: workspace?.state ?? "unknown",
-  };
+function incomingHandoff(entry) {
+  const record = entry.record ?? entry;
+  return record.target_device_id === localDeviceId();
 }
 
-function projectWriter(project) {
-  const lease = activeLease(project.project_id);
-  const workspace = activeWorkspace(project);
-  const workspaceWriter = workspace?.state === "active" ? workspace.device_id : null;
-  const writerId = lease?.holder_device_id ?? workspaceWriter;
-  return {
-    label: deviceName(writerId),
-    detail: lease ? `${titleize(lease.state)} writer` : workspaceWriter ? "Active workspace" : "No active writer",
-    tone: lease?.state === "active" ? "good" : "warn",
-  };
+function projectEnvironments(projectId) {
+  return environments().filter((entry) => entry.project_id === projectId);
 }
 
-function projectCheckpoint(project) {
-  const checkpoint = latestSnapshot(project.project_id);
-  if (!checkpoint) {
-    return {
-      label: "No checkpoint",
-      detail: "Create a checkpoint before handoff.",
-      tone: "warn",
-    };
-  }
-  return {
-    label: shortId(checkpoint.snapshot_id),
-    detail: `${formatAge(checkpoint.created_at_unix_seconds)} - ${checkpoint.label ?? "unlabeled"}`,
-    tone: "good",
-  };
+function environmentReadiness(projectId) {
+  const entry = projectEnvironments(projectId)[0];
+  if (!entry) return "No hydration record yet";
+  return titleize(entry.state);
 }
 
-function projectAttention(project) {
-  const status = projectStatus(project.project_id);
-  const counts = statusCounts(status?.data);
-  const availability = projectTargetAvailability(project);
-  if (status?.error) {
-    return { needsAttention: true, tone: "bad", label: "Status error", detail: status.error };
-  }
-  if (counts.unmerged > 0) {
-    return {
-      needsAttention: true,
-      tone: "bad",
-      label: "Conflicts",
-      detail: "Resolve conflicts before handoff.",
-    };
-  }
-  if (handoffIsOpen(latestHandoff(project.project_id))) {
-    return {
-      needsAttention: true,
-      tone: "warn",
-      label: "Handoff open",
-      detail: "Finish or abort the active handoff.",
-    };
-  }
-  if (!latestSnapshot(project.project_id)) {
-    return {
-      needsAttention: true,
-      tone: "warn",
-      label: "No checkpoint",
-      detail: "Checkpoint status is empty.",
-    };
-  }
-  const lease = activeLease(project.project_id);
-  if (!lease || lease.state !== "active") {
-    return {
-      needsAttention: true,
-      tone: "warn",
-      label: "No active writer",
-      detail: "Writer state is not active.",
-    };
-  }
-  if (availability.total > 0 && availability.readyCount === 0) {
-    return {
-      needsAttention: true,
-      tone: "warn",
-      label: "No ready target",
-      detail: availability.detail,
-    };
-  }
-  return { needsAttention: false, tone: "good", label: "Ready", detail: "No immediate action needed." };
+function localCacheWarmth() {
+  const local = deviceById(localDeviceId());
+  return local?.resource_summary?.cache_warmth ?? null;
 }
 
-function projectSearchText(project) {
-  const session = projectSession(project);
-  const writer = projectWriter(project);
-  return [
-    project.display_name,
-    project.local_path,
-    project.project_id,
-    session.label,
-    session.detail,
-    writer.label,
-    writer.detail,
-  ]
-    .join(" ")
-    .toLowerCase();
+function projectRuns(projectId) {
+  return runs()
+    .filter((run) => run.project_id === projectId)
+    .sort((a, b) => (b.updated_at_unix_seconds ?? 0) - (a.updated_at_unix_seconds ?? 0));
 }
 
-function filteredProjects() {
-  const query = state.projectFilter.trim().toLowerCase();
-  if (!query) return projects();
-  return projects().filter((project) => projectSearchText(project).includes(query));
+function runsByState(stateName) {
+  return runs()
+    .filter((run) => run.state === stateName)
+    .sort((a, b) => (b.updated_at_unix_seconds ?? 0) - (a.updated_at_unix_seconds ?? 0));
 }
 
-function continueHereReadiness(handoff) {
-  if (!handoff) {
-    return {
-      ready: false,
-      tone: "warn",
-      label: "No incoming handoff",
-      detail: "Start a handoff from another device before continuing here.",
-    };
-  }
-  const record = handoff.record ?? {};
-  const remaining = formatUntil(record.expires_at_unix_seconds);
-  if (remaining === "expired") {
-    return {
-      ready: false,
-      tone: "bad",
-      label: "Expired",
-      detail: "Abort this handoff and start again from the source device.",
-    };
-  }
-  const requiredMethods = [
-    "apply.snapshot",
-    "handoff.target.verify",
-    "handoff.source.ready",
-    "handoff.commit",
-  ];
-  const missingMethod = requiredMethods.find((method) => !methods().has(method));
-  if (missingMethod) {
-    return {
-      ready: false,
-      tone: "warn",
-      label: "RPC missing",
-      detail: `${missingMethod} is not exposed by this agent build.`,
-    };
-  }
-  return {
-    ready: true,
-    tone: "good",
-    label: titleize(record.state),
-    detail: `Ready to apply and verify this handoff on ${deviceName(record.target_device_id)}.`,
-  };
+function schedulerNote(run) {
+  const metadata = run?.metadata && typeof run.metadata === "object" ? run.metadata : {};
+  return metadata.scheduler_explanation ?? metadata.scheduler_reason ?? null;
 }
 
-function continueHereRow(handoff, readiness) {
-  const target = handoff?.record?.target_device_id
-    ? deviceName(handoff.record.target_device_id)
-    : "This device";
-  return `<div class="status-row"><span class="dot ${readiness.tone}"></span><div><strong>${escapeHtml(readiness.label)}</strong><span>${escapeHtml(readiness.detail)}</span></div><span class="badge ${readiness.tone}">${escapeHtml(target)}</span></div>`;
+function runTargetDeviceId(run) {
+  const metadata = run?.metadata && typeof run.metadata === "object" ? run.metadata : {};
+  return metadata.target_device_id ?? null;
+}
+
+function runArtifactCount(run) {
+  const metadata = run?.metadata && typeof run.metadata === "object" ? run.metadata : {};
+  if (Array.isArray(metadata.artifacts)) return metadata.artifacts.length;
+  if (typeof metadata.artifact_count === "number") return metadata.artifact_count;
+  return 0;
+}
+
+function projectNeedsAttention(project) {
+  const projectId = project.project_id;
+  if (openHandoffs(projectId).length > 0) return true;
+  const workspaceStates = Object.values(project.workspaces ?? {}).map((workspace) => workspace.state);
+  if (workspaceStates.some((value) => value === "inactive" || value === "stale")) return true;
+  const failedEnvironment = projectEnvironments(projectId).some((entry) => entry.failure);
+  if (failedEnvironment) return true;
+  return false;
 }
 
 function checkpointEvents() {
-  return liveEvents().filter((event) => event.type?.startsWith("snapshot."));
+  return liveEvents().filter((event) => String(event.type ?? "").startsWith("snapshot."));
 }
 
 function handoffEvents() {
@@ -754,562 +568,1477 @@ function quotaEvents() {
 }
 
 function snapshotEventSummary(event) {
-  const payload = event.payload ?? {};
-  if (event.type === "snapshot.local.created") {
-    return {
-      title: "Checkpoint Created",
-      detail: `${payload.label ?? "unlabeled"} - ${payload.snapshot_sequence_number ? `#${payload.snapshot_sequence_number}` : "sequence pending"} - ${formatClock(event.occurredAt ?? event.receivedAt)}`,
-      badge: payload.snapshot_id ? shortId(payload.snapshot_id) : "created",
-      tone: "good",
-    };
-  }
-  if (event.type === "snapshot.apply.started") {
-    return {
-      title: "Target Apply Started",
-      detail: `${payload.target_workspace_id ?? "target workspace"} - ${payload.dry_run ? "dry run" : "apply"} - ${formatClock(event.occurredAt ?? event.receivedAt)}`,
-      badge: "started",
-      tone: "warn",
-    };
-  }
-  if (event.type === "snapshot.apply.verified") {
-    return {
-      title: "Target Apply Verified",
-      detail: `${payload.target_workspace_id ?? "target workspace"} - ${formatClock(event.occurredAt ?? event.receivedAt)}`,
-      badge: "verified",
-      tone: "good",
-    };
-  }
-  return {
-    title: titleize(event.type),
-    detail: formatClock(event.occurredAt ?? event.receivedAt),
-    badge: "snapshot",
-    tone: "warn",
-  };
-}
-
-function quotaUsage(payload) {
-  const used = payload?.used ?? null;
-  const limit = payload?.limit ?? null;
-  const unit = payload?.unit ?? "";
-  if (used === null) return "usage unknown";
-  if (limit === null || limit === undefined) return `${used} ${unit}`.trim();
-  return `${used}/${limit} ${unit}`.trim();
-}
-
-function runStateGroup(run) {
-  const stateValue = String(run?.state ?? "").toLowerCase();
-  if (["queued", "pending", "scheduled"].includes(stateValue)) return "queued";
-  if (["running", "started", "in-progress", "in_progress"].includes(stateValue)) return "running";
-  if (["failed", "error", "errored", "canceled", "cancelled"].includes(stateValue)) return "failed";
-  return "recent";
-}
-
-function runStateTone(run) {
-  const group = runStateGroup(run);
-  if (group === "running") return "warn";
-  if (group === "failed") return "bad";
-  if (group === "queued") return "";
-  return "good";
-}
-
-function runProjectName(projectId) {
-  const project = projects().find((entry) => entry.project_id === projectId);
-  return project?.display_name ?? projectId ?? "Unknown project";
-}
-
-function runMetadata(run) {
-  return parseJsonObject(run?.metadata);
-}
-
-function runSchedulerExplanation(run) {
-  const metadata = runMetadata(run);
-  return (
-    metadata.scheduler_explanation ??
-    metadata.schedulerExplanation ??
-    metadata.scheduler_reason ??
-    metadata.schedulerReason ??
-    metadata.target_reason ??
-    metadata.targetReason ??
-    "Scheduler explanation not reported"
-  );
-}
-
-function runTargetLabel(run) {
-  const metadata = runMetadata(run);
-  const deviceId =
-    metadata.target_device_id ??
-    metadata.targetDeviceId ??
-    metadata.device_id ??
-    metadata.deviceId ??
-    null;
-  if (deviceId) return deviceName(deviceId);
-  return run.session_id ?? "Target pending";
-}
-
-function runArtifactLabel(run) {
-  const metadata = runMetadata(run);
-  if (Array.isArray(metadata.artifacts)) return `${metadata.artifacts.length} artifacts`;
-  if (metadata.artifact_count !== undefined) return `${metadata.artifact_count} artifacts`;
-  if (metadata.artifactCount !== undefined) return `${metadata.artifactCount} artifacts`;
-  if (metadata.artifact_summary) return String(metadata.artifact_summary);
-  if (metadata.artifactSummary) return String(metadata.artifactSummary);
-  return "No artifacts reported";
-}
-
-function runUpdatedAt(run) {
-  return run.updated_at_unix_seconds ?? run.created_at_unix_seconds;
-}
-
-function statusCounts(statusResult) {
-  return statusResult?.status?.counts ?? {
-    staged: 0,
-    unstaged: 0,
-    untracked: 0,
-    ignored: 0,
-    unmerged: 0,
-  };
-}
-
-function statusUnpushedCount(statusResult) {
-  const status = statusResult?.status ?? {};
-  const value =
-    status.ahead ??
-    status.ahead_count ??
-    status.aheadCount ??
-    status.unpushed ??
-    status.unpushed_count ??
-    status.unpushedCount;
-  if (value === null || value === undefined || value === "") return null;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : null;
-}
-
-function unpushedLabel(count) {
-  if (count === null) return "Not reported by this Git remote";
-  return `${count} ${count === 1 ? "commit" : "commits"} not pushed`;
-}
-
-function statusBadge(statusResult, loading, error) {
-  if (loading) return '<span class="badge">Loading</span>';
-  if (error) return '<span class="badge bad">Status error</span>';
-  if (!statusResult) return '<span class="badge">Not loaded</span>';
-  return statusResult.status?.clean
-    ? '<span class="badge good">Clean</span>'
-    : '<span class="badge warn">Local changes</span>';
-}
-
-function handoffDialogContext() {
-  const dialog = state.handoffDialog;
-  if (!dialog) return null;
-  const project = projects().find((item) => item.project_id === dialog.projectId) ?? selectedProject();
-  if (!project) return null;
-  const status = projectStatus(project.project_id);
-  const counts = statusCounts(status?.data);
-  const unpushed = statusUnpushedCount(status?.data);
-  const workspace = activeWorkspace(project);
-  const lease = activeLease(project.project_id);
-  const checkpoint = latestSnapshot(project.project_id);
-  const handoff = latestHandoff(project.project_id);
-  const record = handoff?.record ?? {};
-  const sourceDeviceId = record.source_device_id ?? state.bootstrap?.settings?.device_id;
-  const targetDeviceId = dialog.targetDeviceId ?? record.target_device_id;
-  const source = devices().find((device) => device.device_id === sourceDeviceId) ?? currentDevice();
-  const target =
-    devices().find((device) => device.device_id === targetDeviceId) ??
-    (targetDeviceId
-      ? {
-          device_id: targetDeviceId,
-          display_name: targetDeviceId,
-          platform_key: "unknown",
-          architecture: "",
-          last_seen_unix_seconds: null,
-        }
-      : null);
-  const handoffReady = methods().has("handoff.begin");
-  const openHandoff = handoffIsOpen(handoff);
-  const targetState = target
-    ? targetReadiness(target, { handoffReady, lease, openHandoff })
-    : {
-        ready: false,
-        tone: "warn",
-        label: "No target",
-        detail: "Select a paired target before starting handoff.",
-      };
-  const session = projectSession(project);
-  const editorCommand = String(state.bootstrap?.settings?.editor_command ?? "").trim();
-  const editorReady = editorCommand.length > 0;
-  const phase = dialog.phase ?? "review";
-  const statusReady = !status?.loading && !status?.error && counts.unmerged === 0;
-  const canConfirm =
-    phase === "review" &&
-    !state.operation &&
-    Boolean(target?.device_id) &&
-    targetState.ready &&
-    statusReady &&
-    !openHandoff;
-  return {
-    dialog: { ...dialog, phase },
-    project,
-    status,
-    counts,
-    unpushed,
-    workspace,
-    lease,
-    checkpoint,
-    handoff,
-    source,
-    target,
-    targetState,
-    session,
-    editorCommand,
-    editorReady,
-    canConfirm,
-  };
-}
-
-function progressStep(label, tone, stateLabel, detail) {
-  return `<div class="progress-step"><span class="dot ${tone}"></span><div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(detail)}</span></div><span class="badge ${tone}">${escapeHtml(stateLabel)}</span></div>`;
-}
-
-function renderHandoffProgress(context) {
-  const phase = context.dialog.phase;
-  const handoffState = context.handoff?.record?.state;
-  const failed = phase === "failure";
-  const savingDone = Boolean(context.checkpoint || context.handoff || phase === "success");
-  const preparingStarted =
-    phase === "running" ||
-    phase === "success" ||
-    ["target-prepare", "target-verified", "source-ready", "committed"].includes(handoffState);
-  const preparingDone = ["source-ready", "committed"].includes(handoffState);
-  const movingStarted = ["source-ready", "committed"].includes(handoffState);
-  const movingDone = handoffState === "committed";
-  const savingTone = failed ? "bad" : savingDone ? "good" : phase === "running" ? "warn" : "warn";
-  const preparingTone = failed ? "bad" : preparingDone ? "good" : preparingStarted ? "warn" : "warn";
-  const movingTone = failed ? "bad" : movingDone ? "good" : movingStarted ? "warn" : "warn";
-  return `<div class="progress-list">
-    ${progressStep(
-      "Saving state",
-      savingTone,
-      savingDone ? "Ready" : phase === "running" ? "Running" : "Pending",
-      savingDone ? "A source checkpoint is available for handoff." : "DevRelay will checkpoint the source before preparing the target."
-    )}
-    ${progressStep(
-      "Preparing device",
-      preparingTone,
-      preparingDone ? "Ready" : preparingStarted ? "Running" : "Pending",
-      preparingDone ? "The target has verified the prepared workspace." : "The target is prepared before control can move."
-    )}
-    ${progressStep(
-      "Moving control",
-      movingTone,
-      movingDone ? "Done" : movingStarted ? "Running" : "Pending",
-      movingDone ? "Control moved to the target device." : "Control moves only after target verification succeeds."
-    )}
-  </div>`;
-}
-
-function renderHandoffDialog() {
-  const context = handoffDialogContext();
-  if (!context) return "";
-  const {
-    dialog,
-    project,
-    counts,
-    unpushed,
-    checkpoint,
-    handoff,
-    source,
-    target,
-    targetState,
-    session,
-    editorCommand,
-    editorReady,
-    canConfirm,
-  } = context;
-  const localChangeTotal = counts.staged + counts.unstaged + counts.untracked;
-  const hasConflict = counts.unmerged > 0;
-  const checkpointLabel = checkpoint
-    ? `${formatAge(checkpoint.created_at_unix_seconds)} - ${checkpoint.label ?? "unlabeled"}`
-    : "Created when preparation starts";
-  const statusTone = hasConflict ? "bad" : localChangeTotal > 0 ? "warn" : "good";
-  const statusDetail = hasConflict
-    ? "Resolve conflicts before handoff can start."
-    : localChangeTotal > 0
-      ? "Local source changes are captured before target preparation starts."
-      : "No local source changes are waiting.";
-  const message =
-    dialog.phase === "failure"
-      ? `<div class="error-box"><strong>Handoff failed</strong><span>${escapeHtml(dialog.message ?? "The handoff did not start.")}</span></div>`
-      : dialog.phase === "success"
-        ? `<div class="success-box"><strong>Handoff started</strong><span>${escapeHtml(dialog.message ?? "Target preparation is in progress.")}</span></div>`
-        : dialog.phase === "running"
-          ? `<div class="loading-line"><span class="small-spinner"></span><span>Starting handoff</span></div>`
-          : "";
-  const activeHandoff = handoffIsOpen(handoff);
-  return `
-    <div class="modal-backdrop" data-handoff-dialog>
-      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="handoff-dialog-title" aria-describedby="handoff-dialog-description" tabindex="-1">
-        <div class="modal-head">
-          <div>
-            <h3 id="handoff-dialog-title">Handoff review</h3>
-            <p id="handoff-dialog-description">Check source, target, and safety state before starting device handoff.</p>
-          </div>
-          <button class="button icon-only" data-action="handoff-dialog-close" aria-label="Close handoff review">${icons.x}</button>
-        </div>
-        <div class="modal-body">
-          ${message}
-          <div class="handoff-route">
-            <div class="route-node">
-              <span>Source device</span>
-              <strong>${escapeHtml(source.display_name ?? "Source device")}</strong>
-              <small>${escapeHtml(source.platform_key ?? "unknown")} ${escapeHtml(source.architecture ?? "")}</small>
-            </div>
-            <div class="route-arrow" aria-hidden="true">&rarr;</div>
-            <div class="route-node">
-              <span>Target device</span>
-              <strong>${escapeHtml(target?.display_name ?? "No target selected")}</strong>
-              <small>${escapeHtml(target?.platform_key ?? "unknown")} ${escapeHtml(target?.architecture ?? "")}</small>
-            </div>
-          </div>
-          <div class="handoff-dialog-grid">
-            <div class="status-stack">
-              <div class="status-row"><span class="dot good"></span><div><strong>Project/session</strong><span>${escapeHtml(project.display_name)} - ${escapeHtml(session.label)}</span></div><span class="badge">${escapeHtml(session.state)}</span></div>
-              <div class="status-row"><span class="dot ${checkpoint ? "good" : "warn"}"></span><div><strong>Checkpoint age</strong><span>${escapeHtml(checkpointLabel)}</span></div><span class="badge ${checkpoint ? "good" : "warn"}">${checkpoint ? "Available" : "On start"}</span></div>
-              <div class="status-row"><span class="dot ${statusTone}"></span><div><strong>Source changes</strong><span>${escapeHtml(statusDetail)}</span></div><span class="badge ${statusTone}">${counts.staged} staged</span></div>
-              <div class="status-row"><span class="dot ${counts.unstaged > 0 ? "warn" : "good"}"></span><div><strong>Modified files</strong><span>${counts.unstaged} modified, ${counts.untracked} new</span></div><span class="badge">${counts.untracked} new</span></div>
-              <div class="status-row"><span class="dot ${unpushed === null ? "warn" : unpushed > 0 ? "warn" : "good"}"></span><div><strong>Unpushed commits</strong><span>${escapeHtml(unpushedLabel(unpushed))}</span></div><span class="badge">${unpushed === null ? "Not reported" : unpushed}</span></div>
-            </div>
-            <div class="status-stack">
-              <div class="status-row"><span class="dot ${targetState.tone}"></span><div><strong>Environment readiness</strong><span>${escapeHtml(targetState.detail)}</span></div><span class="badge ${targetState.tone}">${escapeHtml(targetState.label)}</span></div>
-              <div class="status-row"><span class="dot ${editorReady ? "good" : "warn"}"></span><div><strong>Editor context readiness</strong><span>${editorReady ? escapeHtml(editorCommand) : "Set an editor command before opening restored workspaces."}</span></div><span class="badge ${editorReady ? "good" : "warn"}">${editorReady ? "Ready" : "Missing"}</span></div>
-              <div class="status-row"><span class="dot good"></span><div><strong>Target safety</strong><span>Before moving control, the target verifies its workspace. If local target changes are present, DevRelay stops and leaves them untouched.</span></div><span class="badge good">Protected</span></div>
-              <div class="status-row"><span class="dot good"></span><div><strong>Separate target work</strong><span>If the target has separate local work, DevRelay stops before moving control. You can preserve it separately, open incoming work in a new folder, or cancel safely.</span></div><span class="badge good">No overwrite</span></div>
-            </div>
-          </div>
-          ${renderHandoffProgress(context)}
-        </div>
-        <div class="modal-foot">
-          <button class="button" data-action="handoff-dialog-close">Close</button>
-          ${
-            activeHandoff
-              ? `<button class="button danger" data-action="handoff-abort" data-project-id="${escapeHtml(project.project_id)}" data-handoff-id="${escapeHtml(handoff.record.handoff_id)}" ${state.operation ? "disabled" : ""}>${icons.x}<span>Abort handoff</span></button>`
-              : ""
-          }
-          ${
-            dialog.phase === "success"
-              ? ""
-              : `<button class="button primary" data-action="handoff-confirm" data-project-id="${escapeHtml(project.project_id)}" data-target-device-id="${escapeHtml(target?.device_id ?? "")}" ${canConfirm ? "" : "disabled"}>${icons.play}<span>Start handoff</span></button>`
-          }
-        </div>
-      </section>
-    </div>
-  `;
-}
-
-function sequenceLabel(value) {
-  return value === null || value === undefined ? "none" : `#${value}`;
+  if (event.type === "snapshot.local.created") return "Checkpoint Created";
+  if (event.type === "snapshot.apply.started") return "Target Apply Started";
+  if (event.type === "snapshot.apply.verified") return "Target Apply Verified";
+  return titleize(String(event.type ?? "").replaceAll(".", " "));
 }
 
 function eventBridgeStatus() {
   const bridge = state.eventBridge;
-  if (bridge.stale) return { tone: "warn", label: "Event gap", detail: "Refreshing from agent state" };
-  if (bridge.connected) {
-    return {
-      tone: "good",
-      label: bridge.refreshing ? "Events syncing" : "Events live",
-      detail: bridge.lastEvent
-        ? `${bridge.lastEvent.type} ${sequenceLabel(bridge.lastEvent.sequence)}`
-        : `Subscribed at ${formatClock(bridge.lastConnectedAt)}`,
-    };
-  }
-  if (bridge.lastError) {
-    return { tone: "bad", label: "Events reconnecting", detail: bridge.lastError };
-  }
-  return { tone: "warn", label: "Events connecting", detail: "Waiting for the local agent stream" };
+  if (bridge.stale) return { tone: "warn", label: "Event gap" };
+  if (bridge.connected && bridge.refreshing) return { tone: "sync", label: "Events syncing" };
+  if (bridge.connected) return { tone: "live", label: "Events live" };
+  if (bridge.everConnected) return { tone: "off", label: "Events reconnecting" };
+  return { tone: "sync", label: "Events connecting" };
 }
 
-function currentTitle() {
-  const view = views.find(([id]) => id === state.view);
-  if (!view) return "DevRelay";
-  if (state.view === "continue") {
-    const project = selectedProject();
-    return project ? `Continue ${project.display_name}` : "Continue";
+function agentHealth() {
+  const bridge = state.eventBridge;
+  const agent = state.bootstrap?.agent;
+  if (!agent?.connected) return { tone: "off", label: "Agent offline" };
+  if (bridge.stale || !bridge.connected) return { tone: "warn", label: eventBridgeStatus().label };
+  if ((agent.errors ?? []).length > 0) return { tone: "warn", label: "Agent degraded" };
+  return { tone: "online", label: "All systems healthy" };
+}
+
+/* ---------------------------------------------------------- shell UI */
+
+function navCount(viewId) {
+  if (viewId === "projects") return projects().length;
+  if (viewId === "devices") return devices().length;
+  if (viewId === "runs") return runsByState("queued").length + runsByState("running").length;
+  return null;
+}
+
+function renderNav() {
+  const groups = new Map();
+  for (const [id, label, iconName, group] of views) {
+    if (!groups.has(group)) groups.set(group, []);
+    const count = navCount(id);
+    groups.get(group).push(`
+      <button class="nav-item${state.view === id ? " active" : ""}" data-view="${id}" aria-current="${
+        state.view === id ? "page" : "false"
+      }">
+        ${icon(iconName)}
+        <span class="nav-label">${label}</span>
+        ${count !== null && count > 0 ? `<span class="nav-count">${count}</span>` : ""}
+      </button>`);
   }
-  return view[1];
+  return [...groups.entries()]
+    .map(
+      ([group, items]) => `
+      <div class="nav-group">
+        <div class="nav-group-label">${group}</div>
+        ${items.join("")}
+      </div>`
+    )
+    .join("");
 }
 
-function toast(message, kind = "good") {
-  const id = crypto.randomUUID?.() ?? String(Date.now());
-  state.toasts.push({ id, message, kind });
-  render();
-  window.setTimeout(() => {
-    state.toasts = state.toasts.filter((item) => item.id !== id);
-    render();
-  }, 5000);
-}
-
-async function refresh() {
-  state.loading = true;
-  state.runtimeError = null;
-  render();
-  try {
-    const bootstrap = await invoke("ui_bootstrap");
-    state.bootstrap = bootstrap;
-    if (!state.selectedProjectId || !projects().some((project) => project.project_id === state.selectedProjectId)) {
-      state.selectedProjectId = projects()[0]?.project_id ?? null;
-    }
-    state.loading = false;
-    render();
-    const project = selectedProject();
-    if (project) await refreshProjectStatus(project.project_id, false);
-    return true;
-  } catch (error) {
-    state.bootstrap = null;
-    state.runtimeError = String(error?.message ?? error);
-    state.loading = false;
-    render();
-    return false;
-  }
-}
-
-async function refreshProjectStatus(projectId, announce = true) {
-  if (!projectId) return;
-  state.projectStatus.set(projectId, { loading: true, error: null, data: null });
-  render();
-  try {
-    const result = await invoke("project_status", { projectId });
-    if (!result.ok) throw new Error(result.message);
-    state.projectStatus.set(projectId, { loading: false, error: null, data: result.data });
-    if (announce) toast("Project status loaded");
-  } catch (error) {
-    state.projectStatus.set(projectId, {
-      loading: false,
-      error: String(error?.message ?? error),
-      data: null,
-    });
-    if (announce) toast("Project status failed", "bad");
-  }
-  render();
-}
-
-async function runOperation(label, fn) {
-  state.operation = label;
-  render();
-  try {
-    await fn();
-  } finally {
-    state.operation = null;
-    render();
-  }
-}
-
-function shell() {
-  const bootstrap = state.bootstrap;
-  const agent = bootstrap?.agent;
-  const settings = bootstrap?.settings;
-  const connected = Boolean(agent?.connected);
-  const eventStatus = eventBridgeStatus();
-  const projectCount = projects().length;
+function renderSidebar() {
+  const config = settings();
+  const fabricName = config?.fabric_name ?? "Local fabric";
+  const deviceCount = devices().length;
+  const project = selectedProject();
+  const writer = project ? projectWriter(project.project_id) : null;
+  const snapshot = project ? latestSnapshot(project.project_id) : null;
+  const agent = agentHealth();
   return `
-    <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-row">
-            <div class="brand-symbol">${icons.box}</div>
-            <div class="brand-title">
-              <h1>DevRelay</h1>
-              <p>${escapeHtml(settings?.fabric_name ?? "Local fabric")}</p>
-            </div>
-          </div>
-          <div class="brand-status">
-            <div class="agent-pill">
-              <span class="dot ${connected ? "good" : state.runtimeError ? "bad" : "warn"}"></span>
-              <span>${connected ? "Agent connected" : state.runtimeError ? "Runtime unavailable" : "Agent unavailable"}</span>
-            </div>
-            <div class="agent-pill" title="${escapeHtml(eventStatus.detail)}">
-              <span class="dot ${eventStatus.tone}"></span>
-              <span>${escapeHtml(eventStatus.label)}</span>
-            </div>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">${icon("relay")}</div>
+        <div class="brand-text">
+          <strong>DevRelay</strong>
+          <span>Personal Dev Fabric</span>
+        </div>
+      </div>
+      <button class="fabric-btn" data-action="feature-pending" data-feature="fabric.switch" title="${escapeHtml(
+        FEATURES["fabric.switch"].note
+      )}">
+        <span class="presence-dot ${agent.tone === "online" ? "online" : agent.tone === "warn" ? "warn" : "off"}"></span>
+        <span class="fabric-name">
+          <strong>${escapeHtml(fabricName)}</strong>
+          <span>${plural(deviceCount, "device")} · ${escapeHtml(config?.anchor_mode ? `${titleize(config.anchor_mode)} anchor` : "anchor unknown")}</span>
+        </span>
+        ${pendingChip("fabric.switch")}
+      </button>
+      <nav class="nav" aria-label="Primary">${renderNav()}</nav>
+      <div class="sidebar-spacer"></div>
+      ${
+        project
+          ? `
+      <button class="mini-card" data-project="${escapeHtml(project.project_id)}" aria-label="Open ${escapeHtml(
+        project.display_name
+      )} in Continue" style="cursor: pointer; font: inherit; color: inherit;">
+        <span class="mini-top">
+          ${writer?.local ? '<span class="live-dot" aria-hidden="true"></span>' : ""}
+          <strong>${escapeHtml(project.display_name)}</strong>
+        </span>
+        <span class="mini-meta">
+          <span>${writer ? (writer.local ? "Writing here" : `Active on ${escapeHtml(deviceName(writer.deviceId))}`) : "No active writer"}</span>
+          <span>${snapshot ? escapeHtml(formatAge(snapshot.created_at_unix_seconds)) : "no checkpoint"}</span>
+        </span>
+      </button>`
+          : ""
+      }
+      <div class="anchor-card">
+        <div class="anchor-avatar">${icon("shield")}</div>
+        <div class="anchor-text">
+          <strong>Local agent</strong>
+          <span>${escapeHtml(agent.label)}</span>
+        </div>
+        <span class="presence-dot ${agent.tone === "online" ? "online" : agent.tone === "warn" ? "warn" : "off"}"></span>
+      </div>
+    </aside>`;
+}
+
+function viewLabel(viewId) {
+  return views.find(([id]) => id === viewId)?.[1] ?? "Continue";
+}
+
+function renderTopbar() {
+  const config = settings();
+  const agent = agentHealth();
+  const bridge = eventBridgeStatus();
+  const alerts = securityEvents().length + quotaEvents().length;
+  return `
+    <header class="topbar">
+      <div class="crumbs">
+        <span>${escapeHtml(config?.fabric_name ?? "Local fabric")}</span>
+        <span class="crumb-sep">/</span>
+        <strong>${viewLabel(state.view)}</strong>
+      </div>
+      <div class="topbar-spacer"></div>
+      <button class="command-trigger" data-action="palette-open" aria-label="Open command menu">
+        ${icon("search")}
+        <span>Search or jump to</span>
+        <kbd>&#8984;K</kbd>
+      </button>
+      <div class="top-actions">
+        <div class="health-pill" title="${escapeHtml(bridge.label)}">
+          <span class="presence-dot ${agent.tone === "online" ? "online" : agent.tone === "warn" ? "warn" : "off"}"></span>
+          <span>${escapeHtml(agent.label)}</span>
+        </div>
+        <span class="chip ${bridge.tone === "live" ? "good" : bridge.tone === "warn" ? "warn" : bridge.tone === "off" ? "bad" : "info"}">${escapeHtml(
+          bridge.label
+        )}</span>
+        <button class="icon-btn" data-action="open-activity" aria-label="Open activity${alerts > 0 ? ` (${alerts} notices)` : ""}">
+          ${icon("bell")}
+          ${alerts > 0 ? '<span class="badge-dot" aria-hidden="true"></span>' : ""}
+        </button>
+        <button class="icon-btn" data-action="toggle-theme" aria-label="Switch color theme (current: ${escapeHtml(state.theme)})">
+          ${icon(resolvedTheme() === "dark" ? "moon" : "sun")}
+        </button>
+        <button class="icon-btn" data-action="refresh" aria-label="Refresh state">
+          ${icon("history")}
+        </button>
+      </div>
+    </header>`;
+}
+
+function resolvedTheme() {
+  if (state.theme === "dark" || state.theme === "light") return state.theme;
+  const prefersLight = window.matchMedia?.("(prefers-color-scheme: light)")?.matches ?? false;
+  return prefersLight ? "light" : "dark";
+}
+
+/* ------------------------------------------------------ continue view */
+
+function statusFor(projectId) {
+  return state.projectStatus.get(projectId) ?? null;
+}
+
+function statusCounts(projectId) {
+  const entry = statusFor(projectId);
+  const status = entry?.data?.status ?? null;
+  if (!status) return null;
+  const counts = status.counts ?? {};
+  return {
+    branch: status.branch ?? null,
+    head: status.head_oid ?? null,
+    ahead: status.ahead ?? 0,
+    clean: Boolean(status.clean),
+    staged: counts.staged ?? 0,
+    modified: counts.unstaged ?? 0,
+    untracked: counts.untracked ?? 0,
+  };
+}
+
+function changesLine(projectId) {
+  const counts = statusCounts(projectId);
+  if (!counts) return "Working tree summary is loading from the agent.";
+  const parts = [
+    `${counts.modified} modified`,
+    `${counts.staged} staged`,
+    `${counts.untracked} untracked`,
+  ];
+  if (counts.ahead > 0) parts.push(`${counts.ahead} not pushed`);
+  return parts.join(" · ");
+}
+
+function writerChip(projectId) {
+  const writer = projectWriter(projectId);
+  if (!writer) return '<span class="chip"><span class="chip-dot"></span>No active writer</span>';
+  if (writer.state === "handoff-pending") {
+    return '<span class="chip warn"><span class="chip-dot"></span>Handoff pending</span>';
+  }
+  if (writer.local) return '<span class="chip good"><span class="chip-dot"></span>Writing on this device</span>';
+  return `<span class="chip violet"><span class="chip-dot"></span>Active on ${escapeHtml(deviceName(writer.deviceId))}</span>`;
+}
+
+function checkpointChip(projectId) {
+  const snapshot = latestSnapshot(projectId);
+  if (!snapshot) return '<span class="chip warn"><span class="chip-dot"></span>No checkpoint yet</span>';
+  return `<span class="chip info"><span class="chip-dot"></span>Protected ${escapeHtml(formatAge(snapshot.created_at_unix_seconds))}</span>`;
+}
+
+function environmentChip(projectId) {
+  const entry = projectEnvironments(projectId)[0];
+  if (!entry) return "";
+  const tone = entry.failure ? "bad" : entry.state === "shell-ready" || entry.state === "ready" ? "good" : "info";
+  return `<span class="chip ${tone}"><span class="chip-dot"></span>Environment ${escapeHtml(titleize(entry.state))}</span>`;
+}
+
+function bestTarget() {
+  return readyTargets()[0] ?? null;
+}
+
+function renderTargetRow(project, device) {
+  const online = deviceOnline(device);
+  const name = escapeHtml(device.display_name);
+  return `
+    <div class="device-row">
+      <div class="device-glyph ${deviceGlyphTone(device)}">${icon(deviceGlyphIcon(device))}</div>
+      <div class="device-row-main">
+        <strong>${name}</strong>
+        <span>${escapeHtml(deviceOsFamily(device))} · ${escapeHtml(device.architecture ?? "unknown")} · ${
+          online ? "Ready" : "Offline"
+        }</span>
+      </div>
+      ${
+        online
+          ? `<button class="button small primary" data-action="handoff-dialog" data-project-id="${escapeHtml(
+              project.project_id
+            )}" data-target-device-id="${escapeHtml(device.device_id)}" aria-label="Review handoff to ${name}">Review handoff</button>`
+          : '<span class="chip"><span class="chip-dot"></span>Offline</span>'
+      }
+    </div>`;
+}
+
+function handoffStepIndex(handoffState) {
+  if (handoffState === "target-prepare") return 1;
+  if (handoffState === "target-verified") return 2;
+  if (handoffState === "source-ready") return 2;
+  return 0;
+}
+
+function renderHandoffSteps(activeIndex, doneAll = false) {
+  const labels = ["Saving state", "Preparing device", "Moving control"];
+  return `<ol class="steps">${labels
+    .map((label, index) => {
+      const doneStep = doneAll || index < activeIndex;
+      const active = !doneAll && index === activeIndex;
+      return `<li class="step${doneStep ? " done" : ""}${active ? " active" : ""}"><span class="step-dot"></span>${label}</li>`;
+    })
+    .join("")}</ol>`;
+}
+
+function renderOpenHandoff(entry) {
+  const record = entry.record ?? entry;
+  const project = escapeHtml(projectName(record.project_id));
+  const incoming = incomingHandoff(entry);
+  const stepIndex = handoffStepIndex(record.state);
+  const expiry = record.expires_at_unix_seconds ? `window closes in ${formatUntil(record.expires_at_unix_seconds)}` : "";
+  if (incoming) {
+    const agentReady = methods().has("apply.snapshot") && methods().has("handoff.target.verify");
+    return `
+      <div class="device-row" data-handoff-row="${escapeHtml(record.handoff_id)}">
+        <div class="device-glyph linux">${icon("download")}</div>
+        <div class="device-row-main">
+          <strong>Incoming: ${project}</strong>
+          <span>${escapeHtml(titleize(record.state))}${expiry ? ` · ${escapeHtml(expiry)}` : ""}</span>
+        </div>
+        <span class="chip ${agentReady ? "good" : "warn"}">${agentReady ? "Ready to apply and verify" : "Agent update required"}</span>
+        <button class="button small primary" data-action="handoff-continue-here" data-project-id="${escapeHtml(
+          record.project_id
+        )}" data-handoff-id="${escapeHtml(record.handoff_id)}" aria-label="Continue ${project} here">Continue here</button>
+      </div>`;
+  }
+  return `
+    <div class="device-row" data-handoff-row="${escapeHtml(record.handoff_id)}">
+      <div class="device-glyph mac">${icon("relay")}</div>
+      <div class="device-row-main">
+        <strong>${project} &rarr; ${escapeHtml(deviceName(record.target_device_id))}</strong>
+        <span>${escapeHtml(titleize(record.state))}${expiry ? ` · ${escapeHtml(expiry)}` : ""}</span>
+      </div>
+      <button class="button small danger" data-action="handoff-abort" data-project-id="${escapeHtml(
+        record.project_id
+      )}" data-handoff-id="${escapeHtml(record.handoff_id)}" aria-label="Abort handoff for ${project}">Abort handoff</button>
+    </div>
+    ${renderHandoffSteps(stepIndex)}`;
+}
+
+function renderRouteCard(project) {
+  const local = deviceById(localDeviceId());
+  const target = bestTarget();
+  const snapshot = latestSnapshot(project.project_id);
+  const counts = statusCounts(project.project_id);
+  const availability = targetAvailability();
+  return `
+    <aside class="hero-route">
+      <div class="route-head">
+        <span>Continuation route</span>
+        ${pendingChip("continue.route-telemetry")}
+      </div>
+      <div class="route-map">
+        <div class="route-node active">
+          <div class="device-glyph ${local ? deviceGlyphTone(local) : "generic"}">${icon(local ? deviceGlyphIcon(local) : "monitor")}</div>
+          <div class="route-node-name">
+            <strong>${escapeHtml(local?.display_name ?? "This device")}</strong>
+            <span>Writer · ${escapeHtml(local ? deviceOsFamily(local) : "unknown")}</span>
           </div>
         </div>
-        <div class="sidebar-scroll" data-scroll-container>
-          <nav class="nav-section" aria-label="Main">
-            <div class="nav-label">Views</div>
-            ${views
-              .map(([id, label, icon]) => {
-                const count =
-                  id === "projects"
-                    ? projectCount
-                    : id === "devices"
-                      ? devices().length
-                      : id === "runs"
-                        ? runs().length
-                        : id === "activity"
-                          ? activity().length
-                          : "";
-                return `<button class="nav-button" data-view="${id}" aria-current="${state.view === id ? "page" : "false"}" title="${escapeHtml(label)}">
-                  ${icons[icon]}<span>${escapeHtml(label)}</span>${count === "" ? "" : `<span class="nav-count">${count}</span>`}
-                </button>`;
-              })
-              .join("")}
-          </nav>
-          <div class="nav-section">
-            <div class="nav-label">Projects</div>
+        <div class="route-line" aria-hidden="true"></div>
+        <div class="route-node">
+          <div class="device-glyph ${target ? deviceGlyphTone(target) : "generic"}">${icon(target ? deviceGlyphIcon(target) : "monitor")}</div>
+          <div class="route-node-name">
+            <strong>${escapeHtml(target?.display_name ?? "No ready target")}</strong>
+            <span>${target ? `Ready · ${escapeHtml(deviceOsFamily(target))}` : "Pair or wake a second device"}</span>
+          </div>
+        </div>
+      </div>
+      <div class="route-stats">
+        <div class="metric">
+          <span class="metric-value">${snapshot ? escapeHtml(formatAge(snapshot.created_at_unix_seconds)) : "none"}</span>
+          <span class="metric-label">Checkpoint</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">${counts ? counts.modified + counts.staged + counts.untracked : "&ndash;"}</span>
+          <span class="metric-label">Tracked changes</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value">${availability.ready}/${availability.total || 0}</span>
+          <span class="metric-label">Targets ready</span>
+        </div>
+      </div>
+    </aside>`;
+}
+
+function renderContinue() {
+  const project = selectedProject();
+  const config = settings();
+  if (!project) {
+    return `
+      <div class="page-head">
+        <div>
+          <div class="eyebrow"><span class="eyebrow-dot"></span>${escapeHtml(config?.device_name ?? "This device")}</div>
+          <h1 class="page-title">Continue your work</h1>
+          <p class="page-sub">Register a project to start protecting and moving work between your devices.</p>
+        </div>
+        <div class="page-actions">
+          <button class="button primary" data-view="projects">Add project</button>
+        </div>
+      </div>
+      <div class="card"><div class="card-body"><div class="empty">${icon("folder")}<strong>No projects yet</strong><span>Add a Git project from the Projects screen to begin.</span></div></div></div>`;
+  }
+  const projectId = project.project_id;
+  const counts = statusCounts(projectId);
+  const snapshot = latestSnapshot(projectId);
+  const target = bestTarget();
+  const open = openHandoffs(projectId);
+  const warmth = localCacheWarmth();
+  const environmentRows = projectEnvironments(projectId);
+  const schedulerRows = projectRuns(projectId)
+    .map((run) => ({ run, note: schedulerNote(run) }))
+    .filter((entry) => entry.note)
+    .slice(0, 3);
+  return `
+    <div class="page-head">
+      <div>
+        <div class="eyebrow"><span class="eyebrow-dot"></span>${escapeHtml(config?.device_name ?? "This device")} · ${escapeHtml(
+          titleize(state.bootstrap?.runtime?.platform_key ?? "unknown")
+        )}</div>
+        <h1 class="page-title">Continue your work</h1>
+      </div>
+      <div class="page-actions">
+        ${pendingAction("continue.run-elsewhere", "Run elsewhere")}
+        <button class="button" data-action="checkpoint" data-project-id="${escapeHtml(projectId)}" aria-label="Checkpoint ${escapeHtml(
+          project.display_name
+        )} now">${icon("shield")}Checkpoint now</button>
+      </div>
+    </div>
+    <section class="hero">
+      <div class="hero-main">
+        <div class="hero-chips">
+          ${writerChip(projectId)}
+          ${checkpointChip(projectId)}
+          ${environmentChip(projectId)}
+        </div>
+        <div>
+          <div class="hero-kicker">Continuing work</div>
+          <h2 class="hero-title">${escapeHtml(project.display_name)}</h2>
+        </div>
+        <div class="hero-branch">${icon("branch")}<code>${escapeHtml(counts?.branch ?? "branch loading")}${
+          counts?.head ? ` · ${escapeHtml(shortId(counts.head))}` : ""
+        }</code></div>
+        <p class="hero-desc">${escapeHtml(changesLine(projectId))}</p>
+        <div class="hero-actions">
+          ${
+            target
+              ? `<button class="button primary" data-action="handoff-dialog" data-project-id="${escapeHtml(
+                  projectId
+                )}" data-target-device-id="${escapeHtml(target.device_id)}" aria-label="Review handoff to ${escapeHtml(
+                  target.display_name
+                )}">${icon("arrow-right")}Review handoff</button>`
+              : '<span class="chip warn"><span class="chip-dot"></span>No ready target device</span>'
+          }
+          <button class="button" data-action="open-project" data-project-id="${escapeHtml(projectId)}" aria-label="Open ${escapeHtml(
+            project.display_name
+          )} in the editor">${icon("terminal")}Open in editor</button>
+          <button class="button ghost" data-action="project-status" data-project-id="${escapeHtml(
+            projectId
+          )}" aria-label="Refresh status for ${escapeHtml(project.display_name)}">Refresh status</button>
+        </div>
+        <div class="hero-foot">${icon("lock")}Current work is checkpointed before any move; nothing on a target is overwritten.</div>
+      </div>
+      ${renderRouteCard(project)}
+    </section>
+    <div class="bento">
+      <div class="bento-col">
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${icon("relay")}Handoff</h3>
+              <p class="card-sub">Movement of editing control, driven by the agent.</p>
+            </div>
+          </div>
+          <div class="card-body">
             ${
-              projectCount === 0
-                ? '<div class="empty"><strong>No projects</strong><p>Register a project from the CLI to see it here.</p></div>'
-                : projects()
-                    .map(
-                      (project) => `<button class="project-button" data-project="${escapeHtml(project.project_id)}" aria-current="${project.project_id === selectedProject()?.project_id}">
-                        <span>${escapeHtml(project.display_name)}</span>
-                        <span class="nav-count">${Object.keys(project.workspaces ?? {}).length}</span>
-                      </button>`
-                    )
+              open.length > 0
+                ? open.map((entry) => renderOpenHandoff(entry)).join("")
+                : '<div class="empty">' + icon("relay") + "<strong>No handoff in flight</strong><span>Review a target below to move this work.</span></div>"
+            }
+            <p class="quiet">After a handoff starts, target apply and verification remain pending until the agent confirms them on the target device.</p>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${icon("monitor")}Continue on</h3>
+              <p class="card-sub">${targetAvailability().ready}/${targetAvailability().total || 0} ready targets</p>
+            </div>
+          </div>
+          <div class="card-body">
+            ${
+              remoteDevices().length > 0
+                ? remoteDevices()
+                    .map((device) => renderTargetRow(project, device))
                     .join("")
+                : '<div class="empty">' + icon("monitor") + "<strong>No paired devices</strong><span>Pair a second device to continue work elsewhere.</span></div>"
             }
           </div>
-        </div>
-        <div class="sidebar-foot">
-          <span>${escapeHtml(settings?.device_name ?? bootstrap?.runtime?.platform_key ?? "local device")}</span>
-          <code>${escapeHtml(bootstrap?.runtime?.devrelay_home ?? "runtime not loaded")}</code>
-        </div>
-      </aside>
-      <section class="workspace">
-        <header class="topbar">
-          <div class="title-group">
-            <p>${escapeHtml(bootstrap?.runtime?.agent_socket_path ?? "Desktop runtime")}</p>
-            <h2>${escapeHtml(currentTitle())}</h2>
+        </section>
+      </div>
+      <div class="bento-col">
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${icon("zap")}Environment hydration</h3>
+              <p class="card-sub">Target readiness reported by the agent.</p>
+            </div>
           </div>
-          <div class="top-actions">
-            <button class="button icon-only" data-action="refresh" title="Refresh" aria-label="Refresh">${icons.refresh}</button>
-            <button class="button" data-action="diagnostics" ${state.operation ? "disabled" : ""} title="Export diagnostics">${icons.download}<span>Diagnostics</span></button>
+          <div class="card-body">
+            ${
+              environmentRows.length > 0
+                ? `<dl class="kv-list">${environmentRows
+                    .map(
+                      (entry) => `
+                    <div class="kv">
+                      <dt>${escapeHtml(entry.workspace_id ?? "workspace")}</dt>
+                      <dd>${escapeHtml(titleize(entry.state))}${entry.attempt ? ` · attempt ${entry.attempt}` : ""}${
+                        entry.updated_at_unix_seconds ? ` · ${escapeHtml(formatAge(entry.updated_at_unix_seconds))}` : ""
+                      }</dd>
+                    </div>
+                    ${entry.failure ? `<div class="banner bad">${icon("x")}<div class="banner-body"><strong>Hydration failed</strong><span>${escapeHtml(entry.failure)}</span></div></div>` : ""}`
+                    )
+                    .join("")}</dl>`
+                : '<p class="muted">No hydration record for this project yet.</p>'
+            }
+            ${warmth ? `<div class="kv"><dt class="muted">Cache warmth</dt><dd>${escapeHtml(warmth)}</dd></div>` : ""}
           </div>
-        </header>
-        <main class="main-scroll" data-scroll-container>
-          ${state.loading ? loadingScreen() : state.runtimeError ? runtimeErrorScreen() : renderView()}
-        </main>
-      </section>
+        </section>
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${icon("shield")}Protection</h3>
+              <p class="card-sub">${plural(projectSnapshots(projectId).length, "checkpoint")} stored for this project.</p>
+            </div>
+            ${pendingChip("insights.protection-trend")}
+          </div>
+          <div class="card-body">
+            <dl class="kv-list">
+              <div class="kv"><dt>Latest checkpoint</dt><dd>${
+                snapshot ? `${escapeHtml(formatAge(snapshot.created_at_unix_seconds))} · #${snapshot.sequence_number}` : "none yet"
+              }</dd></div>
+              <div class="kv"><dt>Working tree</dt><dd>${counts ? (counts.clean ? "Clean" : "Uncommitted changes present") : "loading"}</dd></div>
+            </dl>
+            ${pendingPanel("insights.protection-trend", "Checkpoint frequency and protection trend charts arrive with local metrics.")}
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${icon("sliders")}Scheduler insight</h3>
+              <p class="card-sub">Why the agent chose recent run targets.</p>
+            </div>
+            ${pendingChip("scheduler.controls")}
+          </div>
+          <div class="card-body">
+            ${
+              schedulerRows.length > 0
+                ? `<ul class="check-list">${schedulerRows
+                    .map(
+                      (entry) => `<li class="check-item">${icon("check")}<span>${escapeHtml(entry.note)}<span class="check-note">${escapeHtml(
+                        entry.run.command ?? "task"
+                      )} · ${escapeHtml(titleize(entry.run.state))}</span></span></li>`
+                    )
+                    .join("")}</ul>`
+                : '<p class="muted">No scheduled runs for this project yet.</p>'
+            }
+          </div>
+        </section>
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------------ handoff dialog */
+
+function renderHandoffDialog() {
+  const dialog = state.handoffDialog;
+  if (!dialog) return "";
+  const project = projectById(dialog.projectId);
+  const targetDevice = deviceById(dialog.targetDeviceId);
+  const local = deviceById(localDeviceId());
+  const counts = statusCounts(dialog.projectId);
+  const snapshot = latestSnapshot(dialog.projectId);
+  const workspaceId = Object.values(project?.workspaces ?? {})[0]?.workspace_id ?? null;
+  const phase = dialog.phase ?? "review";
+  const title =
+    phase === "failure" ? "Handoff failed" : phase === "success" ? "Handoff started" : "Handoff review";
+  const running = phase === "running";
+  const body =
+    phase === "failure" || phase === "success"
+      ? `<div class="banner ${phase === "failure" ? "bad" : ""}">${icon(phase === "failure" ? "x" : "check")}<div class="banner-body"><strong>${escapeHtml(
+          title
+        )}</strong><span>${escapeHtml(dialog.message ?? "")}</span></div></div>
+        ${phase === "success" ? renderHandoffSteps(1) : ""}`
+      : `
+      <dl class="summary-grid">
+        <div class="summary-row"><dt class="summary-term">Source device</dt><dd class="summary-val">${escapeHtml(
+          local?.display_name ?? "This device"
+        )}</dd></div>
+        <div class="summary-row"><dt class="summary-term">Target device</dt><dd class="summary-val">${escapeHtml(
+          targetDevice?.display_name ?? "Unknown device"
+        )}</dd></div>
+        <div class="summary-row"><dt class="summary-term">Project/session</dt><dd class="summary-val">${escapeHtml(
+          project?.display_name ?? "Unknown project"
+        )}${workspaceId ? ` · ${escapeHtml(shortId(workspaceId))}` : ""}</dd></div>
+        <div class="summary-row"><dt class="summary-term">Checkpoint age</dt><dd class="summary-val">${
+          snapshot ? escapeHtml(formatAge(snapshot.created_at_unix_seconds)) : "none yet"
+        }</dd></div>
+      </dl>
+      <div class="divider"></div>
+      <p class="section-label">Work being moved</p>
+      <dl class="summary-grid">
+        <div class="summary-row"><dt class="summary-term">Staged</dt><dd class="summary-val">${counts ? counts.staged : 0} staged</dd></div>
+        <div class="summary-row"><dt class="summary-term">Working tree</dt><dd class="summary-val">${counts ? counts.modified : 0} modified, ${
+          counts ? counts.untracked : 0
+        } new</dd></div>
+        <div class="summary-row"><dt class="summary-term">Unpushed</dt><dd class="summary-val">${counts ? counts.ahead : 0} commits not pushed</dd></div>
+        <div class="summary-row"><dt class="summary-term">Environment readiness</dt><dd class="summary-val">${escapeHtml(
+          environmentReadiness(dialog.projectId)
+        )}</dd></div>
+        <div class="summary-row"><dt class="summary-term">Editor context readiness</dt><dd class="summary-val">Captured by the editor extension when available</dd></div>
+      </dl>
+      <div class="divider"></div>
+      <p class="section-label">Target safety</p>
+      <ul class="check-list">
+        <li class="check-item">${icon("shield")}<span><strong>Separate target work</strong><span class="check-note">If the target has its own work, you can preserve it separately, open incoming work in a new folder, or cancel safely.</span></span></li>
+        <li class="check-item">${icon("lock")}<span><strong>No overwrite</strong><span class="check-note">Nothing on the target is replaced before the agent verifies the applied checkpoint.</span></span></li>
+      </ul>
+      <div class="divider"></div>
+      <p class="section-label">Progress</p>
+      ${renderHandoffSteps(running ? 1 : 0)}
+      <p class="quiet">Keep this device idle for this project until the move completes; target apply and verification remain pending until the agent confirms them.</p>`;
+  return `
+    <div class="overlay" data-overlay="handoff">
+      <div class="dialog" data-handoff-dialog role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}" tabindex="-1">
+        <div class="dialog-head">
+          <div>
+            <h2 class="dialog-title">${escapeHtml(title)}</h2>
+            <p class="dialog-sub">${escapeHtml(project?.display_name ?? "")} &rarr; ${escapeHtml(
+              targetDevice?.display_name ?? ""
+            )}</p>
+          </div>
+          <button class="icon-btn" data-action="handoff-dialog-close" aria-label="Close handoff dialog">${icon("x")}</button>
+        </div>
+        <div class="dialog-body">${body}</div>
+        <div class="dialog-foot">
+          ${
+            phase === "review" || phase === "running"
+              ? `<button class="button ghost" data-action="handoff-dialog-close">Cancel safely</button>
+                 <button class="button primary" data-action="handoff-confirm" data-project-id="${escapeHtml(
+                   dialog.projectId
+                 )}" data-target-device-id="${escapeHtml(dialog.targetDeviceId)}" ${running ? "disabled" : ""}>${
+                   running ? "Starting" : "Start handoff"
+                 }</button>`
+              : '<button class="button primary" data-action="handoff-dialog-close">Done</button>'
+          }
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------------- projects view */
+
+function filteredProjects() {
+  const filter = state.projectFilter.trim().toLowerCase();
+  if (!filter) return projects();
+  return projects().filter((project) => {
+    const haystack = `${project.display_name ?? ""} ${project.project_id ?? ""} ${project.local_path ?? ""}`.toLowerCase();
+    return haystack.includes(filter);
+  });
+}
+
+function renderProjectRow(project) {
+  const projectId = project.project_id;
+  const name = escapeHtml(project.display_name);
+  const workspace = Object.values(project.workspaces ?? {})[0] ?? null;
+  const writer = projectWriter(projectId);
+  const snapshot = latestSnapshot(projectId);
+  const availability = targetAvailability();
+  return `
+    <tr>
+      <td>
+        <div class="project-cell">
+          <div class="project-cell-glyph">${icon("folder")}</div>
+          <div class="project-cell-name">
+            <strong>${name}</strong>
+            <span>${escapeHtml(project.local_path ?? "")}</span>
+          </div>
+        </div>
+      </td>
+      <td>${workspace ? `${escapeHtml(shortId(workspace.workspace_id))} · ${escapeHtml(titleize(workspace.state))}` : "none"}</td>
+      <td>${writer ? escapeHtml(deviceName(writer.deviceId)) : "None"}</td>
+      <td>${snapshot ? escapeHtml(formatAge(snapshot.created_at_unix_seconds)) : "none"}</td>
+      <td>${availability.ready}/${availability.total || 0} ready</td>
+      <td>
+        <div class="row-actions">
+          <button class="button small" data-project="${escapeHtml(projectId)}" aria-label="Open details for ${name}">Details</button>
+          <button class="button small ghost" data-action="project-status" data-project-id="${escapeHtml(
+            projectId
+          )}" aria-label="Refresh status for ${name}">${icon("history")}</button>
+          <button class="button small ghost" data-action="project-recovery" data-project-id="${escapeHtml(
+            projectId
+          )}" aria-label="Open recovery for ${name}">Recovery</button>
+        </div>
+      </td>
+    </tr>`;
+}
+
+function renderProjectGroup(label, list) {
+  if (list.length === 0) return "";
+  return `
+    <p class="group-label">${escapeHtml(label)} (${list.length})</p>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Active session</th>
+            <th>Writer</th>
+            <th>Checkpoint</th>
+            <th>Availability</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${list.map((project) => renderProjectRow(project)).join("")}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderRecoveryForm() {
+  const list = projects();
+  const recoveryProject = list.find((project) => project.project_id === state.recoveryProjectId) ?? list[0] ?? null;
+  const recoverySnapshots = recoveryProject ? projectSnapshots(recoveryProject.project_id) : [];
+  const chosenSnapshot =
+    recoverySnapshots.find((snapshot) => snapshot.snapshot_id === state.recoverySnapshotId) ?? recoverySnapshots[0] ?? null;
+  return `
+    <section class="card" id="recovery-card">
+      <div class="card-head">
+        <div>
+          <h3 class="card-title">${icon("history")}Open recovery</h3>
+          <p class="card-sub">Materialize a stored checkpoint into a fresh folder. Nothing is overwritten.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        <form data-recovery-form>
+          <div class="form-grid">
+            <label class="field">
+              <span class="field-label">Project</span>
+              <select class="select-input" name="project" data-recovery-project>
+                ${list
+                  .map(
+                    (project) =>
+                      `<option value="${escapeHtml(project.project_id)}"${
+                        recoveryProject?.project_id === project.project_id ? " selected" : ""
+                      }>${escapeHtml(project.display_name)}</option>`
+                  )
+                  .join("")}
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">Checkpoint</span>
+              <select class="select-input" name="snapshot" data-recovery-snapshot>
+                ${recoverySnapshots
+                  .map(
+                    (snapshot) =>
+                      `<option value="${escapeHtml(snapshot.snapshot_id)}"${
+                        chosenSnapshot?.snapshot_id === snapshot.snapshot_id ? " selected" : ""
+                      }>#${snapshot.sequence_number} · ${escapeHtml(formatAge(snapshot.created_at_unix_seconds))}${
+                        snapshot.label ? ` · ${escapeHtml(snapshot.label)}` : ""
+                      }</option>`
+                  )
+                  .join("")}
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">Recovery path</span>
+              <input class="text-input" name="path" placeholder="/path/for/recovered-work" required />
+            </label>
+            <label class="field">
+              <span class="field-label">Name (optional)</span>
+              <input class="text-input" name="name" placeholder="recovered-attempt" />
+            </label>
+          </div>
+          <div class="form-actions" style="margin-top: 10px;">
+            <label class="check-row"><input type="checkbox" name="register" /> Register recovered folder as a workspace</label>
+            <button class="button" type="submit">Open recovery</button>
+          </div>
+        </form>
+      </div>
+    </section>`;
+}
+
+function renderProjects() {
+  const visible = filteredProjects();
+  const attention = visible.filter((project) => projectNeedsAttention(project));
+  const ready = visible.filter((project) => !projectNeedsAttention(project));
+  return `
+    <div class="page-head">
+      <div>
+        <div class="eyebrow"><span class="eyebrow-dot"></span>${plural(projects().length, "registered project")}</div>
+        <h1 class="page-title">Projects</h1>
+      </div>
+      <div class="page-actions">
+        <label class="filter-input">
+          ${icon("search")}
+          <input type="text" data-project-filter value="${escapeHtml(state.projectFilter)}" placeholder="Filter projects" aria-label="Filter projects" />
+        </label>
+      </div>
     </div>
-    ${renderHandoffDialog()}
-    ${renderToasts()}
-  `;
+    ${
+      visible.length === 0
+        ? `<div class="card"><div class="card-body"><div class="empty">${icon("folder")}<strong>No matching projects</strong><span>Adjust the filter or add a project below.</span></div></div></div>`
+        : `<section class="card"><div class="card-body">
+            ${renderProjectGroup("Needs attention", attention)}
+            ${renderProjectGroup("Ready", ready)}
+          </div></section>`
+    }
+    <div class="bento">
+      <div class="bento-col">
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${icon("folder")}Add project</h3>
+              <p class="card-sub">Register an existing Git project with the local agent.</p>
+            </div>
+          </div>
+          <div class="card-body">
+            <form data-add-project-form>
+              <div class="form-grid">
+                <label class="field">
+                  <span class="field-label">Project path</span>
+                  <input class="text-input" name="path" placeholder="/path/to/project" required />
+                </label>
+                <label class="field">
+                  <span class="field-label">Manifest path (optional)</span>
+                  <input class="text-input" name="manifest" placeholder="devrelay.toml" />
+                </label>
+              </div>
+              <div class="form-actions" style="margin-top: 10px;">
+                <button class="button primary" type="submit">Add project</button>
+                ${pendingAction("projects.pick-folder", "Browse folders", "small ghost")}
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>
+      <div class="bento-col">
+        ${renderRecoveryForm()}
+      </div>
+    </div>`;
+}
+
+/* -------------------------------------------------------- devices view */
+
+function renderResourceTiles(device) {
+  const summary = device.resource_summary;
+  if (!summary) return "";
+  const tiles = [
+    ["cpu", "CPU", summary.cpu],
+    ["box", "Memory", summary.memory],
+    ["download", "Disk", summary.disk],
+    ["zap", "Power", summary.power],
+    ["history", "Cache", summary.cache_warmth],
+  ].filter(([, , value]) => Boolean(value));
+  if (tiles.length === 0) return "";
+  return `<div class="resource-grid">${tiles
+    .map(
+      ([iconName, label, value]) => `
+      <div class="resource-tile">
+        <span class="resource-kind">${icon(iconName)}${label}</span>
+        <div class="resource-value">${escapeHtml(value)}</div>
+      </div>`
+    )
+    .join("")}</div>`;
+}
+
+function renderDeviceCard(device) {
+  const online = deviceOnline(device);
+  const isLocal = device.device_id === localDeviceId();
+  const name = escapeHtml(device.display_name);
+  const capabilities = deviceCapabilities(device);
+  return `
+    <article class="device-card">
+      <div class="device-card-head">
+        <div class="device-glyph ${deviceGlyphTone(device)}">${icon(deviceGlyphIcon(device))}</div>
+        <div class="device-title">
+          <strong>${name}</strong>
+          <span>${escapeHtml(deviceOsFamily(device))} · ${escapeHtml(device.architecture ?? "unknown")} · seen ${escapeHtml(
+            formatAge(device.last_seen_unix_seconds)
+          )}</span>
+        </div>
+        ${
+          isLocal
+            ? '<span class="chip violet"><span class="chip-dot"></span>This device</span>'
+            : online
+              ? '<span class="chip good"><span class="chip-dot"></span>Online</span>'
+              : '<span class="chip"><span class="chip-dot"></span>Offline</span>'
+        }
+      </div>
+      ${renderResourceTiles(device)}
+      ${
+        capabilities.length > 0
+          ? `<div class="capability-row">${capabilities.map((value) => `<span class="capability">${escapeHtml(value)}</span>`).join("")}</div>`
+          : ""
+      }
+      <div class="device-card-actions">
+        ${
+          isLocal
+            ? ""
+            : `<button class="button small" data-view="continue" aria-label="Continue on ${name}">Continue on</button>`
+        }
+        ${pendingAction("devices.revoke", "Revoke", "small ghost", `Revoke ${device.display_name}`)}
+      </div>
+    </article>`;
+}
+
+function renderDevices() {
+  const list = devices();
+  const online = list.filter((device) => deviceOnline(device)).length;
+  return `
+    <div class="page-head">
+      <div>
+        <div class="eyebrow"><span class="eyebrow-dot"></span>Trusted fabric devices</div>
+        <h1 class="page-title">Devices</h1>
+        <p class="page-sub">${list.length} known identities - ${online} online. Identity, capability, and freshness come from the agent registry.</p>
+      </div>
+      <div class="page-actions">
+        ${pendingAction("devices.policy", "Resource policy", "ghost")}
+        ${pendingAction("devices.pair", "Pair device", "primary")}
+      </div>
+    </div>
+    ${
+      list.length === 0
+        ? `<div class="card"><div class="card-body"><div class="empty">${icon("monitor")}<strong>No devices known</strong><span>Pair devices with the CLI until desktop pairing lands.</span></div></div></div>`
+        : `<div class="device-grid">${list.map((device) => renderDeviceCard(device)).join("")}</div>`
+    }`;
+}
+
+/* ----------------------------------------------------------- runs view */
+
+function runTone(runState) {
+  if (runState === "succeeded") return "good";
+  if (runState === "running") return "violet";
+  if (runState === "queued") return "info";
+  if (runState === "failed") return "bad";
+  return "";
+}
+
+function renderRunRow(run) {
+  const note = schedulerNote(run);
+  const targetId = runTargetDeviceId(run);
+  const artifactCount = runArtifactCount(run);
+  const active = run.state === "queued" || run.state === "running";
+  return `
+    <div class="device-row">
+      <div class="feed-icon ${runTone(run.state)}">${icon(run.state === "failed" ? "x" : run.state === "succeeded" ? "check" : "play")}</div>
+      <div class="device-row-main">
+        <strong class="mono">${escapeHtml(run.command ?? run.task_run_id)}</strong>
+        <span>${escapeHtml(projectName(run.project_id))}${targetId ? ` · on ${escapeHtml(deviceName(targetId))}` : ""} · ${escapeHtml(
+          formatAge(run.updated_at_unix_seconds)
+        )}${note ? `<br />Scheduler explanation: ${escapeHtml(note)}` : ""}</span>
+      </div>
+      <div class="row-actions">
+        ${
+          active
+            ? pendingAction("runs.cancel", "Cancel", "small ghost", `Cancel run ${run.task_run_id}`)
+            : pendingAction("runs.artifacts", `Artifacts (${artifactCount})`, "small ghost", `Artifacts for run ${run.task_run_id}`)
+        }
+      </div>
+    </div>`;
+}
+
+function renderRunGroup(label, list) {
+  return `
+    <p class="group-label">${escapeHtml(label)} (${list.length})</p>
+    ${
+      list.length > 0
+        ? list.map((run) => renderRunRow(run)).join("")
+        : '<p class="quiet">None right now.</p>'
+    }`;
+}
+
+function renderRuns() {
+  const queued = runsByState("queued");
+  const running = runsByState("running");
+  const failed = runsByState("failed");
+  const finished = runsByState("succeeded");
+  return `
+    <div class="page-head">
+      <div>
+        <div class="eyebrow"><span class="eyebrow-dot"></span>Distributed task runner</div>
+        <h1 class="page-title">Runs</h1>
+        <p class="page-sub">Recent runs recorded by the agent, with the reason each target was chosen.</p>
+      </div>
+      <div class="page-actions">
+        ${pendingAction("runs.cache-history", "Cache history", "ghost")}
+        ${pendingAction("runs.start", "Run task", "primary")}
+      </div>
+    </div>
+    <div class="bento">
+      <div class="bento-col">
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${icon("terminal")}Recent runs</h3>
+              <p class="card-sub">${plural(runs().length, "recorded run")}</p>
+            </div>
+          </div>
+          <div class="card-body">
+            ${
+              runs().length === 0
+                ? `<div class="empty">${icon("terminal")}<strong>No runs yet</strong><span>Task history appears once the fabric executes work.</span></div>`
+                : `
+                  ${renderRunGroup("Running runs", running)}
+                  ${renderRunGroup("Queued runs", queued)}
+                  ${renderRunGroup("Failed runs", failed)}
+                  ${renderRunGroup("Completed runs", finished)}`
+            }
+          </div>
+        </section>
+      </div>
+      <div class="bento-col">
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${icon("sliders")}Scheduler</h3>
+              <p class="card-sub">Explainable target selection.</p>
+            </div>
+            ${pendingChip("scheduler.controls")}
+          </div>
+          <div class="card-body">
+            ${
+              runs().filter((run) => schedulerNote(run)).length > 0
+                ? `<ul class="check-list">${runs()
+                    .filter((run) => schedulerNote(run))
+                    .slice(0, 5)
+                    .map(
+                      (run) =>
+                        `<li class="check-item">${icon("check")}<span>${escapeHtml(schedulerNote(run))}<span class="check-note">${escapeHtml(
+                          run.command ?? run.task_run_id
+                        )}</span></span></li>`
+                    )
+                    .join("")}</ul>`
+                : '<p class="muted">No scheduler decisions recorded yet.</p>'
+            }
+            ${pendingPanel("runs.cache-history", "Result-cache hit rates and history charts arrive with the compute fabric UI.")}
+          </div>
+        </section>
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------------- activity view */
+
+const activityFilters = [
+  ["all", "All"],
+  ["audit", "Audit"],
+  ["checkpoint", "Checkpoints"],
+  ["handoff", "Handoffs"],
+  ["security", "Security"],
+  ["quota", "Quota"],
+];
+
+function activitySectionVisible(key) {
+  return state.activityFilter === "all" || state.activityFilter === key;
+}
+
+function feedItem(tone, iconName, title, sub, timeSeconds) {
+  return `
+    <div class="feed-item">
+      <div class="feed-icon ${tone}">${icon(iconName)}</div>
+      <div class="feed-main">
+        <div class="feed-title">${title}</div>
+        ${sub ? `<div class="feed-sub">${sub}</div>` : ""}
+      </div>
+      <div class="feed-time">${escapeHtml(timeSeconds ? formatAge(timeSeconds) : "")}</div>
+    </div>`;
+}
+
+function renderActivitySection(key, title, iconName, itemsHtml, emptyCopy) {
+  if (!activitySectionVisible(key)) return "";
+  return `
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h3 class="card-title">${icon(iconName)}${title}</h3>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="feed">${itemsHtml || `<div class="empty">${icon(iconName)}<strong>${emptyCopy}</strong></div>`}</div>
+      </div>
+    </section>`;
+}
+
+function renderActivity() {
+  const auditItems = activity()
+    .slice(0, 30)
+    .map((entry) =>
+      feedItem(
+        entry.outcome === "succeeded" ? "good" : entry.outcome === "failed" ? "bad" : "info",
+        "pulse",
+        `${escapeHtml(titleize(String(entry.type ?? "").replaceAll(".", " ")))} · ${escapeHtml(titleize(entry.outcome ?? ""))}`,
+        `${escapeHtml(entry.summary ?? "")}${entry.project_id ? ` · ${escapeHtml(projectName(entry.project_id))}` : ""}`,
+        entry.created_at_unix_seconds
+      )
+    )
+    .join("");
+  const checkpointItems = checkpointEvents()
+    .map((event) =>
+      feedItem(
+        "good",
+        "shield",
+        escapeHtml(snapshotEventSummary(event)),
+        `${escapeHtml(projectName(event.payload?.project_id))}${
+          event.payload?.snapshot_sequence_number ? ` · #${event.payload.snapshot_sequence_number}` : ""
+        }${event.payload?.label ? ` · ${escapeHtml(event.payload.label)}` : ""}`,
+        event.occurredAt ? Math.floor(event.occurredAt / 1000) : null
+      )
+    )
+    .join("");
+  const handoffItems = handoffEvents()
+    .map((event) =>
+      feedItem(
+        "info",
+        "relay",
+        `Handoff ${escapeHtml(titleize(event.payload?.state ?? ""))}`,
+        `${escapeHtml(projectName(event.payload?.project_id))} · ${escapeHtml(deviceName(event.payload?.source_device_id))} &rarr; ${escapeHtml(
+          deviceName(event.payload?.target_device_id)
+        )}`,
+        event.occurredAt ? Math.floor(event.occurredAt / 1000) : null
+      )
+    )
+    .join("");
+  const securityItems = securityEvents()
+    .map((event) =>
+      feedItem(
+        "bad",
+        "lock",
+        escapeHtml(event.payload?.title ?? "Security block"),
+        `${escapeHtml(event.payload?.detail ?? "")}${
+          Array.isArray(event.payload?.safe_actions) && event.payload.safe_actions.length > 0
+            ? ` · Safe next step: ${escapeHtml(event.payload.safe_actions[0])}`
+            : ""
+        }`,
+        event.occurredAt ? Math.floor(event.occurredAt / 1000) : null
+      )
+    )
+    .join("");
+  const quotaItems = quotaEvents()
+    .map((event) =>
+      feedItem(
+        "warn",
+        "zap",
+        `Quota warning · ${escapeHtml(event.payload?.quota ?? "")}`,
+        `${escapeHtml(String(event.payload?.used ?? "?"))}/${escapeHtml(String(event.payload?.limit ?? "?"))} ${escapeHtml(
+          event.payload?.unit ?? ""
+        )} · ${escapeHtml(event.payload?.detail ?? "")}`,
+        event.occurredAt ? Math.floor(event.occurredAt / 1000) : null
+      )
+    )
+    .join("");
+  return `
+    <div class="page-head">
+      <div>
+        <div class="eyebrow"><span class="eyebrow-dot"></span>Local audit trail</div>
+        <h1 class="page-title">Activity</h1>
+        <p class="page-sub">Evidence for checkpoints, handoffs, security blocks, and quota pressure. Internal identifiers stay in exported diagnostics only.</p>
+      </div>
+      <div class="page-actions">
+        <button class="button" data-action="diagnostics" aria-label="Export diagnostics bundle">${icon("download")}Diagnostics</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-body">
+        <p class="group-label">Activity filters</p>
+        <div class="segmented" role="group" aria-label="Activity filters">
+          ${activityFilters
+            .map(
+              ([key, label]) =>
+                `<button class="segment${state.activityFilter === key ? " active" : ""}" data-activity-filter="${key}">${label}</button>`
+            )
+            .join("")}
+        </div>
+      </div>
+    </div>
+    ${renderActivitySection("audit", "Audit events", "pulse", auditItems, "No audit events yet")}
+    ${renderActivitySection("checkpoint", "Checkpoint events", "shield", checkpointItems, "No live checkpoint events yet")}
+    ${renderActivitySection("handoff", "Handoff events", "relay", handoffItems, "No live handoff events yet")}
+    ${renderActivitySection("security", "Security blocks", "lock", securityItems, "No security blocks in this session")}
+    ${renderActivitySection("quota", "Quota warnings", "zap", quotaItems, "No quota warnings in this session")}`;
+}
+
+/* ------------------------------------------------------- settings view */
+
+const profileNotes = {
+  adaptive: "Balance protection and resource use automatically.",
+  instant: "Checkpoint aggressively for the fastest continue.",
+  eco: "Pause background work to save power.",
+  custom: "Use manually tuned thresholds.",
+  balanced: "Steady cadence between instant and eco.",
+  performance: "Prioritize local machine performance.",
+};
+
+function validateSettingsInput(formData) {
+  const profile = String(formData.get("resource_profile") ?? "").trim();
+  if (!resourceProfiles.includes(profile)) {
+    return "Resource profile must be one of the supported profiles";
+  }
+  const editorCommand = String(formData.get("editor_command") ?? "").trim();
+  if (!editorCommand) {
+    return "Editor command is required";
+  }
+  return null;
+}
+
+function renderSettings() {
+  const config = settings();
+  const runtime = state.bootstrap?.runtime ?? null;
+  const bridge = state.eventBridge;
+  const warmth = localCacheWarmth();
+  return `
+    <div class="page-head">
+      <div>
+        <div class="eyebrow"><span class="eyebrow-dot"></span>Fabric policy</div>
+        <h1 class="page-title">Settings</h1>
+        <p class="page-sub">Local device preferences. Everything here is stored by the agent, not the window.</p>
+      </div>
+    </div>
+    <form data-settings-form>
+      <div class="bento">
+        <div class="bento-col">
+          <section class="card">
+            <div class="card-head"><div><h3 class="card-title">${icon("monitor")}Device identity</h3></div></div>
+            <div class="card-body">
+              <dl class="kv-list">
+                <div class="kv"><dt>Fabric</dt><dd>${escapeHtml(config?.fabric_name ?? "unknown")}</dd></div>
+                <div class="kv"><dt>Device name</dt><dd>${escapeHtml(config?.device_name ?? "unknown")}</dd></div>
+                <div class="kv"><dt>Device ID</dt><dd class="mono">${escapeHtml(shortId(config?.device_id))}</dd></div>
+                <div class="kv"><dt>Platform</dt><dd>${escapeHtml(config?.platform_key ?? runtime?.platform_key ?? "unknown")} · ${escapeHtml(
+                  config?.architecture ?? runtime?.architecture ?? ""
+                )}</dd></div>
+                <div class="kv"><dt>Registered projects</dt><dd>${config?.project_count ?? projects().length}</dd></div>
+              </dl>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title">${icon("zap")}Background behavior</h3>
+                <p class="card-sub">How eagerly the agent protects work in the background.</p>
+              </div>
+              ${pendingChip("settings.standby-target")}
+            </div>
+            <div class="card-body">
+              <label class="field">
+                <span class="field-label">Resource profile</span>
+                <select class="select-input" name="resource_profile">
+                  ${resourceProfiles
+                    .map(
+                      (profile) =>
+                        `<option value="${profile}"${config?.resource_profile === profile ? " selected" : ""}>${titleize(profile)} — ${
+                          profileNotes[profile]
+                        }</option>`
+                    )
+                    .join("")}
+                </select>
+              </label>
+              ${pendingPanel("settings.standby-target", "Pinning a default continue target arrives with scheduler preferences.")}
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title">${icon("box")}Storage and cache</h3>
+                <p class="card-sub">Where checkpoints and metadata live on this device.</p>
+              </div>
+              ${pendingChip("settings.retention")}
+            </div>
+            <div class="card-body">
+              <dl class="kv-list">
+                <div class="kv"><dt>Data home</dt><dd class="mono">${escapeHtml(runtime?.devrelay_home ?? "unknown")}</dd></div>
+                <div class="kv"><dt>Checkpoint cache</dt><dd>${escapeHtml(warmth ?? `${snapshots().length} checkpoints stored`)}</dd></div>
+              </dl>
+              ${pendingPanel("settings.retention", "Retention windows and per-project quota controls stay on agent defaults for now.")}
+            </div>
+          </section>
+        </div>
+        <div class="bento-col">
+          <section class="card">
+            <div class="card-head"><div><h3 class="card-title">${icon("wifi")}Network</h3><p class="card-sub">Discovery and transport between your devices.</p></div></div>
+            <div class="card-body">
+              <label class="check-row">
+                <input type="checkbox" name="mdns_enabled" ${config?.mdns_enabled ? "checked" : ""} />
+                Discover devices on the local network (mDNS)
+              </label>
+              <div class="kv"><dt class="muted">Agent endpoint</dt><dd class="mono">${escapeHtml(shortId(runtime?.agent_socket_path))}</dd></div>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head"><div><h3 class="card-title">${icon("lock")}Security</h3><p class="card-sub">Trust decisions stay with the agent and the CLI.</p></div></div>
+            <div class="card-body">
+              <dl class="kv-list">
+                <div class="kv"><dt>Anchor mode</dt><dd>${escapeHtml(titleize(config?.anchor_mode ?? "unknown"))}</dd></div>
+                <div class="kv"><dt>Device trust</dt><dd>Managed via pairing and revocation</dd></div>
+              </dl>
+              <p class="quiet">Security blocks appear in Activity with safe next steps; secrets are excluded from checkpoints by policy.</p>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h3 class="card-title">${icon("terminal")}Editor context</h3>
+                <p class="card-sub">How projects open after a continue.</p>
+              </div>
+              ${pendingChip("editor.context-restore")}
+            </div>
+            <div class="card-body">
+              <label class="field">
+                <span class="field-label">Editor command</span>
+                <input class="text-input" name="editor_command" value="${escapeHtml(config?.editor_command ?? "")}" placeholder="code" />
+                <span class="field-hint">Used by Open in editor and after a verified continue.</span>
+              </label>
+              ${pendingPanel("editor.context-restore", "Tab, breakpoint, and terminal restore is driven from the VS Code extension today.")}
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head"><div><h3 class="card-title">${icon("sliders")}Appearance</h3></div></div>
+            <div class="card-body">
+              <div class="segmented" role="group" aria-label="Color theme">
+                ${["auto", "light", "dark"]
+                  .map(
+                    (theme) =>
+                      `<button type="button" class="segment${state.theme === theme ? " active" : ""}" data-action="set-theme" data-theme-value="${theme}">${titleize(
+                        theme
+                      )}</button>`
+                  )
+                  .join("")}
+              </div>
+              <p class="quiet">Theme follows the system in Auto and is not persisted yet.</p>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head"><div><h3 class="card-title">${icon("pulse")}Advanced diagnostics</h3><p class="card-sub">Support evidence, without internal identifiers in the UI.</p></div></div>
+            <div class="card-body">
+              <dl class="kv-list">
+                <div class="kv"><dt>Event stream</dt><dd>${escapeHtml(eventBridgeStatus().label)}</dd></div>
+                <div class="kv"><dt>Last live event</dt><dd>${escapeHtml(bridge.lastEvent ? formatClock(bridge.lastEvent.receivedAt) : "none yet")}</dd></div>
+              </dl>
+              <div class="form-actions">
+                <button class="button" type="button" data-action="diagnostics">${icon("download")}Export diagnostics</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+      <div class="form-actions" style="margin-top: 14px;">
+        <button class="button primary" type="submit">Save settings</button>
+        <span class="quiet">Applies through the agent settings RPC.</span>
+      </div>
+    </form>`;
+}
+
+/* ------------------------------------------------------ command palette */
+
+function paletteCommands() {
+  const commands = [];
+  for (const [id, label, iconName] of views) {
+    commands.push({ group: "Go to", label: `Go to ${label}`, iconName, kind: "view", view: id });
+  }
+  const project = selectedProject();
+  if (project) {
+    commands.push({
+      group: "Actions",
+      label: `Checkpoint ${project.display_name} now`,
+      iconName: "shield",
+      kind: "action",
+      action: "checkpoint",
+      projectId: project.project_id,
+    });
+    const target = bestTarget();
+    if (target) {
+      commands.push({
+        group: "Actions",
+        label: `Review handoff to ${target.display_name}`,
+        iconName: "arrow-right",
+        kind: "action",
+        action: "handoff-dialog",
+        projectId: project.project_id,
+        targetDeviceId: target.device_id,
+      });
+    }
+    commands.push({
+      group: "Actions",
+      label: `Open ${project.display_name} in editor`,
+      iconName: "terminal",
+      kind: "action",
+      action: "open-project",
+      projectId: project.project_id,
+    });
+  }
+  commands.push({ group: "Actions", label: "Export diagnostics", iconName: "download", kind: "action", action: "diagnostics" });
+  commands.push({ group: "Actions", label: "Refresh state", iconName: "history", kind: "action", action: "refresh" });
+  commands.push({ group: "Actions", label: "Switch color theme", iconName: "sun", kind: "action", action: "toggle-theme" });
+  for (const [featureId, entry] of Object.entries(FEATURES)) {
+    commands.push({
+      group: "Not built yet",
+      label: entry.title,
+      iconName: "cone",
+      kind: "pending",
+      featureId,
+    });
+  }
+  return commands;
+}
+
+function filteredPaletteCommands() {
+  const query = (state.palette?.query ?? "").trim().toLowerCase();
+  const commands = paletteCommands();
+  if (!query) return commands;
+  return commands.filter((command) => command.label.toLowerCase().includes(query));
+}
+
+function renderPalette() {
+  if (!state.palette) return "";
+  const commands = filteredPaletteCommands();
+  const selected = Math.min(state.palette.index ?? 0, Math.max(0, commands.length - 1));
+  let lastGroup = null;
+  const items = commands
+    .map((command, index) => {
+      const groupHtml = command.group !== lastGroup ? `<div class="palette-group">${escapeHtml(command.group)}</div>` : "";
+      lastGroup = command.group;
+      return `${groupHtml}
+        <button class="palette-item${index === selected ? " selected" : ""}" data-action="palette-run" data-palette-index="${index}">
+          ${icon(command.iconName)}
+          <span class="palette-item-label">${escapeHtml(command.label)}</span>
+          ${command.kind === "pending" ? pendingChip(command.featureId) : ""}
+        </button>`;
+    })
+    .join("");
+  return `
+    <div class="overlay palette-overlay" data-overlay="palette">
+      <div class="palette" role="dialog" aria-modal="true" aria-label="Command menu">
+        <div class="palette-input-row">
+          ${icon("search")}
+          <input class="palette-input" data-palette-input type="text" value="${escapeHtml(state.palette.query ?? "")}"
+            placeholder="Search views, actions, projects" aria-label="Search commands" />
+          <kbd>esc</kbd>
+        </div>
+        <div class="palette-list">
+          ${commands.length > 0 ? items : '<div class="palette-empty">No matching commands.</div>'}
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------------- shell + render */
+
+function renderToasts() {
+  if (state.toasts.length === 0) return "";
+  return `
+    <div class="toast-region" role="status" aria-live="polite">
+      ${state.toasts
+        .map(
+          (entry) => `
+        <div class="toast ${entry.kind}">
+          ${icon(entry.kind === "bad" ? "x" : entry.kind === "warn" ? "cone" : "check")}
+          <div>${escapeHtml(entry.message)}</div>
+        </div>`
+        )
+        .join("")}
+    </div>`;
+}
+
+function agentNotices() {
+  const notices = [];
+  const bridge = state.eventBridge;
+  const agent = state.bootstrap?.agent;
+  if (state.bootstrap && agent && !agent.connected) {
+    notices.push(
+      `<div class="banner bad">${icon("x")}<div class="banner-body"><strong>Local agent is not reachable</strong><span>Start the DevRelay agent, then refresh. State shown below may be stale.</span></div></div>`
+    );
+  }
+  if (bridge.stale) {
+    notices.push(
+      `<div class="banner warn">${icon("cone")}<div class="banner-body"><strong>Event stream gap</strong><span>Some live events were missed; resyncing full state from the agent.</span></div></div>`
+    );
+  }
+  if (!bridge.connected && bridge.everConnected) {
+    notices.push(
+      `<div class="banner warn">${icon("cone")}<div class="banner-body"><strong>Events reconnecting</strong><span>The live event stream dropped; reconnecting in the background.</span></div></div>`
+    );
+  }
+  for (const error of (agent?.errors ?? []).slice(0, 3)) {
+    notices.push(
+      `<div class="banner warn">${icon("cone")}<div class="banner-body"><strong>Agent notice</strong><span>${escapeHtml(error)}</span></div></div>`
+    );
+  }
+  return notices.join("");
 }
 
 function loadingScreen() {
-  return `<section class="screen"><div class="loading-line"><span class="small-spinner"></span><span>Loading runtime state</span></div></section>`;
+  return `<div class="card"><div class="card-body"><div class="empty">${icon("relay")}<strong>Connecting to the local runtime</strong><span>Loading agent state.</span></div></div></div>`;
 }
 
 function runtimeErrorScreen() {
   return `
-    <section class="screen">
-      <div class="panel">
-        <div class="panel-head"><div><h3>Desktop runtime unavailable</h3><p>The app did not receive a Tauri command bridge.</p></div></div>
-        <div class="panel-body">
-          <div class="error-box">${escapeHtml(state.runtimeError)}</div>
-        </div>
-      </div>
-    </section>
-  `;
+    <div class="banner bad">${icon("x")}<div class="banner-body"><strong>Desktop runtime problem</strong><span>${escapeHtml(
+      state.runtimeError ?? "Unknown problem"
+    )}</span></div></div>
+    <div class="form-actions"><button class="button" data-action="refresh">Try again</button></div>`;
 }
 
 function renderView() {
@@ -1329,554 +2058,26 @@ function renderView() {
   }
 }
 
-function renderContinue() {
-  const project = selectedProject();
-  if (!project) {
-    return `
-      <section class="screen">
-        ${agentErrors()}
-        <div class="empty"><strong>No registered projects</strong><p>Add a project with the local CLI before continuing work from the desktop app.</p></div>
-      </section>
-    `;
-  }
-  const status = projectStatus(project.project_id);
-  const counts = statusCounts(status?.data);
-  const workspace = activeWorkspace(project);
-  const lease = activeLease(project.project_id);
-  const device = currentDevice();
-  const latest = activity().find((event) => event.project_id === project.project_id);
-  const checkpoint = latestSnapshot(project.project_id);
-  const handoff = latestHandoff(project.project_id);
-  const incoming = incomingHandoff(project.project_id);
-  const continueReadiness = continueHereReadiness(incoming);
-  const openHandoff = handoffIsOpen(handoff);
-  const availableTargets = targetDevices();
-  const environmentWarmth = deviceResource(device, "cache");
-  const environmentCpu = deviceResource(device, "cpu");
-  const environmentPower = deviceResource(device, "power");
-  const environmentReported = [environmentWarmth, environmentCpu, environmentPower].some(
-    (value) => value !== "Not reported"
-  );
-  const environmentDetail = environmentReported
-    ? `${environmentWarmth} - ${environmentCpu} - ${environmentPower}`
-    : "No environment summary reported by this agent.";
-  const hydration = projectEnvironment(project, workspace);
-  const hydrationToneValue = hydrationTone(hydration);
-  const handoffReady = methods().has("handoff.begin");
-  const suggestedSession = workspace?.workspace_id ?? checkpoint?.session_id ?? project.project_id;
-  const handoffPanelCopy = openHandoff
-    ? "Target preparation is in progress; continue on the target device to apply and verify"
-    : handoffReady
-      ? "Start target preparation with a fresh checkpoint; target apply and verification remain pending"
-      : "Handoff RPC is not exposed by this agent build";
-  const continueDisabled = !continueReadiness.ready || Boolean(state.operation);
+function shell() {
   return `
-    <section class="screen">
-      ${agentErrors()}
-      <div class="screen-grid">
-        <div class="panel">
-          <div class="panel-body project-hero">
-            <div class="project-title">
-              <div>
-                <h3>${escapeHtml(project.display_name)}</h3>
-                <p>${escapeHtml(project.local_path)}</p>
-              </div>
-              ${statusBadge(status?.data, status?.loading, status?.error)}
+    <div class="app-root" data-theme="${resolvedTheme()}">
+      <div class="ambient" aria-hidden="true"></div>
+      <div class="shell">
+        ${renderSidebar()}
+        <div class="workspace">
+          ${renderTopbar()}
+          <main class="main">
+            <div class="view-frame">
+              ${agentNotices()}
+              ${state.loading ? loadingScreen() : state.runtimeError ? runtimeErrorScreen() : renderView()}
             </div>
-            ${status?.error ? `<div class="error-box">${escapeHtml(status.error)}</div>` : ""}
-            <div class="summary-grid">
-              <div class="metric"><strong>${counts.staged}</strong><span>Staged</span></div>
-              <div class="metric"><strong>${counts.unstaged}</strong><span>Modified</span></div>
-              <div class="metric"><strong>${counts.untracked}</strong><span>Untracked</span></div>
-              <div class="metric"><strong>${counts.unmerged}</strong><span>Conflicts</span></div>
-            </div>
-            <div class="button-row">
-              <button class="button primary" data-action="handoff-continue-here" data-project-id="${escapeHtml(project.project_id)}" data-handoff-id="${escapeHtml(incoming?.record?.handoff_id ?? "")}" aria-label="Continue ${escapeHtml(project.display_name)} here" ${continueDisabled ? "disabled" : ""}>${icons.play}<span>Continue here</span></button>
-              <button class="button" data-action="checkpoint" data-project-id="${escapeHtml(project.project_id)}" aria-label="Checkpoint ${escapeHtml(project.display_name)} now" ${state.operation ? "disabled" : ""}>${icons.check}<span>Checkpoint now</span></button>
-              <button class="button" data-action="run-elsewhere-placeholder" data-project-id="${escapeHtml(project.project_id)}" aria-label="Run ${escapeHtml(project.display_name)} elsewhere" ${state.operation ? "disabled" : ""}>${icons.terminal}<span>Run elsewhere</span></button>
-              <button class="button" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" aria-label="Refresh status for ${escapeHtml(project.display_name)}" ${status?.loading ? "disabled" : ""}>${icons.refresh}<span>Status</span></button>
-              <button class="button" data-action="open-project" data-project-id="${escapeHtml(project.project_id)}" aria-label="Open folder for ${escapeHtml(project.display_name)}">${icons.external}<span>Open folder</span></button>
-            </div>
-          </div>
-        </div>
-        <div class="panel flat">
-          <div class="panel-head"><div><h3>Continuation state</h3><p>${escapeHtml(suggestedSession)}</p></div></div>
-          <div class="panel-body status-stack">
-            <div class="status-row"><span class="dot good"></span><div><strong>${escapeHtml(device.display_name ?? "Local device")}</strong><span>${escapeHtml(device.platform_key ?? "unknown")} ${escapeHtml(device.architecture ?? "")}</span></div><span class="badge good">This device</span></div>
-            <div class="status-row"><span class="dot ${hydrationToneValue}"></span><div><strong>Environment hydration</strong><span>${escapeHtml(hydrationDetail(hydration, environmentReported ? environmentDetail : ""))}</span></div><span class="badge ${hydrationToneValue}">${escapeHtml(hydrationLabel(hydration))}</span></div>
-            <div class="status-row"><span class="dot ${suggestedSession ? "good" : "warn"}"></span><div><strong>Suggested session</strong><span>${escapeHtml(suggestedSession ?? "No continuation session recorded")}</span></div><span class="badge">${workspace?.state ? escapeHtml(workspace.state) : "selected"}</span></div>
-            ${activeWriterRow(workspace, lease)}
-            ${handoffRow(handoff)}
-            ${continueHereRow(incoming, continueReadiness)}
-            <div class="status-row"><span class="dot ${checkpoint ? "good" : "warn"}"></span><div><strong>${checkpoint ? escapeHtml(shortId(checkpoint.snapshot_id)) : "No checkpoint recorded"}</strong><span>${checkpoint ? `${formatAge(checkpoint.created_at_unix_seconds)} - ${escapeHtml(checkpoint.label ?? "unlabeled")}` : "Create a checkpoint before cross-device handoff."}</span></div><span class="badge">${checkpoint ? `#${checkpoint.sequence_number}` : "empty"}</span></div>
-            <div class="status-row"><span class="dot ${latest ? "good" : "warn"}"></span><div><strong>${latest ? escapeHtml(latest.summary) : "No activity recorded"}</strong><span>${latest ? formatAge(latest.created_at_unix_seconds) : "waiting for agent events"}</span></div><span class="badge">${latest ? escapeHtml(latest.outcome) : "empty"}</span></div>
-          </div>
+          </main>
         </div>
       </div>
-      <div class="panel">
-        <div class="panel-head">
-          <div><h3>Continue on another device</h3><p>${handoffPanelCopy}</p></div>
-        </div>
-        <div class="panel-body">
-          ${
-            availableTargets.length === 0
-              ? '<div class="empty"><strong>No paired target devices</strong><p>Pair another device before starting a desktop handoff.</p></div>'
-              : `<div class="list">${availableTargets
-                  .map((device) => {
-                    const readiness = targetReadiness(device, { handoffReady, lease, openHandoff });
-                    const disabled = !readiness.ready || Boolean(state.operation);
-                    return `<div class="list-item">
-                      <div class="list-item-row">
-                        <div><strong>${escapeHtml(device.display_name)}</strong><span>${escapeHtml(device.platform_key)} ${escapeHtml(device.architecture)} - ${escapeHtml(readiness.detail)}</span></div>
-                        <span class="badge ${readiness.tone}">${escapeHtml(readiness.label)}</span>
-                      </div>
-                      <button class="button ${readiness.ready ? "primary" : ""}" data-action="handoff-dialog" data-project-id="${escapeHtml(project.project_id)}" data-target-device-id="${escapeHtml(device.device_id)}" aria-label="Review handoff to ${escapeHtml(device.display_name)}" ${disabled ? "disabled" : ""}>${icons.play}<span>${readiness.ready ? "Review handoff" : readiness.label}</span></button>
-                    </div>`;
-                  })
-                  .join("")}</div>`
-          }
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderProjects() {
-  const visibleProjects = filteredProjects();
-  const decorated = visibleProjects.map((project) => ({
-    project,
-    attention: projectAttention(project),
-  }));
-  const needsAttention = decorated.filter((entry) => entry.attention.needsAttention);
-  const ready = decorated.filter((entry) => !entry.attention.needsAttention);
-  const recoveryProject = selectedRecoveryProject();
-  const recoveryEntries = recoverySnapshots(recoveryProject?.project_id);
-  const recoverySnapshot = selectedRecoverySnapshot(recoveryProject?.project_id);
-  const recoveryPathSuggestion = recoverySnapshot
-    ? `/tmp/devrelay-recovery-${recoveryProject?.project_id}-${recoverySnapshot.sequence_number ?? "snapshot"}`
-    : "";
-  const projectOptions = projects()
-    .map(
-      (project) =>
-        `<option value="${escapeHtml(project.project_id)}" ${project.project_id === recoveryProject?.project_id ? "selected" : ""}>${escapeHtml(project.display_name)}</option>`
-    )
-    .join("");
-  const recoverySnapshotOptions = recoveryEntries
-    .map(
-      (snapshot) =>
-        `<option value="${escapeHtml(snapshot.snapshot_id)}" ${snapshot.snapshot_id === recoverySnapshot?.snapshot_id ? "selected" : ""}>#${escapeHtml(snapshot.sequence_number ?? "?")} ${escapeHtml(snapshot.label ?? "snapshot")} - ${escapeHtml(formatAge(snapshot.created_at_unix_seconds))} - ${escapeHtml(shortId(snapshot.snapshot_id))}</option>`
-    )
-    .join("");
-  const rowForProject = ({ project, attention }) => {
-    const status = projectStatus(project.project_id);
-    const counts = statusCounts(status?.data);
-    const session = projectSession(project);
-    const writer = projectWriter(project);
-    const checkpoint = projectCheckpoint(project);
-    const availability = projectTargetAvailability(project);
-    return `<tr>
-      <td><div class="cell-main"><strong>${escapeHtml(project.display_name)}</strong><span>${escapeHtml(project.local_path)}</span></div></td>
-      <td><div class="cell-main"><strong>${escapeHtml(session.label)}</strong><span>${escapeHtml(session.state)} - ${escapeHtml(session.detail)}</span></div></td>
-      <td><div class="cell-main"><strong>${escapeHtml(writer.label)}</strong><span>${escapeHtml(writer.detail)}</span></div></td>
-      <td><div class="cell-main"><strong>${escapeHtml(checkpoint.label)}</strong><span>${escapeHtml(checkpoint.detail)}</span></div></td>
-      <td><div class="cell-main"><strong><span class="badge ${availability.tone}">${escapeHtml(availability.label)}</span></strong><span>${escapeHtml(availability.detail)}</span></div></td>
-      <td><div class="cell-main"><strong><span class="badge ${attention.tone}">${escapeHtml(attention.label)}</span></strong><span>${escapeHtml(attention.detail)}</span><span>${counts.staged} staged, ${counts.unstaged} modified, ${counts.untracked} untracked</span></div></td>
-      <td>
-        <div class="button-row">
-          <button class="button" data-action="select-project" data-project-id="${escapeHtml(project.project_id)}" aria-label="Show details for ${escapeHtml(project.display_name)}">${icons.play}<span>Details</span></button>
-          <button class="button" data-action="project-recovery" data-project-id="${escapeHtml(project.project_id)}" aria-label="Open recovery for ${escapeHtml(project.display_name)}">${icons.box}<span>Recovery</span></button>
-          <button class="button icon-only" data-action="project-status" data-project-id="${escapeHtml(project.project_id)}" title="Status" aria-label="Refresh status for ${escapeHtml(project.display_name)}">${icons.refresh}</button>
-        </div>
-      </td>
-    </tr>`;
-  };
-  const groupRows = (label, entries) =>
-    entries.length === 0
-      ? ""
-      : `<tr class="table-group-row"><td colspan="7">${escapeHtml(label)} (${entries.length})</td></tr>${entries.map(rowForProject).join("")}`;
-  const rows = `${groupRows("Needs attention", needsAttention)}${groupRows("Ready", ready)}`;
-  return `
-    <section class="screen">
-      ${agentErrors()}
-      <div class="screen-grid">
-        <form class="panel" data-project-add-form>
-          <div class="panel-head"><div><h3>Add project</h3><p>Register a local Git workspace with the agent.</p></div></div>
-          <div class="panel-body form-grid">
-            <div class="field"><label for="project_add_path">Project path</label><input id="project_add_path" name="path" placeholder="/path/to/repository" autocomplete="off" /></div>
-            <div class="field"><label for="project_add_manifest">Manifest path</label><input id="project_add_manifest" name="manifest" placeholder="Optional devrelay.toml" autocomplete="off" /></div>
-            <div class="form-actions"><button class="button primary" type="submit" ${state.operation ? "disabled" : ""}>${icons.folder}<span>Add project</span></button></div>
-          </div>
-        </form>
-        <form class="panel flat" data-recovery-form>
-          <div class="panel-head"><div><h3>Recovery</h3><p>${recoveryEntries.length} snapshots for ${escapeHtml(recoveryProject?.display_name ?? "selected project")}</p></div></div>
-          <div class="panel-body form-grid">
-            <div class="field"><label for="recovery_project">Project</label><select id="recovery_project" name="project_id" data-recovery-project>${projectOptions}</select></div>
-            <div class="field"><label for="recovery_snapshot">Snapshot</label><select id="recovery_snapshot" name="snapshot_id" data-recovery-snapshot ${recoveryEntries.length === 0 ? "disabled" : ""}>${recoverySnapshotOptions}</select></div>
-            <div class="field"><label for="recovery_path">Recovery path</label><input id="recovery_path" name="path" value="${escapeHtml(recoveryPathSuggestion)}" autocomplete="off" ${recoveryEntries.length === 0 ? "disabled" : ""} /></div>
-            <div class="field"><label for="recovery_name">Workspace name</label><input id="recovery_name" name="name" value="${escapeHtml(recoveryProject ? `${recoveryProject.display_name} recovery` : "")}" autocomplete="off" ${recoveryEntries.length === 0 ? "disabled" : ""} /></div>
-            <label class="check-field"><input type="checkbox" name="register" checked ${recoveryEntries.length === 0 ? "disabled" : ""} /> <span>Register recovered workspace</span></label>
-            <div class="form-actions"><button class="button" type="submit" ${state.operation || recoveryEntries.length === 0 ? "disabled" : ""}>${icons.box}<span>Open recovery</span></button></div>
-          </div>
-        </form>
-      </div>
-      <div class="panel">
-        <div class="panel-head">
-          <div><h3>Projects</h3><p>${visibleProjects.length} of ${projects().length} registered - ${needsAttention.length} need attention</p></div>
-          <div class="filter-field"><label class="visually-hidden" for="project_filter">Filter projects</label><input id="project_filter" data-project-filter value="${escapeHtml(state.projectFilter)}" placeholder="Filter projects" aria-label="Filter projects" /></div>
-        </div>
-        <div class="panel-body">
-          ${
-            projects().length === 0
-              ? '<div class="empty"><strong>No projects</strong><p>Use the local CLI to register a repository.</p></div>'
-              : visibleProjects.length === 0
-                ? '<div class="empty"><strong>No matching projects</strong><p>Clear the filter to show all registered projects.</p></div>'
-                : `<div class="table-scroll" data-scroll-container><table class="projects-table"><thead><tr><th>Project</th><th>Active session</th><th>Writer</th><th>Checkpoint</th><th>Target availability</th><th>Needs attention</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
-          }
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderDevices() {
-  const currentDeviceId = state.bootstrap?.settings?.device_id;
-  const allDevices = devices();
-  const onlineCount = allDevices.filter(recentlySeen).length;
-  const rows = devices()
-    .map((device) => {
-      const status = deviceState(device);
-      const isCurrent = device.device_id === currentDeviceId;
-      return `<tr>
-      <td><div class="cell-main"><strong>${escapeHtml(device.display_name)}</strong><span>${escapeHtml(device.device_id)}</span></div></td>
-      <td><div class="cell-main"><strong><span class="badge ${status.tone}">${escapeHtml(status.label)}</span></strong><span>${escapeHtml(status.detail)}</span></div></td>
-      <td><div class="cell-main"><strong>${escapeHtml(osFamily(device.platform_key))}</strong><span>${escapeHtml(device.platform_key)} / ${escapeHtml(device.architecture)}</span></div></td>
-      <td>${isCurrent ? '<span class="badge good">This device</span>' : '<span class="badge">Paired</span>'}</td>
-      <td><div class="capability-list">${capabilityBadges(device)}</div></td>
-      <td>${escapeHtml(deviceResource(device, "cpu"))}</td>
-      <td>${escapeHtml(deviceResource(device, "memory"))}</td>
-      <td>${escapeHtml(deviceResource(device, "disk"))}</td>
-      <td>${escapeHtml(deviceResource(device, "power"))}</td>
-      <td>${escapeHtml(deviceResource(device, "cache"))}</td>
-      <td><div class="button-row"><button class="button danger" data-action="device-revoke-placeholder" data-device-id="${escapeHtml(device.device_id)}" aria-label="Revoke ${escapeHtml(device.display_name)}" ${isCurrent || state.operation ? "disabled" : ""}>${icons.x}<span>Revoke</span></button></div></td>
-    </tr>`;
-    })
-    .join("");
-  return `
-    <section class="screen">
-      ${agentErrors()}
-      <div class="panel">
-        <div class="panel-head">
-          <div><h3>Devices</h3><p>${allDevices.length} known identities - ${onlineCount} online</p></div>
-          <button class="button" data-action="device-pair-placeholder" aria-label="Pair a new device" ${state.operation ? "disabled" : ""}>${icons.monitor}<span>Pair device</span></button>
-        </div>
-        <div class="panel-body">
-          ${
-            devices().length === 0
-              ? '<div class="empty"><strong>No paired devices</strong><p>Pairing records will appear after the agent writes device metadata.</p></div>'
-              : `<div class="table-scroll" data-scroll-container><table class="devices-table"><thead><tr><th>Device</th><th>State</th><th>OS / Arch</th><th>Role</th><th>Capabilities</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Power</th><th>Cache warmth</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
-          }
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderRuns() {
-  const allRuns = runs();
-  const queued = allRuns.filter((run) => runStateGroup(run) === "queued");
-  const running = allRuns.filter((run) => runStateGroup(run) === "running");
-  const failed = allRuns.filter((run) => runStateGroup(run) === "failed");
-  const recent = allRuns.filter((run) => runStateGroup(run) === "recent");
-  const rowForRun = (run) => {
-    const canCancel = ["queued", "running"].includes(runStateGroup(run));
-    return `<tr>
-      <td><div class="cell-main"><strong>${escapeHtml(shortId(run.task_run_id))}</strong><span>${escapeHtml(runProjectName(run.project_id))}</span></div></td>
-      <td><span class="badge ${runStateTone(run)}">${escapeHtml(titleize(run.state))}</span></td>
-      <td><code>${escapeHtml(run.command ?? "Command not recorded")}</code></td>
-      <td><div class="cell-main"><strong>${escapeHtml(runTargetLabel(run))}</strong><span>${escapeHtml(run.session_id ?? "No session recorded")}</span></div></td>
-      <td><div class="cell-main"><strong>${escapeHtml(runSchedulerExplanation(run))}</strong><span>${escapeHtml(runArtifactLabel(run))}</span></div></td>
-      <td>${formatAge(runUpdatedAt(run))}</td>
-      <td>
-        <div class="button-row">
-          <button class="button" data-action="run-artifacts-placeholder" data-run-id="${escapeHtml(run.task_run_id)}" aria-label="Open artifacts for run ${escapeHtml(shortId(run.task_run_id))}">${icons.download}<span>Artifacts</span></button>
-          <button class="button danger" data-action="run-cancel-placeholder" data-run-id="${escapeHtml(run.task_run_id)}" aria-label="Cancel run ${escapeHtml(shortId(run.task_run_id))}" ${!canCancel || state.operation ? "disabled" : ""}>${icons.x}<span>Cancel</span></button>
-        </div>
-      </td>
-    </tr>`;
-  };
-  const groupRows = (label, entries) =>
-    entries.length === 0
-      ? ""
-      : `<tr class="table-group-row"><td colspan="7">${escapeHtml(label)} (${entries.length})</td></tr>${entries.map(rowForRun).join("")}`;
-  const rows = `${groupRows("Failed runs", failed)}${groupRows("Running runs", running)}${groupRows("Queued runs", queued)}${groupRows("Recent runs", recent)}`;
-  return `
-    <section class="screen">
-      ${agentErrors()}
-      <div class="panel">
-        <div class="panel-head">
-          <div><h3>Runs</h3><p>${allRuns.length} task records - ${running.length} running, ${queued.length} queued, ${failed.length} failed</p></div>
-          <button class="button" data-action="run-task-placeholder" aria-label="Run a task" ${state.operation ? "disabled" : ""}>${icons.terminal}<span>Run task</span></button>
-        </div>
-        <div class="panel-body project-hero">
-          <div class="summary-grid">
-            <div class="metric"><strong>${recent.length}</strong><span>Recent runs</span></div>
-            <div class="metric"><strong>${queued.length}</strong><span>Queued runs</span></div>
-            <div class="metric"><strong>${running.length}</strong><span>Running runs</span></div>
-            <div class="metric"><strong>${failed.length}</strong><span>Failed runs</span></div>
-          </div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-head"><div><h3>Scheduler explanation</h3><p>Target choice and artifact availability reported by task run metadata.</p></div></div>
-        <div class="panel-body">
-          ${
-            allRuns.length === 0
-              ? '<div class="empty"><strong>No task runs</strong><p>Remote and local task records will appear here after execution.</p></div>'
-              : `<div class="table-scroll" data-scroll-container><table class="runs-table"><thead><tr><th>Run</th><th>State</th><th>Command</th><th>Target</th><th>Scheduler / artifacts</th><th>Updated</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
-          }
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderActivity() {
-  const auditEvents = activity();
-  const checkpointItems = checkpointEvents();
-  const handoffItems = handoffEvents();
-  const securityItems = securityEvents();
-  const quotaItems = quotaEvents();
-  const activeFilter = state.activityFilter;
-  const showPanel = (filter) => activeFilter === "all" || activeFilter === filter;
-  const filterButton = (filter, label, count) =>
-    `<button class="segmented-button" data-activity-filter="${escapeHtml(filter)}" aria-pressed="${activeFilter === filter ? "true" : "false"}">${escapeHtml(label)}<span>${count}</span></button>`;
-  const checkpointRows = checkpointItems
-    .map((event) => {
-      const summary = snapshotEventSummary(event);
-      return `<div class="list-item">
-        <div class="list-item-row">
-          <div><strong>${escapeHtml(summary.title)}</strong><span>${escapeHtml(summary.detail)}</span></div>
-          <span class="badge ${summary.tone}">${escapeHtml(summary.badge)}</span>
-        </div>
-      </div>`;
-    })
-    .join("");
-  const handoffRows = handoffItems
-    .map((event) => {
-      const payload = event.payload ?? {};
-      const stateLabel = titleize(payload.state);
-      const previous = payload.previous_state ? `from ${titleize(payload.previous_state)}` : "started";
-      const target = eventDeviceName(payload.target_device_id);
-      return `<div class="list-item">
-        <div class="list-item-row">
-          <div><strong>${escapeHtml(stateLabel)}</strong><span>${escapeHtml(previous)} - ${escapeHtml(target)} - ${formatClock(event.occurredAt ?? event.receivedAt)}</span></div>
-          <span class="badge ${payload.state === "committed" ? "good" : payload.state === "aborted" ? "bad" : "warn"}">${escapeHtml(event.type)}</span>
-        </div>
-      </div>`;
-    })
-    .join("");
-  const securityRows = securityItems
-    .map((event) => {
-      const payload = event.payload ?? {};
-      return `<div class="list-item">
-        <div class="list-item-row">
-          <div><strong>${escapeHtml(payload.title ?? "Security Blocked")}</strong><span>${escapeHtml(payload.action ?? payload.detail ?? "Blocked by local policy")} - ${escapeHtml(payload.project_id ?? "global")} - ${formatClock(event.occurredAt ?? event.receivedAt)}</span></div>
-          <span class="badge bad">${escapeHtml(payload.code ?? "blocked")}</span>
-        </div>
-      </div>`;
-    })
-    .join("");
-  const quotaRows = quotaItems
-    .map((event) => {
-      const payload = event.payload ?? {};
-      return `<div class="list-item">
-        <div class="list-item-row">
-          <div><strong>${escapeHtml(payload.quota ?? "Quota warning")}</strong><span>${escapeHtml(quotaUsage(payload))} - ${escapeHtml(payload.scope ?? "local")} - ${escapeHtml(payload.detail ?? "Resource threshold reached")}</span></div>
-          <span class="badge warn">warning</span>
-        </div>
-      </div>`;
-    })
-    .join("");
-  const auditRows = auditEvents
-    .map((event) => `<div class="list-item">
-      <div class="list-item-row">
-        <div><strong>${escapeHtml(event.summary)}</strong><span>${escapeHtml(event.type)} - ${escapeHtml(event.project_id ?? "global")} - ${formatAge(event.created_at_unix_seconds)}</span></div>
-        <span class="badge ${event.outcome === "succeeded" ? "good" : event.outcome === "failed" ? "bad" : ""}">${escapeHtml(event.outcome)}</span>
-      </div>
-    </div>`)
-    .join("");
-  return `
-    <section class="screen">
-      ${agentErrors()}
-      <div class="panel flat">
-        <div class="panel-head">
-          <div><h3>Activity filters</h3><p>${liveEvents().length} live events, ${auditEvents.length} audit events</p></div>
-          <button class="button" data-action="diagnostics" ${state.operation ? "disabled" : ""}>${icons.download}<span>Diagnostics</span></button>
-        </div>
-        <div class="panel-body">
-          <div class="segmented-control" role="group" aria-label="Activity filter">
-            ${filterButton("all", "All", liveEvents().length + auditEvents.length)}
-            ${filterButton("audit", "Audit", auditEvents.length)}
-            ${filterButton("checkpoint", "Checkpoints", checkpointItems.length)}
-            ${filterButton("handoff", "Handoffs", handoffItems.length)}
-            ${filterButton("security", "Security", securityItems.length)}
-            ${filterButton("quota", "Quota", quotaItems.length)}
-          </div>
-        </div>
-      </div>
-      ${showPanel("checkpoint") ? `<div class="panel">
-        <div class="panel-head"><div><h3>Checkpoint events</h3><p>${checkpointItems.length} from agent stream</p></div></div>
-        <div class="panel-body scroll" data-scroll-container>
-          ${checkpointItems.length === 0 ? '<div class="empty"><strong>No checkpoint events</strong><p>Snapshot creation and apply verification events will appear here.</p></div>' : `<div class="list">${checkpointRows}</div>`}
-        </div>
-      </div>` : ""}
-      ${showPanel("handoff") ? `<div class="panel">
-        <div class="panel-head"><div><h3>Handoff events</h3><p>${handoffItems.length} from agent stream</p></div></div>
-        <div class="panel-body scroll" data-scroll-container>
-          ${handoffItems.length === 0 ? '<div class="empty"><strong>No handoff events</strong><p>Handoff state changes will appear here after the event stream receives them.</p></div>' : `<div class="list">${handoffRows}</div>`}
-        </div>
-      </div>` : ""}
-      ${showPanel("security") ? `<div class="panel">
-        <div class="panel-head"><div><h3>Security blocks</h3><p>${securityItems.length} from agent stream</p></div></div>
-        <div class="panel-body scroll" data-scroll-container>
-          ${securityItems.length === 0 ? '<div class="empty"><strong>No security blocks</strong><p>Policy blocks will appear here when the agent stops unsafe work.</p></div>' : `<div class="list">${securityRows}</div>`}
-        </div>
-      </div>` : ""}
-      ${showPanel("quota") ? `<div class="panel">
-        <div class="panel-head"><div><h3>Quota warnings</h3><p>${quotaItems.length} from agent stream</p></div></div>
-        <div class="panel-body scroll" data-scroll-container>
-          ${quotaItems.length === 0 ? '<div class="empty"><strong>No quota warnings</strong><p>Storage and resource warnings will appear here.</p></div>' : `<div class="list">${quotaRows}</div>`}
-        </div>
-      </div>` : ""}
-      ${showPanel("audit") ? `<div class="panel">
-        <div class="panel-head"><div><h3>Audit events</h3><p>${auditEvents.length} persisted agent events</p></div></div>
-        <div class="panel-body scroll" data-scroll-container>
-          ${auditEvents.length === 0 ? '<div class="empty"><strong>No audit events</strong><p>Agent audit events will appear here.</p></div>' : `<div class="list">${auditRows}</div>`}
-        </div>
-      </div>` : ""}
-    </section>
-  `;
-}
-
-function renderSettings() {
-  const settings = state.bootstrap?.settings;
-  if (!settings) {
-    return `<section class="screen">${agentErrors()}<div class="empty"><strong>Settings unavailable</strong><p>The agent did not return local settings.</p></div></section>`;
-  }
-  const runtime = state.bootstrap?.runtime ?? {};
-  const device = currentDevice();
-  const socketExists = Boolean(runtime.agent_socket_exists);
-  const networkLabel = settings.mdns_enabled ? "Discovery on" : "Manual only";
-  return `
-    <section class="screen">
-      ${agentErrors()}
-      <div class="screen-grid settings-grid">
-        <form class="panel settings-primary" data-settings-form>
-          <div class="panel-head">
-            <div><h3>Settings</h3><p>${escapeHtml(settings.device_name)} on ${escapeHtml(settings.fabric_name)}</p></div>
-            <span class="badge">${escapeHtml(settings.resource_profile)}</span>
-          </div>
-          <div class="panel-body settings-form">
-            <section class="settings-section">
-              <div class="section-head"><h4>Background behavior</h4><p>Choose how aggressively the local agent prepares work in the background.</p></div>
-              <div class="field"><label for="resource_profile">Resource profile</label><select id="resource_profile" name="resource_profile">
-                ${resourceProfiles.map((profile) => `<option value="${profile}" ${profile === settings.resource_profile ? "selected" : ""}>${titleize(profile)}</option>`).join("")}
-              </select></div>
-            </section>
-            <section class="settings-section">
-              <div class="section-head"><h4>Network</h4><p>Control same-network discovery for nearby DevRelay devices.</p></div>
-              <label class="check-field"><input type="checkbox" name="mdns_enabled" ${settings.mdns_enabled ? "checked" : ""} /> <span>mDNS discovery</span></label>
-            </section>
-            <section class="settings-section">
-              <div class="section-head"><h4>Editor context</h4><p>Command used when DevRelay opens a project or restored workspace.</p></div>
-              <div class="field"><label for="editor_command">Editor command</label><input id="editor_command" name="editor_command" value="${escapeHtml(settings.editor_command)}" autocomplete="off" spellcheck="false" /></div>
-            </section>
-            <div class="button-row"><button class="button primary" type="submit" ${state.operation ? "disabled" : ""}>${icons.check}<span>Save settings</span></button></div>
-          </div>
-        </form>
-        <div class="panel flat">
-          <div class="panel-head"><div><h3>Storage and cache</h3><p>Local capacity reported by the agent</p></div></div>
-          <div class="panel-body status-stack">
-            <div class="status-row"><span class="dot good"></span><div><strong>Checkpoint cache</strong><span>${escapeHtml(deviceResource(device, "cache"))}</span></div><span class="badge">Local</span></div>
-            <div class="status-row"><span class="dot good"></span><div><strong>Disk</strong><span>${escapeHtml(deviceResource(device, "disk"))}</span></div><span class="badge">Reported</span></div>
-            <div class="status-row"><span class="dot good"></span><div><strong>Resource budget</strong><span>${escapeHtml(deviceResource(device, "cpu"))} / ${escapeHtml(deviceResource(device, "memory"))}</span></div><span class="badge">${escapeHtml(settings.resource_profile)}</span></div>
-          </div>
-        </div>
-        <div class="panel flat">
-          <div class="panel-head"><div><h3>Security</h3><p>Local trust and safe diagnostics policy</p></div></div>
-          <div class="panel-body status-stack">
-            <div class="status-row"><span class="dot ${socketExists ? "good" : "bad"}"></span><div><strong>Agent socket</strong><span>${escapeHtml(runtime.agent_socket_path)}</span></div><span class="badge ${socketExists ? "good" : "bad"}">${socketExists ? "Found" : "Missing"}</span></div>
-            <div class="status-row"><span class="dot good"></span><div><strong>Anchor mode</strong><span>${escapeHtml(titleize(settings.anchor_mode))}</span></div><span class="badge">Policy</span></div>
-            <div class="status-row"><span class="dot good"></span><div><strong>Diagnostic export</strong><span>Bundles are generated through the local agent.</span></div><span class="badge">Scoped</span></div>
-          </div>
-        </div>
-        <div class="panel flat">
-          <div class="panel-head"><div><h3>Advanced diagnostics</h3><p>Runtime state for troubleshooting this desktop app</p></div></div>
-          <div class="panel-body status-stack">
-            ${renderEventBridgeRow()}
-            <div class="status-row"><span class="dot good"></span><div><strong>Runtime</strong><span>${escapeHtml(runtime.platform_key)} ${escapeHtml(runtime.architecture)}</span></div><span class="badge">${escapeHtml(networkLabel)}</span></div>
-            <div class="status-row"><span class="dot good"></span><div><strong>Projects</strong><span>${settings.project_count} registered</span></div><button class="button" data-action="diagnostics" ${state.operation ? "disabled" : ""}>${icons.download}<span>Diagnostics</span></button></div>
-          </div>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function validateSettingsInput(data) {
-  const profile = String(data.get("resource_profile") ?? "").trim();
-  const editorCommand = String(data.get("editor_command") ?? "").trim();
-  if (!resourceProfiles.includes(profile)) {
-    return "Choose a valid resource profile";
-  }
-  if (!editorCommand) {
-    return "Editor command is required";
-  }
-  if (editorCommand.length > 200) {
-    return "Editor command must be 200 characters or fewer";
-  }
-  if (/[\r\n]/.test(editorCommand)) {
-    return "Editor command must be a single line";
-  }
-  return null;
-}
-
-function agentErrors() {
-  const bridge = state.eventBridge;
-  const notices = [];
-  if (bridge.stale && bridge.lastGap) {
-    notices.push(
-      `<div class="warning-box"><strong>Event stream gap</strong><span>Expected after ${escapeHtml(sequenceLabel(bridge.lastGap.expected_after))}, received ${escapeHtml(sequenceLabel(bridge.lastGap.actual_next))}. The UI is refreshing from the agent snapshot.</span></div>`
-    );
-  } else if (!bridge.connected && bridge.lastError) {
-    notices.push(
-      `<div class="warning-box"><strong>Event stream reconnecting</strong><span>${escapeHtml(bridge.lastError)}</span></div>`
-    );
-  }
-  const errors = state.bootstrap?.agent?.errors ?? [];
-  if (errors.length > 0) {
-    notices.push(`<div class="error-box" data-scroll-container>${errors.map(escapeHtml).join("<br>")}</div>`);
-  }
-  return notices.join("");
-}
-
-function renderEventBridgeRow() {
-  const bridge = state.eventBridge;
-  const status = eventBridgeStatus();
-  const lastEvent = bridge.lastEvent
-    ? `${bridge.lastEvent.type} ${sequenceLabel(bridge.lastEvent.sequence)} at ${formatClock(bridge.lastEvent.receivedAt)}`
-    : "No event received in this app session";
-  const subscription = bridge.subscription
-    ? `cursor ${sequenceLabel(bridge.subscription.cursorSequence)}, current ${sequenceLabel(bridge.subscription.currentSequence)}, replayed ${bridge.subscription.replayed}`
-    : "Subscription pending";
-  return `<div class="status-row"><span class="dot ${status.tone}"></span><div><strong>Event stream</strong><span>${escapeHtml(lastEvent)}</span><span>${escapeHtml(subscription)}</span></div><span class="badge ${status.tone}">${escapeHtml(status.label)}</span></div>`;
-}
-
-function renderToasts() {
-  if (state.toasts.length === 0) return "";
-  return `<div class="toast-region" data-scroll-container role="status" aria-live="polite" aria-atomic="true">${state.toasts
-    .map((item) => `<div class="toast ${escapeHtml(item.kind)}">${escapeHtml(item.message)}</div>`)
-    .join("")}</div>`;
+      ${renderHandoffDialog()}
+      ${renderPalette()}
+      ${renderToasts()}
+    </div>`;
 }
 
 function render() {
@@ -1885,20 +2086,30 @@ function render() {
   applyPendingFocus();
 }
 
+/* -------------------------------------------------- keyboard and focus */
+
 const dialogFocusableSelector =
-  'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+  'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 function closeHandoffDialog() {
-  const returnFocusSelector = state.handoffDialog?.returnFocusSelector;
+  const returnFocusSelector = state.handoffDialog?.returnFocusSelector ?? null;
   state.handoffDialog = null;
-  if (returnFocusSelector) queueFocus(returnFocusSelector);
+  queueFocus(returnFocusSelector);
+  render();
+}
+
+function closePalette() {
+  state.palette = null;
+  queueFocus('[data-action="palette-open"]');
   render();
 }
 
 function trapHandoffDialogFocus(event) {
-  if (!state.handoffDialog || event.key !== "Tab") return;
-  const dialog = app.querySelector("[data-handoff-dialog]");
-  const focusable = Array.from(dialog?.querySelectorAll?.(dialogFocusableSelector) ?? []);
+  const dialog = app.querySelector?.("[data-handoff-dialog]");
+  if (!dialog) return;
+  const focusable = [...dialog.querySelectorAll(dialogFocusableSelector)].filter(
+    (element) => !element.disabled
+  );
   if (focusable.length === 0) return;
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
@@ -1913,146 +2124,175 @@ function trapHandoffDialogFocus(event) {
 }
 
 function handleGlobalKeydown(event) {
-  if (event.key === "Escape" && state.handoffDialog) {
+  if ((event.key === "k" || event.key === "K") && (event.metaKey || event.ctrlKey)) {
     event.preventDefault?.();
-    closeHandoffDialog();
+    if (state.palette) {
+      closePalette();
+    } else {
+      state.palette = { query: "", index: 0 };
+      queueFocus("[data-palette-input]");
+      render();
+    }
     return;
   }
-  trapHandoffDialogFocus(event);
+  if (event.key === "Escape") {
+    if (state.palette) {
+      event.preventDefault?.();
+      closePalette();
+      return;
+    }
+    if (state.handoffDialog) {
+      event.preventDefault?.();
+      closeHandoffDialog();
+    }
+    return;
+  }
+  if (event.key === "Tab" && state.handoffDialog) {
+    trapHandoffDialogFocus(event);
+  }
 }
 
-function attachHandlers() {
-  app.querySelectorAll("[data-view]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.view = button.dataset.view;
-      render();
-    });
-  });
-  app.querySelectorAll("[data-project]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      state.selectedProjectId = button.dataset.project;
-      state.view = "continue";
-      render();
-      await refreshProjectStatus(state.selectedProjectId, false);
-    });
-  });
-  app.querySelectorAll("[data-action]").forEach((button) => {
-    button.addEventListener("click", () => handleAction(button));
-  });
-  app.querySelectorAll("[data-activity-filter]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.activityFilter = button.dataset.activityFilter ?? "all";
-      render();
-    });
-  });
-  const settingsForm = app.querySelector("[data-settings-form]");
-  if (settingsForm) {
-    settingsForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const data = new FormData(settingsForm);
-      const validationError = validateSettingsInput(data);
-      if (validationError) {
-        toast(validationError, "bad");
-        return;
-      }
-      await runOperation("Saving settings", async () => {
-        const editorCommand = String(data.get("editor_command") ?? "").trim();
-        const result = await invoke("settings_update", {
-          params: {
-            resource_profile: String(data.get("resource_profile") ?? "").trim(),
-            mdns_enabled: data.get("mdns_enabled") === "on",
-            editor_command: editorCommand,
-          },
-        });
-        if (!result.ok) throw new Error(result.message);
-        toast("Settings saved");
-        await refresh();
-      }).catch((error) => toast(String(error?.message ?? error), "bad"));
-    });
+/* ----------------------------------------------------- agent data flow */
+
+function expectOk(result) {
+  if (!result || result.ok !== true) {
+    throw new Error(result?.message || "The agent turned down the request");
   }
-  const projectAddForm = app.querySelector("[data-project-add-form]");
-  if (projectAddForm) {
-    projectAddForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const data = new FormData(projectAddForm);
-      const path = String(data.get("path") ?? "").trim();
-      const manifest = String(data.get("manifest") ?? "").trim();
-      if (!path) {
-        toast("Project path is required", "bad");
-        return;
-      }
-      await runOperation("Adding project", async () => {
-        const result = await invoke("project_add", {
-          path,
-          manifest: manifest || null,
-        });
-        if (!result.ok) throw new Error(result.message);
-        toast(`Added ${result.data?.display_name ?? "project"}`);
-        await refresh();
-      }).catch((error) => toast(String(error?.message ?? error), "bad"));
-    });
+  return result;
+}
+
+async function refresh() {
+  if (!state.bootstrap) {
+    state.loading = true;
+    render();
+  } else {
+    state.eventBridge.refreshing = true;
+    render();
   }
-  const recoveryForm = app.querySelector("[data-recovery-form]");
-  if (recoveryForm) {
-    recoveryForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const data = new FormData(recoveryForm);
-      const projectId = String(data.get("project_id") ?? "").trim();
-      const snapshotId = String(data.get("snapshot_id") ?? "").trim();
-      const path = String(data.get("path") ?? "").trim();
-      const name = String(data.get("name") ?? "").trim();
-      if (!projectId || !snapshotId || !path) {
-        toast("Recovery needs a project, snapshot, and target path", "bad");
-        return;
-      }
-      await runOperation("Opening recovery", async () => {
-        const result = await invoke("recover_open", {
-          projectId,
-          snapshotId,
-          path,
-          name: name || null,
-          register: data.get("register") === "on",
-        });
-        if (!result.ok) throw new Error(result.message);
-        toast(`Recovered ${shortId(result.data?.recovered?.snapshot_id)} to ${result.data?.path ?? path}`);
-        await refresh();
-      }).catch((error) => toast(String(error?.message ?? error), "bad"));
-    });
-  }
-  const recoveryProject = app.querySelector("[data-recovery-project]");
-  if (recoveryProject) {
-    recoveryProject.addEventListener("change", () => {
-      state.recoveryProjectId = recoveryProject.value;
-      state.recoverySnapshotId = recoverySnapshots(recoveryProject.value)[0]?.snapshot_id ?? null;
-      render();
-    });
-  }
-  const recoverySnapshot = app.querySelector("[data-recovery-snapshot]");
-  if (recoverySnapshot) {
-    recoverySnapshot.addEventListener("change", () => {
-      state.recoverySnapshotId = recoverySnapshot.value;
-      render();
-    });
-  }
-  const projectFilter = app.querySelector("[data-project-filter]");
-  if (projectFilter) {
-    projectFilter.addEventListener("input", () => {
-      state.projectFilter = projectFilter.value;
-      render();
-      const nextFilter = app.querySelector("[data-project-filter]");
-      if (nextFilter) {
-        nextFilter.focus?.();
-        nextFilter.setSelectionRange?.(nextFilter.value.length, nextFilter.value.length);
-      }
-    });
+  try {
+    const bootstrap = await invoke("ui_bootstrap");
+    state.bootstrap = bootstrap;
+    state.loading = false;
+    state.runtimeError = null;
+    state.eventBridge.refreshing = false;
+    state.eventBridge.stale = false;
+    if (!state.selectedProjectId && projects().length > 0) {
+      state.selectedProjectId = projects()[0].project_id;
+    }
+    render();
+    const project = selectedProject();
+    if (project && !statusFor(project.project_id)) {
+      await refreshProjectStatus(project.project_id, false);
+    }
+  } catch (error) {
+    state.loading = false;
+    state.eventBridge.refreshing = false;
+    state.runtimeError = error?.message ?? String(error);
+    render();
   }
 }
+
+async function refreshProjectStatus(projectId, announce = true) {
+  if (!projectId) return;
+  state.projectStatus.set(projectId, {
+    loading: true,
+    error: null,
+    data: statusFor(projectId)?.data ?? null,
+  });
+  render();
+  try {
+    const result = await invoke("project_status", { projectId });
+    const data = result?.ok === true ? result.data : null;
+    if (!data) {
+      throw new Error(result?.message || "Status request failed");
+    }
+    state.projectStatus.set(projectId, { loading: false, error: null, data });
+    if (announce) toast("Status refreshed from the agent");
+    render();
+  } catch (error) {
+    state.projectStatus.set(projectId, {
+      loading: false,
+      error: error?.message ?? String(error),
+      data: null,
+    });
+    if (announce) toast(error?.message ?? "Status request failed", "bad");
+    render();
+  }
+}
+
+/* --------------------------------------------------------- event bridge */
+
+let pendingEventRefresh = null;
+
+function queueEventRefresh(delay) {
+  if (pendingEventRefresh !== null) {
+    window.clearTimeout(pendingEventRefresh);
+  }
+  state.eventBridge.refreshing = true;
+  render();
+  pendingEventRefresh = window.setTimeout(() => {
+    pendingEventRefresh = null;
+    refresh();
+  }, delay);
+}
+
+function markEventBridgeConnected(payload) {
+  const bridge = state.eventBridge;
+  bridge.connected = true;
+  bridge.everConnected = true;
+  bridge.lastConnectedAt = Date.now();
+  bridge.lastError = null;
+  bridge.subscription = {
+    replayed: payload?.replayed ?? 0,
+    currentSequence: payload?.current_sequence ?? null,
+    cursorSequence: payload?.cursor?.after_sequence ?? null,
+  };
+  render();
+}
+
+function markEventBridgeEvent(payload) {
+  const bridge = state.eventBridge;
+  const entry = {
+    sequence: payload?.sequence ?? null,
+    type: payload?.type ?? "unknown",
+    payload: payload?.payload ?? {},
+    occurredAt: payload?.occurred_at_unix_millis ?? null,
+    receivedAt: Date.now(),
+  };
+  bridge.lastEvent = entry;
+  bridge.events = [entry, ...bridge.events.filter((event) => event.sequence !== entry.sequence)].slice(0, 100);
+  render();
+}
+
+function markEventBridgeGap(payload) {
+  const bridge = state.eventBridge;
+  bridge.connected = true;
+  bridge.everConnected = true;
+  bridge.stale = true;
+  bridge.lastGap = {
+    expectedAfter: payload?.expected_after ?? null,
+    actualNext: payload?.actual_next ?? null,
+  };
+  render();
+}
+
+function markEventBridgeDisconnected(payload) {
+  const bridge = state.eventBridge;
+  bridge.connected = false;
+  bridge.refreshing = false;
+  bridge.lastDisconnectedAt = Date.now();
+  bridge.lastError = typeof payload === "string" ? payload : payload?.message ?? "Event stream closed";
+  render();
+}
+
+/* -------------------------------------------------------------- actions */
 
 async function handleAction(button) {
-  const action = button.dataset.action;
-  const projectId = button.dataset.projectId;
-  const targetDeviceId = button.dataset.targetDeviceId;
-  const handoffId = button.dataset.handoffId;
+  const action = button?.dataset?.action;
+  if (!action) return;
+  const projectId = button.dataset.projectId ?? null;
+  const targetDeviceId = button.dataset.targetDeviceId ?? null;
+  const handoffId = button.dataset.handoffId ?? null;
   if (action === "handoff-dialog-close") {
     closeHandoffDialog();
     return;
@@ -2067,210 +2307,317 @@ async function handleAction(button) {
     };
     queueFocus('[data-action="handoff-dialog-close"]');
     render();
+    if (projectId && !statusFor(projectId)) {
+      await refreshProjectStatus(projectId, false);
+    }
+    return;
+  }
+  if (action === "feature-pending") {
+    const entry = featureEntry(button.dataset.feature);
+    toast(entry?.toast ?? "This part of the product is not built yet", "warn");
     return;
   }
   if (action === "refresh") {
     await refresh();
     return;
   }
+  if (action === "open-activity") {
+    state.view = "activity";
+    render();
+    return;
+  }
+  if (action === "toggle-theme") {
+    state.theme = state.theme === "auto" ? "light" : state.theme === "light" ? "dark" : "auto";
+    render();
+    return;
+  }
+  if (action === "set-theme") {
+    state.theme = button.dataset.themeValue ?? "auto";
+    render();
+    return;
+  }
+  if (action === "palette-open") {
+    state.palette = { query: "", index: 0 };
+    queueFocus("[data-palette-input]");
+    render();
+    return;
+  }
+  if (action === "palette-run") {
+    await runPaletteCommand(Number(button.dataset.paletteIndex ?? 0));
+    return;
+  }
   if (action === "project-status") {
     await refreshProjectStatus(projectId);
     return;
   }
-  if (action === "select-project") {
-    state.selectedProjectId = projectId;
-    state.view = "continue";
-    render();
-    await refreshProjectStatus(projectId, false);
-    return;
-  }
   if (action === "project-recovery") {
     state.recoveryProjectId = projectId;
-    state.recoverySnapshotId = recoverySnapshots(projectId)[0]?.snapshot_id ?? null;
+    state.recoverySnapshotId = latestSnapshot(projectId)?.snapshot_id ?? null;
     state.view = "projects";
+    queueFocus("[data-recovery-snapshot]");
     render();
-    return;
-  }
-  if (action === "device-pair-placeholder") {
-    toast("Pair device is not wired to the agent yet", "warn");
-    return;
-  }
-  if (action === "device-revoke-placeholder") {
-    toast("Device revoke is not wired to the agent yet", "warn");
-    return;
-  }
-  if (action === "run-elsewhere-placeholder") {
-    toast("Run elsewhere is not wired to the agent yet", "warn");
-    return;
-  }
-  if (action === "run-task-placeholder") {
-    toast("Run task is not wired to the agent yet", "warn");
-    return;
-  }
-  if (action === "run-cancel-placeholder") {
-    toast("Run cancel is not wired to the agent yet", "warn");
-    return;
-  }
-  if (action === "run-artifacts-placeholder") {
-    toast("Run artifacts are not wired to the agent yet", "warn");
     return;
   }
   if (action === "checkpoint") {
-    await runOperation("Creating checkpoint", async () => {
-      const result = await invoke("checkpoint_create", { projectId });
-      if (!result.ok) throw new Error(result.message);
-      toast("Checkpoint created");
+    try {
+      const result = expectOk(await invoke("checkpoint_create", { projectId }));
+      toast(result.message || "Checkpoint created");
       await refresh();
-    }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    } catch (error) {
+      toast(error?.message ?? "Checkpoint failed", "bad");
+    }
     return;
   }
   if (action === "handoff-confirm") {
-    const dialog = state.handoffDialog;
-    state.handoffDialog = {
-      projectId: projectId || dialog?.projectId,
-      targetDeviceId: targetDeviceId || dialog?.targetDeviceId,
-      phase: "running",
-      message: null,
-      returnFocusSelector: dialog?.returnFocusSelector,
-    };
+    if (!state.handoffDialog) return;
+    state.handoffDialog.phase = "running";
     render();
-    await runOperation("Preparing handoff", async () => {
-      const result = await invoke("handoff_prepare", { projectId, targetDeviceId });
-      if (!result.ok) throw new Error(result.message);
-      state.handoffDialog = {
-        projectId,
-        targetDeviceId,
-        phase: "success",
-        message: "Target preparation has started. Continue on the target device when ready.",
-        returnFocusSelector: dialog?.returnFocusSelector,
-      };
+    try {
+      const result = expectOk(await invoke("handoff_prepare", { projectId, targetDeviceId }));
+      if (state.handoffDialog) {
+        state.handoffDialog.phase = "success";
+        state.handoffDialog.message =
+          result.message ||
+          "Target preparation has started. Continue from the target device once it reports ready.";
+      }
       toast("Handoff preparation started");
       await refresh();
-    }).catch((error) => {
-      state.handoffDialog = {
-        projectId: projectId || dialog?.projectId,
-        targetDeviceId: targetDeviceId || dialog?.targetDeviceId,
-        phase: "failure",
-        message: String(error?.message ?? error),
-        returnFocusSelector: dialog?.returnFocusSelector,
-      };
-      toast(String(error?.message ?? error), "bad");
+    } catch (error) {
+      if (state.handoffDialog) {
+        state.handoffDialog.phase = "failure";
+        state.handoffDialog.message = error?.message ?? "Handoff could not start";
+      }
       render();
-    });
-    return;
-  }
-  if (action === "handoff-prepare") {
-    await runOperation("Preparing handoff", async () => {
-      const result = await invoke("handoff_prepare", { projectId, targetDeviceId });
-      if (!result.ok) throw new Error(result.message);
-      toast("Handoff preparation started");
-      await refresh();
-    }).catch((error) => toast(String(error?.message ?? error), "bad"));
-    return;
-  }
-  if (action === "handoff-continue-here") {
-    await runOperation("Continuing here", async () => {
-      const result = await invoke("handoff_continue_here", { projectId, handoffId });
-      if (!result.ok) throw new Error(result.message);
-      toast("Continuation verified");
-      await refresh();
-    }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    }
     return;
   }
   if (action === "handoff-abort") {
-    const dialog = state.handoffDialog;
-    await runOperation("Aborting handoff", async () => {
-      const result = await invoke("handoff_abort", { projectId, handoffId });
-      if (!result.ok) throw new Error(result.message);
-      if (dialog) {
-        state.handoffDialog = {
-          projectId: dialog.projectId ?? projectId,
-          targetDeviceId: dialog.targetDeviceId,
-          phase: "success",
-          message: "Handoff aborted. Source control stayed on this device.",
-          returnFocusSelector: dialog.returnFocusSelector,
-        };
+    try {
+      const result = expectOk(await invoke("handoff_abort", { projectId, handoffId }));
+      if (state.handoffDialog) {
+        state.handoffDialog.phase = "success";
+        state.handoffDialog.message = "Handoff aborted safely; nothing moved.";
       }
-      toast("Handoff aborted");
+      toast(result.message || "Handoff aborted");
       await refresh();
-    }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    } catch (error) {
+      toast(error?.message ?? "Handoff abort failed", "bad");
+    }
+    return;
+  }
+  if (action === "handoff-continue-here") {
+    try {
+      const result = expectOk(await invoke("handoff_continue_here", { projectId, handoffId }));
+      toast(result.message || "Continuation verified");
+      await refresh();
+    } catch (error) {
+      toast(error?.message ?? "Continue here failed", "bad");
+    }
     return;
   }
   if (action === "open-project") {
-    await runOperation("Opening project", async () => {
-      const result = await invoke("open_project", { projectId });
-      if (!result.ok) throw new Error(result.message);
-      toast(`Opened ${result.data}`);
-    }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    try {
+      const result = expectOk(await invoke("open_project", { projectId }));
+      toast(`Opened ${result.data ?? "project"}`);
+    } catch (error) {
+      toast(error?.message ?? "Open failed", "bad");
+    }
     return;
   }
   if (action === "diagnostics") {
-    await runOperation("Exporting diagnostics", async () => {
-      const result = await invoke("diagnostics_export");
-      if (!result.ok) throw new Error(result.message);
-      toast(`Diagnostics exported to ${result.data?.path ?? "file"}`);
-    }).catch((error) => toast(String(error?.message ?? error), "bad"));
+    try {
+      const result = expectOk(await invoke("diagnostics_export"));
+      toast(`Diagnostics exported to ${result.data?.path ?? "bundle"}`);
+    } catch (error) {
+      toast(error?.message ?? "Diagnostics export failed", "bad");
+    }
   }
 }
 
-let pendingEventRefresh = null;
-
-function queueEventRefresh(delay) {
-  window.clearTimeout(pendingEventRefresh);
-  state.eventBridge.refreshing = true;
-  render();
-  pendingEventRefresh = window.setTimeout(async () => {
-    pendingEventRefresh = null;
-    const synced = await refresh();
-    state.eventBridge.refreshing = false;
-    if (synced) state.eventBridge.stale = false;
+async function runPaletteCommand(index) {
+  const commands = filteredPaletteCommands();
+  const command = commands[index];
+  state.palette = null;
+  if (!command) {
     render();
-  }, delay);
+    return;
+  }
+  if (command.kind === "view") {
+    state.view = command.view;
+    render();
+    return;
+  }
+  if (command.kind === "pending") {
+    const entry = featureEntry(command.featureId);
+    toast(entry?.toast ?? "This part of the product is not built yet", "warn");
+    return;
+  }
+  render();
+  await handleAction({
+    dataset: {
+      action: command.action,
+      projectId: command.projectId,
+      targetDeviceId: command.targetDeviceId,
+    },
+  });
 }
 
-function markEventBridgeConnected(payload) {
-  state.eventBridge.connected = true;
-  state.eventBridge.lastConnectedAt = Date.now();
-  state.eventBridge.lastError = null;
-  state.eventBridge.subscription = {
-    replayed: payload?.replayed ?? 0,
-    currentSequence: payload?.current_sequence ?? null,
-    cursorSequence: payload?.cursor?.after_sequence ?? null,
-  };
+/* ------------------------------------------------------- DOM listeners */
+
+function attachHandlers() {
+  for (const button of app.querySelectorAll("[data-action]")) {
+    button.addEventListener("click", () => {
+      handleAction(button);
+    });
+  }
+  for (const button of app.querySelectorAll("[data-view]")) {
+    button.addEventListener("click", () => {
+      state.view = button.dataset.view;
+      render();
+    });
+  }
+  for (const button of app.querySelectorAll("[data-project]")) {
+    button.addEventListener("click", () => {
+      state.selectedProjectId = button.dataset.project;
+      state.view = "continue";
+      render();
+      refreshProjectStatus(button.dataset.project, false);
+    });
+  }
+  for (const button of app.querySelectorAll("[data-activity-filter]")) {
+    button.addEventListener("click", () => {
+      state.activityFilter = button.dataset.activityFilter;
+      render();
+    });
+  }
+  const projectFilter = app.querySelector("[data-project-filter]");
+  if (projectFilter) {
+    projectFilter.addEventListener("input", () => {
+      state.projectFilter = projectFilter.value;
+      const caret = projectFilter.selectionStart ?? projectFilter.value.length;
+      render();
+      const next = app.querySelector("[data-project-filter]");
+      next?.focus?.();
+      next?.setSelectionRange?.(caret, caret);
+    });
+  }
+  const paletteInput = app.querySelector("[data-palette-input]");
+  if (paletteInput) {
+    paletteInput.addEventListener("input", () => {
+      if (!state.palette) return;
+      state.palette.query = paletteInput.value;
+      state.palette.index = 0;
+      const caret = paletteInput.selectionStart ?? paletteInput.value.length;
+      render();
+      const next = app.querySelector("[data-palette-input]");
+      next?.focus?.();
+      next?.setSelectionRange?.(caret, caret);
+    });
+    paletteInput.addEventListener("keydown", (event) => {
+      if (!state.palette) return;
+      const total = filteredPaletteCommands().length;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault?.();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        state.palette.index = total === 0 ? 0 : (state.palette.index + delta + total) % total;
+        render();
+        const next = app.querySelector("[data-palette-input]");
+        next?.focus?.();
+      } else if (event.key === "Enter") {
+        event.preventDefault?.();
+        runPaletteCommand(state.palette.index ?? 0);
+      }
+    });
+  }
+  const recoveryProject = app.querySelector("[data-recovery-project]");
+  if (recoveryProject) {
+    recoveryProject.addEventListener("change", () => {
+      state.recoveryProjectId = recoveryProject.value;
+      state.recoverySnapshotId = latestSnapshot(recoveryProject.value)?.snapshot_id ?? null;
+      render();
+    });
+  }
+  const recoverySnapshot = app.querySelector("[data-recovery-snapshot]");
+  if (recoverySnapshot) {
+    recoverySnapshot.addEventListener("change", () => {
+      state.recoverySnapshotId = recoverySnapshot.value;
+    });
+  }
+  const settingsForm = app.querySelector("[data-settings-form]");
+  if (settingsForm) {
+    settingsForm.addEventListener("submit", async (event) => {
+      event.preventDefault?.();
+      const formData = new FormData(settingsForm);
+      const problem = validateSettingsInput(formData);
+      if (problem) {
+        toast(problem, "bad");
+        return;
+      }
+      try {
+        expectOk(
+          await invoke("settings_update", {
+            params: {
+              resource_profile: String(formData.get("resource_profile")),
+              mdns_enabled: formData.get("mdns_enabled") !== null,
+              editor_command: String(formData.get("editor_command") ?? "").trim(),
+            },
+          })
+        );
+        toast("Settings saved");
+        await refresh();
+      } catch (error) {
+        toast(error?.message ?? "Settings update failed", "bad");
+      }
+    });
+  }
+  const addProjectForm = app.querySelector("[data-add-project-form]");
+  if (addProjectForm) {
+    addProjectForm.addEventListener("submit", async (event) => {
+      event.preventDefault?.();
+      const formData = new FormData(addProjectForm);
+      const path = String(formData.get("path") ?? "").trim();
+      const manifest = String(formData.get("manifest") ?? "").trim();
+      if (!path) {
+        toast("Project path is required", "bad");
+        return;
+      }
+      try {
+        const result = expectOk(await invoke("project_add", { path, manifest: manifest || null }));
+        toast(result.message || "Project added");
+        await refresh();
+      } catch (error) {
+        toast(error?.message ?? "Add project failed", "bad");
+      }
+    });
+  }
+  const recoveryForm = app.querySelector("[data-recovery-form]");
+  if (recoveryForm) {
+    recoveryForm.addEventListener("submit", async (event) => {
+      event.preventDefault?.();
+      const formData = new FormData(recoveryForm);
+      const projectId = String(formData.get("project") ?? state.recoveryProjectId ?? "");
+      const snapshotId = String(formData.get("snapshot") ?? state.recoverySnapshotId ?? "");
+      const path = String(formData.get("path") ?? "").trim();
+      const name = String(formData.get("name") ?? "").trim();
+      const register = formData.get("register") !== null;
+      if (!projectId || !snapshotId || !path) {
+        toast("Recovery needs a project, a checkpoint, and a fresh path", "bad");
+        return;
+      }
+      try {
+        const result = expectOk(
+          await invoke("recover_open", { projectId, snapshotId, path, name: name || null, register })
+        );
+        toast(result.message || `Recovered to ${result.data?.path ?? path}`);
+        await refresh();
+      } catch (error) {
+        toast(error?.message ?? "Recovery failed", "bad");
+      }
+    });
+  }
 }
 
-function markEventBridgeEvent(payload) {
-  state.eventBridge.connected = true;
-  state.eventBridge.lastError = null;
-  const event = {
-    sequence: payload?.sequence ?? null,
-    type: payload?.type ?? "event",
-    payload: payload?.payload ?? {},
-    occurredAt: payload?.occurred_at_unix_millis ?? null,
-    receivedAt: Date.now(),
-  };
-  state.eventBridge.lastEvent = event;
-  state.eventBridge.events = [
-    event,
-    ...state.eventBridge.events.filter((item) => item.sequence !== event.sequence),
-  ].slice(0, 100);
-}
-
-function markEventBridgeGap(payload) {
-  state.eventBridge.connected = true;
-  state.eventBridge.stale = true;
-  state.eventBridge.lastGap = {
-    expected_after: payload?.expected_after ?? null,
-    actual_next: payload?.actual_next ?? null,
-  };
-}
-
-function markEventBridgeDisconnected(payload) {
-  state.eventBridge.connected = false;
-  state.eventBridge.refreshing = false;
-  state.eventBridge.lastDisconnectedAt = Date.now();
-  state.eventBridge.lastError = payload ? String(payload) : "Agent event stream disconnected";
-}
+/* ----------------------------------------------------------------- boot */
 
 async function installEventListeners() {
   await listen("devrelay-tray-refresh", () => {
@@ -2278,24 +2625,25 @@ async function installEventListeners() {
   });
   await listen("devrelay-tray-notice", (event) => {
     const payload = event?.payload ?? {};
-    const message = payload.message ? String(payload.message) : "Tray action completed";
-    const kind = payload.kind ? String(payload.kind) : "good";
-    toast(message, kind);
+    toast(payload.message ?? "Tray action", payload.kind === "bad" ? "bad" : "good");
   });
   await listen("devrelay-tray-open-runs", (event) => {
     const payload = event?.payload ?? {};
-    if (payload.project_id) state.selectedProjectId = payload.project_id;
+    if (payload.project_id) {
+      state.selectedProjectId = payload.project_id;
+    }
     state.view = "runs";
     const target = payload.target_label ? ` for ${payload.target_label}` : "";
     toast(`Run elsewhere${target} is not wired to the agent yet`, "warn");
-  });
-  await listen("devrelay-agent-event", (event) => {
-    markEventBridgeEvent(event?.payload);
-    queueEventRefresh(400);
+    render();
   });
   await listen("devrelay-agent-connected", (event) => {
     markEventBridgeConnected(event?.payload);
     queueEventRefresh(250);
+  });
+  await listen("devrelay-agent-event", (event) => {
+    markEventBridgeEvent(event?.payload ?? {});
+    queueEventRefresh(400);
   });
   await listen("devrelay-agent-gap", (event) => {
     markEventBridgeGap(event?.payload);
@@ -2307,5 +2655,5 @@ async function installEventListeners() {
   });
 }
 
-document.addEventListener?.("keydown", handleGlobalKeydown);
+document.addEventListener("keydown", handleGlobalKeydown);
 installEventListeners().finally(refresh);
