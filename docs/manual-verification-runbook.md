@@ -181,6 +181,22 @@ Evidence:
 - Server logs proving auth/preflight happened before dispatch.
 - `devrelay device revoke` evidence for the revoked-device case.
 
+How to drive the boundary on real devices:
+
+```bash
+# owner device
+devrelay-agent --foreground --remote-listen 0.0.0.0:0   # address lands in agent-remote.addr
+devrelay remote credentials issue <pairing-id> --out peer-credentials.json
+
+# paired device
+devrelay remote credentials import peer-credentials.json
+devrelay remote call devices.list --address <owner-host:port> --json
+devrelay remote call settings.update --address <owner-host:port>   # expect method-not-found
+```
+
+Rejected requests appear as `security.blocked` audit events on the owner
+agent (`devrelay audit list`), which is the server-side evidence trail.
+
 Blocks:
 
 - M4.5 code and API integration tests are complete. This manual boundary
