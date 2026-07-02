@@ -348,8 +348,12 @@ Allowed `outcome` values are `waiting-for-target`, `committed`,
 Params:
 
 ```json
-{ "project": "12345678" }
+{ "project": "12345678", "limit": 50 }
 ```
+
+`limit` is optional. When omitted, the core handler returns up to 100
+snapshots. Explicit limits are capped at 500 and applied after sorting newest
+sequence first, matching `sessions.snapshots.list`.
 
 Result:
 

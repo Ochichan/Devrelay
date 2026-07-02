@@ -11,11 +11,12 @@ use crate::{
     HandoffRecoverParams, HandoffRecoverResult, HandoffStatus, HandoffsListParams,
     HandoffsListResult, MetadataDb, ProjectRegistryIndex, Result, RpcError, RpcRequest,
     RpcResponse, RpcVersionNegotiationParams, RpcVersionNegotiationResult, StoredSnapshot,
-    ValidatedDeviceCertificate, WorkspaceState, require_authenticated_control_channel,
-    validate_control_request_envelope,
+    ValidatedDeviceCertificate, VerificationDetails, WorkspaceRegistryEntry, WorkspaceState,
+    require_authenticated_control_channel, validate_control_request_envelope,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::path::PathBuf;
 
 use crate::rpc::{
     METHOD_DEVICES_LIST, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN, METHOD_HANDOFF_COMMIT,
@@ -115,6 +116,45 @@ pub struct RemoteSessionsSnapshotsListResult {
     pub snapshots: Vec<RemoteSnapshotSummary>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteRecoveryListParams {
+    pub project: String,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteRecoveryListResult {
+    pub snapshots: Vec<RemoteSnapshotSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteRecoveryOpenParams {
+    pub snapshot_id: String,
+    pub project: String,
+    pub path: PathBuf,
+    #[serde(default)]
+    pub register: bool,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteRecoveredSnapshot {
+    pub snapshot_id: String,
+    pub project_id: String,
+    pub session_id: Option<String>,
+    pub pinned: bool,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteRecoveryOpenResult {
+    pub recovered: RemoteRecoveredSnapshot,
+    pub path: PathBuf,
+    pub name: Option<String>,
+    pub registered: Option<RemoteWorkspaceSummary>,
+    pub verification: VerificationDetails,
+}
+
 pub fn is_remote_rpc_method_allowed(method: &str) -> bool {
     REMOTE_RPC_METHODS.contains(&method)
 }
@@ -169,18 +209,22 @@ pub fn remote_workspaces_list(
         workspaces: project
             .workspaces
             .values()
-            .map(|workspace| RemoteWorkspaceSummary {
-                workspace_id: workspace.workspace_id.clone(),
-                project_id: workspace.project_id.clone(),
-                device_id: workspace.device_id.clone(),
-                platform_profile: workspace.platform_profile.clone(),
-                state: workspace.state,
-                last_seen_head: workspace.last_seen_head.clone(),
-                last_checkpoint_id: workspace.last_checkpoint_id.clone(),
-                local_path_redacted: true,
-            })
+            .map(remote_workspace_summary_from)
             .collect(),
     })
+}
+
+pub fn remote_workspace_summary_from(workspace: &WorkspaceRegistryEntry) -> RemoteWorkspaceSummary {
+    RemoteWorkspaceSummary {
+        workspace_id: workspace.workspace_id.clone(),
+        project_id: workspace.project_id.clone(),
+        device_id: workspace.device_id.clone(),
+        platform_profile: workspace.platform_profile.clone(),
+        state: workspace.state,
+        last_seen_head: workspace.last_seen_head.clone(),
+        last_checkpoint_id: workspace.last_checkpoint_id.clone(),
+        local_path_redacted: true,
+    }
 }
 
 pub fn remote_sessions_snapshots_list(
@@ -191,6 +235,25 @@ pub fn remote_sessions_snapshots_list(
     if let Some(session_id) = params.session_id.as_deref() {
         snapshots.retain(|snapshot| snapshot.session_id.as_deref() == Some(session_id));
     }
+    Ok(RemoteSessionsSnapshotsListResult {
+        snapshots: remote_snapshot_summaries_newest_first(snapshots, params.limit),
+    })
+}
+
+pub fn remote_recovery_list(
+    metadata: &MetadataDb,
+    params: RemoteRecoveryListParams,
+) -> Result<RemoteRecoveryListResult> {
+    let snapshots = metadata.list_stored_snapshots(Some(&params.project))?;
+    Ok(RemoteRecoveryListResult {
+        snapshots: remote_snapshot_summaries_newest_first(snapshots, params.limit),
+    })
+}
+
+fn remote_snapshot_summaries_newest_first(
+    mut snapshots: Vec<StoredSnapshot>,
+    limit: Option<usize>,
+) -> Vec<RemoteSnapshotSummary> {
     snapshots.sort_by(|left, right| {
         right
             .sequence_number
@@ -203,17 +266,14 @@ pub fn remote_sessions_snapshots_list(
             .then(right.snapshot_id.cmp(&left.snapshot_id))
     });
     snapshots.truncate(
-        params
-            .limit
+        limit
             .unwrap_or(DEFAULT_REMOTE_SNAPSHOT_LIST_LIMIT)
             .min(MAX_REMOTE_SNAPSHOT_LIST_LIMIT),
     );
-    Ok(RemoteSessionsSnapshotsListResult {
-        snapshots: snapshots
-            .into_iter()
-            .map(remote_snapshot_summary_from)
-            .collect(),
-    })
+    snapshots
+        .into_iter()
+        .map(remote_snapshot_summary_from)
+        .collect()
 }
 
 fn remote_snapshot_summary_from(snapshot: StoredSnapshot) -> RemoteSnapshotSummary {
@@ -226,6 +286,16 @@ fn remote_snapshot_summary_from(snapshot: StoredSnapshot) -> RemoteSnapshotSumma
         pinned: snapshot.pinned,
         label: snapshot.label,
         created_at_unix_seconds: snapshot.created_at_unix_seconds,
+    }
+}
+
+pub fn remote_recovered_snapshot_from(snapshot: &StoredSnapshot) -> RemoteRecoveredSnapshot {
+    RemoteRecoveredSnapshot {
+        snapshot_id: snapshot.snapshot_id.clone(),
+        project_id: snapshot.project_id.clone(),
+        session_id: snapshot.session_id.clone(),
+        pinned: snapshot.pinned,
+        label: snapshot.label.clone(),
     }
 }
 
@@ -749,6 +819,96 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![3, 2]
         );
+    }
+
+    #[test]
+    fn remote_recovery_list_returns_redacted_summaries_newest_first() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = MetadataDb::open(temp.path().join("metadata.db")).unwrap();
+        let session = db
+            .ensure_default_session("project-a", "Demo", None)
+            .unwrap();
+        for sequence in 1..=3 {
+            insert_snapshot(
+                &db,
+                &format!("s1_00000000000000000000000{sequence}"),
+                &session.session_id,
+                sequence,
+                sequence == 2,
+                Some("dirty target backup"),
+                1_700_000_000 + sequence as u64,
+            );
+        }
+
+        let result = remote_recovery_list(
+            &db,
+            RemoteRecoveryListParams {
+                project: "project-a".to_string(),
+                limit: Some(2),
+            },
+        )
+        .unwrap();
+        let encoded = serde_json::to_string(&result).unwrap();
+
+        assert_eq!(
+            result
+                .snapshots
+                .iter()
+                .map(|snapshot| snapshot.sequence_number)
+                .collect::<Vec<_>>(),
+            vec![3, 2]
+        );
+        assert!(result.snapshots[1].pinned);
+        assert_eq!(
+            result.snapshots[0].label.as_deref(),
+            Some("dirty target backup")
+        );
+        assert!(!encoded.contains("metadata"));
+        assert!(!encoded.contains("head_oid"));
+    }
+
+    #[test]
+    fn remote_recovery_open_schema_matches_documented_shape() {
+        let params: RemoteRecoveryOpenParams = serde_json::from_value(json!({
+            "snapshot_id": "s1_0123456789abcdef01234567",
+            "project": "12345678",
+            "path": "/path/on/receiving-device",
+        }))
+        .unwrap();
+        assert!(!params.register);
+        assert!(params.name.is_none());
+
+        let result = RemoteRecoveryOpenResult {
+            recovered: RemoteRecoveredSnapshot {
+                snapshot_id: "s1_0123456789abcdef01234567".to_string(),
+                project_id: "12345678".to_string(),
+                session_id: Some("se_optional".to_string()),
+                pinned: true,
+                label: Some("dirty target backup".to_string()),
+            },
+            path: PathBuf::from("/path/on/receiving-device"),
+            name: None,
+            registered: None,
+            verification: VerificationDetails {
+                head_oid: "verified head".to_string(),
+                index_tree_oid: "verified index tree".to_string(),
+                work_tree_oid: "verified work tree".to_string(),
+                state_hash: "verified state hash".to_string(),
+                included_untracked: Vec::new(),
+                excluded_paths: Vec::new(),
+            },
+        };
+        let encoded = serde_json::to_value(&result).unwrap();
+
+        assert_eq!(
+            encoded["recovered"]["snapshot_id"],
+            "s1_0123456789abcdef01234567"
+        );
+        assert_eq!(encoded["recovered"]["pinned"], true);
+        assert!(encoded["recovered"].get("metadata").is_none());
+        assert_eq!(encoded["path"], "/path/on/receiving-device");
+        assert!(encoded["registered"].is_null());
+        assert_eq!(encoded["verification"]["state_hash"], "verified state hash");
     }
 
     #[test]
