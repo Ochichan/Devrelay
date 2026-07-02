@@ -204,6 +204,20 @@ impl FabricIdentityStore {
         )
     }
 
+    /// Signs an arbitrary payload with the fabric root key.
+    ///
+    /// Used for fabric-authority artifacts such as backup generation
+    /// manifests. Returns `(root_public_key_hex, signature_hex)`.
+    pub fn sign_with_root(&self, payload: &[u8]) -> Result<(String, String)> {
+        let secrets = self.load_secrets()?;
+        let root_key = SigningKey::from_bytes(&secrets.root_secret_key);
+        let signature = root_key.sign(payload);
+        Ok((
+            hex_encode(&root_key.verifying_key().to_bytes()),
+            hex_encode(&signature.to_bytes()),
+        ))
+    }
+
     /// Pairs a fabric-issued TLS leaf with this device's private signing key.
     ///
     /// Used on the client side of the remote control plane, where the leaf

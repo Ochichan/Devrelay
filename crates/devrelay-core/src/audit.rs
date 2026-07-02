@@ -29,6 +29,8 @@ pub enum AuditEventType {
     CommandApproved,
     #[serde(rename = "security.blocked")]
     SecurityBlocked,
+    #[serde(rename = "backup.promoted")]
+    BackupPromoted,
 }
 
 impl AuditEventType {
@@ -43,6 +45,7 @@ impl AuditEventType {
             Self::EditorRestoreAcked => "editor.restore.acked",
             Self::CommandApproved => "command.approved",
             Self::SecurityBlocked => "security.blocked",
+            Self::BackupPromoted => "backup.promoted",
         }
     }
 
@@ -56,6 +59,7 @@ impl AuditEventType {
             "editor.restore.acked" => Self::EditorRestoreAcked,
             "command.approved" => Self::CommandApproved,
             "security.blocked" => Self::SecurityBlocked,
+            "backup.promoted" => Self::BackupPromoted,
             _ => Self::DevicePaired,
         }
     }

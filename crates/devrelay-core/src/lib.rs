@@ -38,6 +38,7 @@
 mod anchor_snapshot;
 mod audit;
 mod background_checkpoint;
+mod backup_anchor;
 mod cas;
 mod code_changing_task;
 mod config;
@@ -107,6 +108,14 @@ pub use background_checkpoint::{
     BackgroundCheckpointManager, BackgroundCheckpointOutcome, BackgroundCheckpointReport,
     BackgroundWorkspace, DEFAULT_BACKGROUND_FAILURE_NOTIFICATION_THRESHOLD,
     WorkspaceCheckpointState,
+};
+pub use backup_anchor::{
+    BACKUP_GENERATION_ID_PREFIX, BACKUP_GENERATION_SCHEMA_VERSION, BACKUP_MANIFEST_FILE_NAME,
+    BACKUP_METADATA_FILE_NAME, BackupAnchorGeneration, BackupAnchorManifest, BackupAnchorPromotion,
+    BackupAnchorVerification, BackupPromotionRequest, BackupRepositoryManifest,
+    DEFAULT_MAX_PROMOTION_AGE_SECONDS, create_backup_anchor_generation, load_backup_manifest,
+    promote_backup_anchor_generation, restore_backup_anchor_generation,
+    verify_backup_anchor_generation,
 };
 pub use cas::{
     CAS_HASH_PREFIX, CAS_SCHEMA_VERSION, CasChunkHash, CasChunkRecord, CasManifest,

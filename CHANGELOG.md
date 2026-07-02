@@ -7,6 +7,10 @@ being established.
 
 ## Unreleased
 
+- Implemented backup anchor generations: consistent VACUUM INTO metadata
+  copies, devrelay-ref-only snapshot repository replication, CAS replication,
+  fabric-root-signed manifests, verification, fresh-anchor restore, and a
+  manual audited promotion command with revocation freshness checks.
 - Added remote access credential distribution and a remote CLI: `devrelay
   remote credentials issue` packages the fabric TLS CA, peer TLS leaf, and
   device certificate from a confirmed pairing session, `devrelay remote

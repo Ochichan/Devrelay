@@ -1810,13 +1810,13 @@ Conventions:
 ### M13.5 Backup Anchor
 
 - [x] Define backup anchor data set.
-- [ ] Replicate metadata DB safely.
-- [ ] Replicate snapshot bare repos.
-- [ ] Replicate CAS chunks.
-- [ ] Sign replicated state.
-- [ ] Add manual promotion command.
-- [ ] Add promotion audit event.
-- [ ] Add backup restore test.
+- [x] Replicate metadata DB safely.
+- [x] Replicate snapshot bare repos.
+- [x] Replicate CAS chunks.
+- [x] Sign replicated state.
+- [x] Add manual promotion command.
+- [x] Add promotion audit event.
+- [x] Add backup restore test.
 
 ### M13.6 Opaque Anchor Research
 

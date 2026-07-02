@@ -255,8 +255,7 @@ details.
 
 ## Backup
 
-Do not treat backup anchor promotion as production-ready yet. The current safe
-backup set is:
+The baseline safe backup set is:
 
 - your normal Git remotes
 - `$DEVRELAY_HOME`, including per-project metadata and snapshot stores
@@ -271,6 +270,22 @@ devrelay snapshot list --project <project-id> --json
 devrelay snapshot export <snapshot-id> --project <project-id> --out snapshot.json --json
 devrelay anchor status --json
 ```
+
+Anchor-mode devices can additionally create signed backup generations of the
+whole anchor data set and, after losing the primary anchor, restore and
+manually promote one on a replacement device:
+
+```bash
+devrelay anchor backup create --out /backups/devrelay
+devrelay anchor backup verify /backups/devrelay/<generation-id>
+devrelay anchor backup promote /backups/devrelay/<generation-id> \
+  --confirm "<source-device-id>-><this-device-id>"
+```
+
+Promotion verifies the signed manifest, refuses stale revocation state unless
+explicitly overridden, records an audit event, and never transfers writer
+leases; devices still re-verify leases when they reconnect. See
+[backup-anchor.md](backup-anchor.md).
 
 Keep identity material protected with local OS account permissions. `identity
 recovery-export` is reserved for a future recovery format and should not be used

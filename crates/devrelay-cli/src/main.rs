@@ -278,6 +278,47 @@ enum AnchorCommand {
         #[arg(long)]
         json: bool,
     },
+    Backup {
+        #[command(subcommand)]
+        command: AnchorBackupCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AnchorBackupCommand {
+    /// Create a signed backup generation of this anchor's data set.
+    Create {
+        /// Directory that holds backup generations.
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify a backup generation against its signed manifest.
+    Verify {
+        generation: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restore a verified backup generation into this fresh anchor home.
+    Restore {
+        generation: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manually promote a backup generation to primary on this device.
+    Promote {
+        generation: PathBuf,
+        /// Operator confirmation naming the anchors:
+        /// "<source-device-id>-><this-device-id>".
+        #[arg(long)]
+        confirm: String,
+        /// Accept revocation state older than the freshness window.
+        #[arg(long)]
+        allow_stale_revocations: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1466,6 +1507,107 @@ fn handle_anchor_command(command: AnchorCommand) -> anyhow::Result<()> {
         AnchorCommand::Maintenance { project, gc, json } => {
             let output = anchor_maintenance(&project, gc)?;
             render_anchor_maintenance(&output, json)
+        }
+        AnchorCommand::Backup { command } => handle_anchor_backup_command(command),
+    }
+}
+
+fn handle_anchor_backup_command(command: AnchorBackupCommand) -> anyhow::Result<()> {
+    let home = DevRelayHome::resolve()?;
+    match command {
+        AnchorBackupCommand::Create { out, json } => {
+            let (_config_path, config) = load_or_default_config(None)?;
+            let identity = FabricIdentityStore::new(home.clone());
+            identity.open_or_create(&config)?;
+            let generation = devrelay_core::create_backup_anchor_generation(
+                &home,
+                &identity,
+                &config.device_id,
+                &out,
+                devrelay_core::unix_now_seconds(),
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&generation)?);
+            } else {
+                println!(
+                    "backup generation {} written to {}",
+                    generation.manifest.generation_id,
+                    generation.path.display()
+                );
+                println!(
+                    "  repositories: {}, cas files: {}, revocations: {}",
+                    generation.manifest.repositories.len(),
+                    generation.manifest.cas_file_count,
+                    generation.manifest.revocation_count
+                );
+            }
+            Ok(())
+        }
+        AnchorBackupCommand::Verify { generation, json } => {
+            let verification = devrelay_core::verify_backup_anchor_generation(&generation)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&verification)?);
+            } else {
+                println!(
+                    "backup generation {} verified: {} repositories, {} cas files, signature ok",
+                    verification.generation_id,
+                    verification.repositories_verified,
+                    verification.cas_files_verified
+                );
+            }
+            Ok(())
+        }
+        AnchorBackupCommand::Restore { generation, json } => {
+            let verification = devrelay_core::restore_backup_anchor_generation(&generation, &home)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&verification)?);
+            } else {
+                println!(
+                    "backup generation {} restored into {}",
+                    verification.generation_id,
+                    home.root().display()
+                );
+                println!("promotion is separate: run devrelay anchor backup promote");
+            }
+            Ok(())
+        }
+        AnchorBackupCommand::Promote {
+            generation,
+            confirm,
+            allow_stale_revocations,
+            json,
+        } => {
+            let (_config_path, config) = load_or_default_config(None)?;
+            let identity = FabricIdentityStore::new(home.clone());
+            identity.open_or_create(&config)?;
+            let promotion = devrelay_core::promote_backup_anchor_generation(
+                devrelay_core::BackupPromotionRequest {
+                    generation_path: &generation,
+                    target_home: &home,
+                    identity: &identity,
+                    promoted_device_id: &config.device_id,
+                    operator_confirmation: &confirm,
+                    allow_stale_revocations,
+                    max_age_seconds: devrelay_core::DEFAULT_MAX_PROMOTION_AGE_SECONDS,
+                    now_unix_seconds: devrelay_core::unix_now_seconds(),
+                },
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&promotion)?);
+            } else {
+                println!(
+                    "backup generation {} promoted; audit event {} recorded",
+                    promotion.generation_id, promotion.audit_id
+                );
+                println!(
+                    "  source anchor: {}, generation age: {}s, revocations: {}",
+                    promotion.source_anchor_device_id,
+                    promotion.generation_age_seconds,
+                    promotion.revocation_count
+                );
+                println!("writer leases are unchanged; devices re-verify on reconnect");
+            }
+            Ok(())
         }
     }
 }

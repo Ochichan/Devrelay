@@ -1,10 +1,26 @@
 # Backup Anchor Data Set
 
-Last updated: 2026-06-24
+Last updated: 2026-07-02
 
 Backup anchor support is intended to recover from loss of the primary anchor
 without letting backup state advance canonical work by itself. This document
-defines the data set that must be replicated before implementation work begins.
+defines the replicated data set. The implementation exists:
+
+```bash
+devrelay anchor backup create --out <backup-dir>
+devrelay anchor backup verify <backup-dir>/<generation-id>
+devrelay anchor backup restore <backup-dir>/<generation-id>
+devrelay anchor backup promote <backup-dir>/<generation-id> \
+  --confirm "<source-device-id>-><this-device-id>"
+```
+
+Generations are staged and renamed into place atomically, the manifest is
+signed by the fabric root key, verification recomputes the metadata hash, Git
+ref tips, and CAS digest, restore refuses to overwrite an existing anchor, and
+promotion requires operator confirmation naming both anchors, checks
+revocation freshness (stale generations need --allow-stale-revocations), and
+records a `backup.promoted` audit event. Promotion never transfers writer
+leases.
 
 ## Recovery Objective
 

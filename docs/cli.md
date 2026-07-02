@@ -30,6 +30,10 @@ devrelay doctor anchor-health --json
 devrelay doctor device-trust --json
 devrelay environment status --project <project-id> --json
 devrelay metrics export --project <project-id> --out metrics.json --json
+devrelay anchor backup create --out /backups/devrelay --json
+devrelay anchor backup verify /backups/devrelay/<generation-id> --json
+devrelay anchor backup restore /backups/devrelay/<generation-id> --json
+devrelay anchor backup promote /backups/devrelay/<generation-id> --confirm "<source>-><target>" --json
 devrelay remote credentials issue <pairing-id> --out peer-credentials.json
 devrelay remote credentials import peer-credentials.json --json
 devrelay remote credentials show --json
