@@ -70,6 +70,7 @@ mod path_doctor;
 mod platform;
 mod policy;
 mod remote_rpc;
+mod remote_transport;
 mod retention;
 mod route_selection;
 mod rpc;
@@ -198,7 +199,10 @@ pub use identity::{
     DeviceCertificate, DevicePublicIdentity, DeviceRevocationRecord, FABRIC_ID_PREFIX,
     FabricIdentityBundle, FabricIdentityStore, FabricRootIdentity, RecoveryExportStatus,
 };
-pub use ipc::{IpcConnection, IpcLimits, IpcTransport, PeerCredentials};
+pub use ipc::{
+    IpcConnection, IpcLimits, IpcTransport, PeerCredentials, read_framed_message,
+    write_framed_message,
+};
 #[cfg(unix)]
 pub use ipc::{UnixIpcConnection, UnixIpcListener};
 pub use lease::{LeaseRecord, LeaseState};
@@ -278,6 +282,9 @@ pub use remote_rpc::{
     remote_recovered_snapshot_from, remote_recovery_list, remote_rpc_error_from_devrelay,
     remote_rpc_negotiate, remote_sessions_snapshots_list, remote_workspace_summary_from,
     remote_workspaces_list,
+};
+pub use remote_transport::{
+    RemoteControlClient, RemoteControlFrame, authenticate_remote_control_frame,
 };
 pub use retention::{
     HandoffSnapshotProtection, PruningDecision, PruningDecisionAction, PruningPlan,

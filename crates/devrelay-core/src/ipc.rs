@@ -72,6 +72,89 @@ fn ipc_error(detail: impl Into<String>) -> DevRelayError {
     DevRelayError::Ipc(detail.into())
 }
 
+/// Reads one length-prefixed message from any byte stream.
+///
+/// Timeout behavior belongs to the stream itself; callers configure socket or
+/// TLS deadlines before framing. The remote control transport shares this
+/// framing with local Unix IPC.
+pub fn read_framed_message<S: std::io::Read>(stream: &mut S, limits: IpcLimits) -> Result<Vec<u8>> {
+    limits.validate()?;
+    let mut len_bytes = [0_u8; LENGTH_PREFIX_BYTES];
+    read_exact_or_ipc(
+        stream,
+        &mut len_bytes,
+        "malformed IPC message: missing length prefix",
+    )?;
+    let len = u32::from_be_bytes(len_bytes) as usize;
+    if len > limits.max_message_bytes {
+        return Err(ipc_error(format!(
+            "IPC message size {len} exceeds configured maximum {}",
+            limits.max_message_bytes
+        )));
+    }
+
+    let mut payload = vec![0_u8; len];
+    read_exact_or_ipc(
+        stream,
+        &mut payload,
+        "malformed IPC message: truncated payload",
+    )?;
+    Ok(payload)
+}
+
+/// Writes one length-prefixed message to any byte stream.
+pub fn write_framed_message<S: std::io::Write>(
+    stream: &mut S,
+    payload: &[u8],
+    limits: IpcLimits,
+) -> Result<()> {
+    limits.validate()?;
+    if payload.len() > limits.max_message_bytes {
+        return Err(ipc_error(format!(
+            "IPC message size {} exceeds configured maximum {}",
+            payload.len(),
+            limits.max_message_bytes
+        )));
+    }
+    let len = u32::try_from(payload.len())
+        .map_err(|_| ipc_error("IPC message is too large to encode"))?;
+    write_all_or_ipc(stream, &len.to_be_bytes())?;
+    write_all_or_ipc(stream, payload)?;
+    stream
+        .flush()
+        .map_err(|err| ipc_error(format!("failed to flush IPC message: {err}")))?;
+    Ok(())
+}
+
+fn read_exact_or_ipc<S: std::io::Read>(
+    stream: &mut S,
+    buffer: &mut [u8],
+    malformed_message: &'static str,
+) -> Result<()> {
+    use std::io::ErrorKind;
+    match stream.read_exact(buffer) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::UnexpectedEof => Err(ipc_error(malformed_message)),
+        Err(err) if is_io_timeout(&err) => Err(ipc_error("timed out reading IPC message")),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn write_all_or_ipc<S: std::io::Write>(stream: &mut S, buffer: &[u8]) -> Result<()> {
+    match stream.write_all(buffer) {
+        Ok(()) => Ok(()),
+        Err(err) if is_io_timeout(&err) => Err(ipc_error("timed out writing IPC message")),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn is_io_timeout(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    )
+}
+
 fn current_uid() -> u32 {
     #[cfg(unix)]
     {
@@ -89,7 +172,7 @@ fn current_uid() -> u32 {
 mod unix {
     use super::*;
     use std::fs;
-    use std::io::{ErrorKind, Read, Write};
+    use std::io::ErrorKind;
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
     use std::os::unix::io::{AsRawFd, RawFd};
     use std::os::unix::net::{UnixListener, UnixStream};
@@ -194,46 +277,14 @@ mod unix {
         fn read_message(&mut self, limits: IpcLimits) -> Result<Vec<u8>> {
             limits.validate()?;
             self.stream.set_read_timeout(Some(limits.request_timeout))?;
-
-            let mut len_bytes = [0_u8; LENGTH_PREFIX_BYTES];
-            read_exact_or_ipc(
-                &mut self.stream,
-                &mut len_bytes,
-                "malformed IPC message: missing length prefix",
-            )?;
-            let len = u32::from_be_bytes(len_bytes) as usize;
-            if len > limits.max_message_bytes {
-                return Err(ipc_error(format!(
-                    "IPC message size {len} exceeds configured maximum {}",
-                    limits.max_message_bytes
-                )));
-            }
-
-            let mut payload = vec![0_u8; len];
-            read_exact_or_ipc(
-                &mut self.stream,
-                &mut payload,
-                "malformed IPC message: truncated payload",
-            )?;
-            Ok(payload)
+            read_framed_message(&mut self.stream, limits)
         }
 
         fn write_message(&mut self, payload: &[u8], limits: IpcLimits) -> Result<()> {
             limits.validate()?;
-            if payload.len() > limits.max_message_bytes {
-                return Err(ipc_error(format!(
-                    "IPC message size {} exceeds configured maximum {}",
-                    payload.len(),
-                    limits.max_message_bytes
-                )));
-            }
-            let len = u32::try_from(payload.len())
-                .map_err(|_| ipc_error("IPC message is too large to encode"))?;
             self.stream
                 .set_write_timeout(Some(limits.request_timeout))?;
-            write_all_or_ipc(&mut self.stream, &len.to_be_bytes())?;
-            write_all_or_ipc(&mut self.stream, payload)?;
-            Ok(())
+            write_framed_message(&mut self.stream, payload, limits)
         }
     }
 
@@ -269,31 +320,6 @@ mod unix {
 
     fn is_socket_path(path: &Path) -> Result<bool> {
         Ok(fs::symlink_metadata(path)?.file_type().is_socket())
-    }
-
-    fn read_exact_or_ipc(
-        stream: &mut UnixStream,
-        buffer: &mut [u8],
-        malformed_message: &'static str,
-    ) -> Result<()> {
-        match stream.read_exact(buffer) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == ErrorKind::UnexpectedEof => Err(ipc_error(malformed_message)),
-            Err(err) if is_timeout(&err) => Err(ipc_error("timed out reading IPC message")),
-            Err(err) => Err(err.into()),
-        }
-    }
-
-    fn write_all_or_ipc(stream: &mut UnixStream, buffer: &[u8]) -> Result<()> {
-        match stream.write_all(buffer) {
-            Ok(()) => Ok(()),
-            Err(err) if is_timeout(&err) => Err(ipc_error("timed out writing IPC message")),
-            Err(err) => Err(err.into()),
-        }
-    }
-
-    fn is_timeout(err: &std::io::Error) -> bool {
-        matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
     }
 
     #[cfg(target_os = "linux")]
