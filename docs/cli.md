@@ -30,6 +30,11 @@ devrelay doctor anchor-health --json
 devrelay doctor device-trust --json
 devrelay environment status --project <project-id> --json
 devrelay metrics export --project <project-id> --out metrics.json --json
+devrelay remote credentials issue <pairing-id> --out peer-credentials.json
+devrelay remote credentials import peer-credentials.json --json
+devrelay remote credentials show --json
+devrelay remote call devices.list --address <host:port> --json
+devrelay remote call recovery.list --address <host:port> --params '{"project":"<project-id>"}'
 devrelay continue --source ../source --target ../target --config devrelay.local.toml --json
 devrelay apply --repo ../target --source . --snapshot .devrelay/snapshots/<id>.json --dry-run
 devrelay apply --repo ../target --source . --snapshot snapshot.json --dirty-policy snapshot-and-fork --json

@@ -52,6 +52,13 @@ Before method dispatch, the server verifies:
 Rejected requests receive a mapped JSON-RPC error response and are recorded as
 `security.blocked` audit events on the serving agent.
 
+Client credentials travel as a remote access credential bundle issued from a
+confirmed pairing session: `devrelay remote credentials issue` on the fabric
+owner, `devrelay remote credentials import` on the peer, and `devrelay remote
+call <method> --address <host:port>` to drive this API. The bundle carries only
+public material (fabric CA, TLS leaf, device certificate, issuer key); the
+peer's private key never leaves the peer.
+
 Remote RPC is not local IPC. Local-only methods such as editor context,
 settings mutation, diagnostics export, metrics export, and direct filesystem
 status are not in the remote allowlist.

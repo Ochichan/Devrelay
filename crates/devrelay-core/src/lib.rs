@@ -69,6 +69,7 @@ mod pairing;
 mod path_doctor;
 mod platform;
 mod policy;
+mod remote_credentials;
 mod remote_rpc;
 mod remote_transport;
 mod retention;
@@ -266,6 +267,12 @@ pub use platform::{
 pub use policy::{
     ClassifiedPath, PathDecision, classification_reason, classify_untracked_paths,
     normalize_workspace_relative_path,
+};
+pub use remote_credentials::{
+    REMOTE_ACCESS_CREDENTIALS_FILE_NAME, REMOTE_ACCESS_CREDENTIALS_SCHEMA_VERSION,
+    RemoteAccessCredentialBundle, assemble_remote_access_credentials,
+    load_remote_access_credentials, remote_access_credentials_path, save_remote_access_credentials,
+    validate_remote_access_credentials,
 };
 pub use remote_rpc::{
     DEFAULT_REMOTE_HANDOFF_TTL_SECONDS, DEFAULT_REMOTE_SNAPSHOT_LIST_LIMIT,

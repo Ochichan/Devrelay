@@ -12,9 +12,9 @@ use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, AnchorSnapshotMaintenanceReport, AnchorSnapshotRepo,
     ApplySnapshotParams, ApplySnapshotResult, AuditEventInput, AuditEventRecord, AuditEventType,
     AuditOutcome, CheckpointCreateParams, CheckpointCreateResult, DevRelayError, DevRelayHome,
-    DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord, DiagnosticsExportParams,
-    DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole, DiscoveryService,
-    EnvironmentDoctorOptions, EnvironmentDoctorReport, EnvironmentStatusEntry,
+    DeviceCertificate, DeviceIdentity, DevicePublicIdentity, DeviceRevocationRecord,
+    DiagnosticsExportParams, DiagnosticsExportResult, DiscoveryAdvertisement, DiscoveryRole,
+    DiscoveryService, EnvironmentDoctorOptions, EnvironmentDoctorReport, EnvironmentStatusEntry,
     EnvironmentStatusParams, EnvironmentStatusResult, ErrorInfo, FabricIdentityBundle,
     FabricIdentityStore, GitPerformanceDoctorReport, GitRepo, LineEndingDoctorReport, LocalConfig,
     LogRedactor, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
@@ -25,17 +25,20 @@ use devrelay_core::{
     PathPortabilityDoctorReport, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
     ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
     RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
-    RecoverShowResult, SecretMappingDoctorReport, SecretProviderLocalConfig, SecretScannerConfig,
-    ServiceTemplate, ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore,
-    StatusGetParams, StatusGetResult, StatusSummary, StoredSession, StoredSnapshot,
-    SystemEnvironmentCommandRunner, UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry,
-    WorkspaceState, WslFilesystemDoctorReport, apply_snapshot, build_discovery_advertisement,
-    classify_untracked_paths, collect_local_metrics_report, create_snapshot, current_platform_key,
-    detect_resource_policy_context, linux_systemd_user_template, load_hydration_state,
-    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file, run_environment_doctor,
-    run_git_performance_doctor, run_line_ending_doctor, run_path_portability_doctor,
-    run_resource_policy_doctor, run_secret_mapping_doctor, run_wsl_filesystem_doctor,
-    workspace_id_for, write_snapshot_file,
+    RecoverShowResult, RemoteAccessCredentialBundle, RemoteControlClient,
+    SecretMappingDoctorReport, SecretProviderLocalConfig, SecretScannerConfig, ServiceTemplate,
+    ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetParams,
+    StatusGetResult, StatusSummary, StoredSession, StoredSnapshot, SystemEnvironmentCommandRunner,
+    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
+    WslFilesystemDoctorReport, apply_snapshot, assemble_remote_access_credentials,
+    build_discovery_advertisement, classify_untracked_paths, collect_local_metrics_report,
+    create_snapshot, current_platform_key, detect_resource_policy_context,
+    linux_systemd_user_template, load_hydration_state, load_remote_access_credentials,
+    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file,
+    remote_access_credentials_path, run_environment_doctor, run_git_performance_doctor,
+    run_line_ending_doctor, run_path_portability_doctor, run_resource_policy_doctor,
+    run_secret_mapping_doctor, run_wsl_filesystem_doctor, save_remote_access_credentials,
+    validate_remote_access_credentials, workspace_id_for, write_snapshot_file,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -138,6 +141,10 @@ enum Command {
     Project {
         #[command(subcommand)]
         command: ProjectCommand,
+    },
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCommand,
     },
     Projects {
         #[command(subcommand)]
@@ -509,6 +516,51 @@ enum PairingCommand {
     },
     Abort {
         pairing_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RemoteCommand {
+    /// Manage remote access credential bundles for the mTLS Control RPC API.
+    Credentials {
+        #[command(subcommand)]
+        command: RemoteCredentialsCommand,
+    },
+    /// Call an allowlisted remote Control RPC method on a paired agent.
+    Call {
+        method: String,
+        /// Remote agent control address, as recorded in its
+        /// agent-remote.addr file.
+        #[arg(long)]
+        address: std::net::SocketAddr,
+        /// JSON params object for the method.
+        #[arg(long, default_value = "{}")]
+        params: String,
+        /// Print the full JSON-RPC response envelope.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RemoteCredentialsCommand {
+    /// Issue a credential bundle for a confirmed pairing session.
+    Issue {
+        pairing_id: String,
+        /// Write the bundle to a file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Validate and store a credential bundle issued by a paired device.
+    Import {
+        file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the stored credential bundle summary.
+    Show {
         #[arg(long)]
         json: bool,
     },
@@ -910,6 +962,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         },
         Command::Pairing { command } => handle_pairing_command(command)?,
         Command::Project { command } => handle_project_command(command, &agent_options)?,
+        Command::Remote { command } => handle_remote_command(command)?,
         Command::Projects { command } => handle_projects_command(command, &agent_options)?,
         Command::Workspace { command } => match command {
             WorkspaceCommand::Remove {
@@ -2892,6 +2945,169 @@ fn handle_pairing_command(command: PairingCommand) -> anyhow::Result<()> {
             render_pairing_session(&aborted, json)
         }
     }
+}
+
+fn handle_remote_command(command: RemoteCommand) -> anyhow::Result<()> {
+    match command {
+        RemoteCommand::Credentials { command } => handle_remote_credentials_command(command),
+        RemoteCommand::Call {
+            method,
+            address,
+            params,
+            json,
+        } => handle_remote_call(&method, address, &params, json),
+    }
+}
+
+fn handle_remote_credentials_command(command: RemoteCredentialsCommand) -> anyhow::Result<()> {
+    match command {
+        RemoteCredentialsCommand::Issue { pairing_id, out } => {
+            let (bundle, registry) = open_identity_bundle(true)?;
+            let session = registry
+                .db
+                .get_pairing_session(&pairing_id)?
+                .ok_or_else(|| {
+                    DevRelayError::Config(format!("unknown pairing session {pairing_id}"))
+                })?;
+            let certificate_json = session.certificate_json.as_deref().ok_or_else(|| {
+                DevRelayError::Config(format!(
+                    "pairing session {pairing_id} has no device certificate; run pairing confirm first"
+                ))
+            })?;
+            let certificate: DeviceCertificate = serde_json::from_str(certificate_json)?;
+            let home = DevRelayHome::resolve()?;
+            let store = FabricIdentityStore::new(home);
+            let leaf = store.issue_peer_tls_certificate_der(
+                &session.peer_device_id,
+                &session.peer_signing_public_key_hex,
+            )?;
+            let credentials = assemble_remote_access_credentials(
+                &bundle.device,
+                &session.peer_device_id,
+                &session.peer_signing_public_key_hex,
+                store.fabric_tls_ca_der()?,
+                leaf,
+                certificate,
+            )?;
+            let encoded = serde_json::to_string_pretty(&credentials)?;
+            match out {
+                Some(path) => {
+                    std::fs::write(&path, format!("{encoded}\n"))
+                        .with_context(|| format!("failed to write {}", path.display()))?;
+                    println!(
+                        "remote access credentials for {} written to {}",
+                        credentials.subject_device_id,
+                        path.display()
+                    );
+                    println!(
+                        "transfer the file to the paired device and run: devrelay remote credentials import <file>"
+                    );
+                }
+                None => println!("{encoded}"),
+            }
+            Ok(())
+        }
+        RemoteCredentialsCommand::Import { file, json } => {
+            let raw = std::fs::read_to_string(&file)
+                .with_context(|| format!("failed to read {}", file.display()))?;
+            let credentials: RemoteAccessCredentialBundle = serde_json::from_str(&raw)?;
+            let (bundle, _registry) = open_identity_bundle(true)?;
+            validate_remote_access_credentials(&credentials, &bundle.device)?;
+            let home = DevRelayHome::resolve()?;
+            save_remote_access_credentials(&home, &credentials)?;
+            render_remote_credentials(
+                &credentials,
+                Some(&remote_access_credentials_path(&home)),
+                json,
+            )
+        }
+        RemoteCredentialsCommand::Show { json } => {
+            let home = DevRelayHome::resolve()?;
+            let credentials = load_remote_access_credentials(&home)?;
+            render_remote_credentials(
+                &credentials,
+                Some(&remote_access_credentials_path(&home)),
+                json,
+            )
+        }
+    }
+}
+
+fn render_remote_credentials(
+    credentials: &RemoteAccessCredentialBundle,
+    stored_at: Option<&std::path::Path>,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(credentials)?);
+        return Ok(());
+    }
+    println!("remote access credentials");
+    println!("  fabric: {}", credentials.fabric_id);
+    println!(
+        "  issuer device: {} (server key {})",
+        credentials.issuer_device_id,
+        &credentials.issuer_signing_public_key_hex
+            [..16.min(credentials.issuer_signing_public_key_hex.len())]
+    );
+    println!("  subject device: {}", credentials.subject_device_id);
+    println!(
+        "  device certificate: {} (expires {})",
+        credentials.device_certificate.certificate_id,
+        credentials.device_certificate.expires_at_unix_seconds
+    );
+    if let Some(path) = stored_at {
+        println!("  stored at: {}", path.display());
+    }
+    Ok(())
+}
+
+fn handle_remote_call(
+    method: &str,
+    address: std::net::SocketAddr,
+    params_raw: &str,
+    json: bool,
+) -> anyhow::Result<()> {
+    let params: serde_json::Value =
+        serde_json::from_str(params_raw).context("--params must be a JSON value")?;
+    let home = DevRelayHome::resolve()?;
+    let credentials = load_remote_access_credentials(&home)?;
+    let store = FabricIdentityStore::new(home);
+    let tls_identity = store.remote_client_tls_identity(credentials.subject_tls_leaf_der()?)?;
+    let mut client = RemoteControlClient::connect_with_credentials(
+        address,
+        &credentials,
+        tls_identity,
+        &devrelay_core::ControlPlaneTransportPolicy::default(),
+        devrelay_core::IpcLimits::default(),
+    )?;
+    let response = client.call(method, params)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        if response.error.is_some() {
+            anyhow::bail!("remote call {method} failed");
+        }
+        return Ok(());
+    }
+    if let Some(error) = response.error {
+        anyhow::bail!(
+            "remote call {method} failed with code {}: {}{}",
+            error.code,
+            error.message,
+            error
+                .data
+                .as_ref()
+                .and_then(|data| data.get("detail"))
+                .and_then(|detail| detail.as_str())
+                .map(|detail| format!(" ({detail})"))
+                .unwrap_or_default()
+        );
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&response.result.unwrap_or(serde_json::Value::Null))?
+    );
+    Ok(())
 }
 
 fn render_pairing_session(session: &PairingSession, json: bool) -> anyhow::Result<()> {

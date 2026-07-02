@@ -7,6 +7,16 @@ being established.
 
 ## Unreleased
 
+- Added remote access credential distribution and a remote CLI: `devrelay
+  remote credentials issue` packages the fabric TLS CA, peer TLS leaf, and
+  device certificate from a confirmed pairing session, `devrelay remote
+  credentials import` validates and stores the bundle on the peer, and
+  `devrelay remote call` drives the mTLS Control RPC API end to end, covered
+  by a CLI integration test.
+- Completed the named non-negotiable safety suites
+  (environment_failure_leaves_code_intact, ui_has_no_state_authority) and
+  recorded representative macOS resource benchmark evidence with numeric
+  idle/burst budgets.
 - Implemented the M4.5 remote Control RPC boundary: the agent serves the
   versioned JSON-RPC allowlist over mTLS behind `devrelay-agent
   --remote-listen`, authenticating every request against the pinned fabric

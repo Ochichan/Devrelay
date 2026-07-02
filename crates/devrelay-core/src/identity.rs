@@ -204,6 +204,30 @@ impl FabricIdentityStore {
         )
     }
 
+    /// Pairs a fabric-issued TLS leaf with this device's private signing key.
+    ///
+    /// Used on the client side of the remote control plane, where the leaf
+    /// arrives in a remote access credential bundle from another fabric
+    /// device. Fails when the leaf does not carry this device's key.
+    pub fn remote_client_tls_identity(&self, leaf_der: Vec<u8>) -> Result<crate::RustlsIdentity> {
+        let secrets = self.load_secrets()?;
+        let own_public_key = SigningKey::from_bytes(&secrets.device_signing_secret_key)
+            .verifying_key()
+            .to_bytes();
+        let leaf_key = crate::extract_single_ed25519_spki(&leaf_der)?;
+        if leaf_key != own_public_key {
+            return Err(DevRelayError::Config(
+                "TLS leaf certificate does not carry this device's signing key".to_string(),
+            ));
+        }
+        Ok(crate::RustlsIdentity {
+            cert_chain_der: vec![leaf_der],
+            private_key_pkcs8_der: crate::tls_identity::ed25519_seed_to_pkcs8_der(
+                &secrets.device_signing_secret_key,
+            ),
+        })
+    }
+
     fn create_secrets(&self) -> Result<FabricSecrets> {
         fs::create_dir_all(self.home.identity_dir())?;
         set_private_dir_permissions(&self.home.identity_dir())?;
@@ -330,6 +354,12 @@ fn random_key() -> Result<[u8; KEY_BYTES]> {
 fn fabric_id_for_root_public_key(root_public_key: &[u8; KEY_BYTES]) -> String {
     let digest = blake3::hash(root_public_key);
     format!("{FABRIC_ID_PREFIX}{}", &digest.to_hex()[..24])
+}
+
+/// Derives the fabric id owned by a fabric root public key.
+pub(crate) fn fabric_id_for_root_public_key_hex(root_public_key_hex: &str) -> Result<String> {
+    let root_public_key = decode_key_hex("root_public_key_hex", root_public_key_hex)?;
+    Ok(fabric_id_for_root_public_key(&root_public_key))
 }
 
 fn decode_key_hex(field: &str, value: &str) -> Result<[u8; KEY_BYTES]> {

@@ -149,6 +149,27 @@ impl RemoteControlClient {
         })
     }
 
+    /// Connects using a stored remote access credential bundle plus the
+    /// device's TLS identity, pinning the issuer as the expected server.
+    pub fn connect_with_credentials(
+        address: SocketAddr,
+        bundle: &crate::RemoteAccessCredentialBundle,
+        tls_identity: crate::RustlsIdentity,
+        policy: &ControlPlaneTransportPolicy,
+        limits: IpcLimits,
+    ) -> Result<Self> {
+        let tls_config =
+            crate::build_rustls_client_config(tls_identity, vec![bundle.fabric_tls_ca_der()?])?;
+        Self::connect(
+            address,
+            tls_config,
+            bundle.device_certificate.clone(),
+            Some(&bundle.issuer_signing_public_key_hex),
+            policy,
+            limits,
+        )
+    }
+
     /// Sends one remote JSON-RPC request and reads its response.
     pub fn call(&mut self, method: &str, params: serde_json::Value) -> Result<RpcResponse> {
         let request_id = self.next_request_id;

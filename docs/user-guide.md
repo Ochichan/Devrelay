@@ -75,6 +75,25 @@ both sides, confirm:
 devrelay pairing confirm <pairing-id> --code <short-code> --json
 ```
 
+After confirming, give the paired device remote Control API access. On the
+device that confirmed the pairing, issue a credential bundle and transfer the
+file over the channel you just authenticated with the pairing code:
+
+```bash
+devrelay remote credentials issue <pairing-id> --out peer-credentials.json
+```
+
+On the paired device, import and verify the bundle, then call the remote API
+of any agent in the fabric that runs with `--remote-listen` (its bound address
+is in `DEVRELAY_HOME/agent-remote.addr` on that device):
+
+```bash
+devrelay remote credentials import peer-credentials.json
+devrelay remote credentials show
+devrelay remote call devices.list --address <host:port>
+devrelay remote call recovery.list --address <host:port> --params '{"project":"<project-id>"}'
+```
+
 List or revoke trusted devices:
 
 ```bash
