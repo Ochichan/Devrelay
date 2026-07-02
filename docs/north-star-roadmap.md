@@ -107,7 +107,6 @@ Current gaps that matter before product claims:
 
 - Windows named pipe IPC and pipe ACL.
 - Linux/Windows watcher backend completeness.
-- Idle CPU/RSS and checkpoint burst evidence.
 - Product-level safety suites named from the non-negotiable invariants.
 - Production desktop UI.
 - Extension-host validation for editor context restore.
@@ -292,11 +291,10 @@ Completed capabilities:
 
 Open work:
 
-- Linux watcher backend.
 - Windows watcher backend.
-- Idle CPU/RSS benchmark results.
-- Checkpoint burst CPU/RSS benchmark results.
 - Watch event versus actual scan evidence.
+- Linux, battery, and anchor-mode resource benchmark scenarios; macOS idle
+  and burst budgets are recorded in docs/resource-benchmark.md.
 
 Exit gate: open until [resource-benchmark.md](resource-benchmark.md) has
 representative measurements.

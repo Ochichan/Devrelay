@@ -134,13 +134,33 @@ def create_benchmark_repo(root: Path, tracked_files: int) -> tuple[Path, Path]:
     return repo, manifest
 
 
-def make_checkpoint_dirty(repo: Path, iteration: int) -> None:
+def create_filler_project(root: Path, index: int) -> tuple[Path, Path]:
+    repo = root / f"filler-project-{index:03}"
+    repo.mkdir(parents=True)
+    git(repo, ["init", "-b", "main"])
+    git(repo, ["config", "user.name", "DevRelay Benchmark"])
+    git(repo, ["config", "user.email", "devrelay-benchmark@example.local"])
+    (repo / "README.md").write_text(f"filler project {index}\n", encoding="utf-8")
+    manifest = write_manifest(repo, f"9100{index:04}")
+    git(repo, ["add", "."])
+    git(repo, ["commit", "-m", "filler base"])
+    return repo, manifest
+
+
+def make_checkpoint_dirty(repo: Path, iteration: int, dirty_files: int) -> None:
     readme = repo / "README.md"
     with readme.open("a", encoding="utf-8") as handle:
         handle.write(f"checkpoint iteration {iteration}\n")
     (repo / "notes.md").write_text(
         f"safe untracked note {iteration}\n", encoding="utf-8"
     )
+    for index in range(dirty_files):
+        target = repo / "src" / f"file-{index:04}.txt"
+        if not target.exists():
+            break
+        target.write_text(
+            f"tracked file {index} formatted pass {iteration}\n", encoding="utf-8"
+        )
 
 
 def process_sample(pid: int, start: float) -> Sample | None:
@@ -276,8 +296,9 @@ def checkpoint_once(
     repo: Path,
     manifest: Path,
     iteration: int,
+    dirty_files: int,
 ) -> dict[str, Any]:
-    make_checkpoint_dirty(repo, iteration)
+    make_checkpoint_dirty(repo, iteration, dirty_files)
     start = time.monotonic()
     result = cli_call(
         cli_bin,
@@ -376,9 +397,8 @@ def write_report(
 
 Date: {datetime.now().astimezone().isoformat(timespec="seconds")}
 
-Scope: initial macOS smoke run for the benchmark harness. These numbers prove
-the harness can record idle agent CPU/RSS and checkpoint burst behavior; they
-are not release budgets.
+Scenario: {args.scenario}. The harness records idle agent CPU/RSS and
+checkpoint burst behavior for this configuration.
 
 ## Environment
 
@@ -392,7 +412,8 @@ are not release budgets.
     ("Power source", power_source()),
     ("Resource profile", "default"),
     ("Watcher backend", "agent foreground / no watcher workload"),
-    ("Project count", "1"),
+    ("Project count", str(args.project_count)),
+    ("Dirty tracked files per checkpoint", str(args.dirty_files)),
     ("Repository size", f"{repo_info['repository_size_kib']} KiB"),
     ("Tracked file count", str(repo_info["tracked_file_count"])),
     ("Accepted untracked file count", str(checkpoints[-1]["included_untracked"] if checkpoints else 0)),
@@ -446,6 +467,23 @@ def main() -> None:
     parser.add_argument("--checkpoint-iterations", type=int, default=5)
     parser.add_argument("--tracked-files", type=int, default=100)
     parser.add_argument(
+        "--project-count",
+        type=int,
+        default=1,
+        help="Registered projects; 0 measures an idle agent with no projects.",
+    )
+    parser.add_argument(
+        "--dirty-files",
+        type=int,
+        default=0,
+        help="Tracked files rewritten before each checkpoint (formatter storm).",
+    )
+    parser.add_argument(
+        "--scenario",
+        default="smoke",
+        help="Scenario label recorded in the report scope line.",
+    )
+    parser.add_argument(
         "--default-wrapper-failed",
         action="store_true",
         help="Annotate report when the default cargo wrapper is known to fail.",
@@ -460,46 +498,71 @@ def main() -> None:
         "agent",
     )
 
+    if args.project_count < 0:
+        raise SystemExit("--project-count must be >= 0")
+
     with tempfile.TemporaryDirectory(prefix="devrelay-resource-benchmark-") as temp_raw:
         temp = Path(temp_raw)
         home = temp / "home"
         socket = home / "agent.sock"
         home.mkdir(parents=True)
-        repo, manifest = create_benchmark_repo(temp, args.tracked_files)
+        measured = None
+        if args.project_count >= 1:
+            measured = create_benchmark_repo(temp, args.tracked_files)
+        fillers = [
+            create_filler_project(temp, index)
+            for index in range(max(0, args.project_count - 1))
+        ]
         process = start_agent(agent_bin, home, socket)
         try:
-            cli_call(
-                cli_bin,
-                home,
-                socket,
-                [
-                    "project",
-                    "add",
-                    str(repo),
-                    "--manifest",
-                    str(manifest),
-                    "--json",
-                ],
-            )
+            for project_repo, project_manifest in (
+                [measured] if measured else []
+            ) + fillers:
+                cli_call(
+                    cli_bin,
+                    home,
+                    socket,
+                    [
+                        "project",
+                        "add",
+                        str(project_repo),
+                        "--manifest",
+                        str(project_manifest),
+                        "--json",
+                    ],
+                )
             idle_samples = sample_for(
                 process.pid,
                 args.idle_seconds,
                 args.sample_interval,
             )
-            done = threading.Event()
             burst_samples: list[Sample] = []
+            checkpoints: list[dict[str, Any]] = []
+            if measured is not None and args.checkpoint_iterations > 0:
+                repo, manifest = measured
+                done = threading.Event()
 
-            def sampler() -> None:
-                burst_samples.extend(sample_until(process.pid, done, args.sample_interval))
+                def sampler() -> None:
+                    burst_samples.extend(
+                        sample_until(process.pid, done, args.sample_interval)
+                    )
 
-            thread = threading.Thread(target=sampler)
-            thread.start()
-            checkpoints = [
-                checkpoint_once(cli_bin, home, socket, repo, manifest, iteration)
-                for iteration in range(1, args.checkpoint_iterations + 1)
-            ]
-            done.set()
-            thread.join()
+                thread = threading.Thread(target=sampler)
+                thread.start()
+                checkpoints = [
+                    checkpoint_once(
+                        cli_bin,
+                        home,
+                        socket,
+                        repo,
+                        manifest,
+                        iteration,
+                        args.dirty_files,
+                    )
+                    for iteration in range(1, args.checkpoint_iterations + 1)
+                ]
+                done.set()
+                thread.join()
         finally:
             stop_agent(process)
 
@@ -509,7 +572,13 @@ def main() -> None:
             args=args,
             git_commit=run(["git", "rev-parse", "HEAD"]).stdout.strip(),
             git_version=command_output(["git", "--version"]),
-            repo_info=repo_metadata(repo),
+            repo_info=repo_metadata(measured[0])
+            if measured is not None
+            else {
+                "repository_size_kib": 0,
+                "tracked_file_count": 0,
+                "filesystem_type": filesystem_type(temp),
+            },
             idle=summarize(idle_samples),
             burst=summarize(burst_samples),
             checkpoints=checkpoints,

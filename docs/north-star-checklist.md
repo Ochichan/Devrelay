@@ -1052,7 +1052,7 @@ Conventions:
 - [x] Add resource policy tests.
 - [x] Add resource benchmark plan.
 - [x] Implement repeatable resource benchmark harness.
-- [ ] Record representative resource benchmark results.
+- [x] Record representative resource benchmark results.
 
 ### M6.6 Retention And Quota
 
@@ -1091,7 +1091,7 @@ Conventions:
 
 ### M6 Exit Gate
 
-- [ ] Idle agent CPU/RSS meets target on test repos.
+- [x] Idle agent CPU/RSS meets target on test repos.
 - [x] Many file events coalesce into bounded work.
 - [x] Disk pressure prunes only unpinned/evictable data.
 - [x] Background failures surface as protection status.

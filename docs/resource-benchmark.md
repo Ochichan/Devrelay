@@ -1,14 +1,17 @@
 # Resource Benchmark Plan
 
-Last updated: 2026-06-24
+Last updated: 2026-07-02
 
 Background protection is product behavior. An always-running personal agent
 must be measured before DevRelay claims invisible protection.
 
-## Open Gate
+## Gate Status
 
-M6 is not complete until idle CPU/RSS and checkpoint burst measurements are
-recorded on representative repositories.
+Representative macOS measurements are recorded in
+[`output/resource-benchmark-representative-2026-07-02.md`](../output/resource-benchmark-representative-2026-07-02.md):
+idle scaling across 0/10/50 registered projects, a dirty-repository burst, and
+a 20k-file formatter storm, all inside the numeric budgets below. Linux runs,
+battery/anchor scenarios, and watcher-driven bursts remain open.
 
 ## Scenarios
 
@@ -96,20 +99,30 @@ python3 scripts/resource_benchmark.py \
   --tracked-files 100
 ```
 
+The harness accepts `--project-count` (0 measures an empty idle agent, higher
+values register filler projects), `--dirty-files` (tracked files rewritten
+before each checkpoint to simulate formatter storms), and `--scenario` for the
+report scope line.
+
 Initial macOS smoke evidence is recorded in
 [`output/resource-benchmark-results-2026-06-24.md`](../output/resource-benchmark-results-2026-06-24.md).
-It records idle CPU/RSS and checkpoint CPU/RSS burst behavior, but it is not a
-representative release benchmark.
+Representative macOS evidence covering idle scaling, dirty bursts, and a
+formatter storm is recorded in
+[`output/resource-benchmark-representative-2026-07-02.md`](../output/resource-benchmark-representative-2026-07-02.md).
 
-## Initial Budgets
+## Budgets
 
-Budgets are provisional until measured:
+Numeric budgets, set from the 2026-07-02 representative macOS run (dev-profile
+agent; release builds may only improve):
 
-- idle CPU p95 should be low enough to disappear under normal desktop load
-- idle RSS should remain stable with 0, 10, and 50 registered projects
-- formatter storms should coalesce into bounded scans and checkpoints
+- idle CPU p95 <= 0.5% (measured 0.00% at 0/10/50 registered projects)
+- idle RSS <= 32 MiB with up to 50 registered projects (measured 16.36 MiB)
+- checkpoint burst RSS peak <= 64 MiB (measured 19.80 MiB in a 20k-file storm)
+- checkpoint latency p95 <= 1 s on ~1k-file repos (measured 0.246 s)
+- checkpoint latency p95 <= 5 s in 20k-file formatter storms (measured 2.798 s)
+
+Still qualitative until measured:
+
 - battery mode should lengthen debounce and reduce network work
 - polling fallback should be explicit in diagnostics
-
-The benchmark report should replace these qualitative statements with numeric
-budgets once the harness exists.
+- anchor transfer bytes per hour should be bounded and observable
