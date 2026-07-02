@@ -420,7 +420,9 @@ pub use task_runner_workspace::{
     TaskRunnerWorkspaceOptions, TaskRunnerWorkspaceRetentionPolicy, cleanup_task_runner_workspace,
     prepare_task_runner_workspace, task_runner_workspace_path,
 };
-pub use tls_identity::{DEVRELAY_CONTROL_SERVER_NAME, extract_single_ed25519_spki};
+pub use tls_identity::{
+    DEVRELAY_CONTROL_SERVER_NAME, ed25519_seed_to_pkcs8_der, extract_single_ed25519_spki,
+};
 pub use transport_security::{
     AuthenticatedControlPlanePeer, CONTROL_ALPN_PROTOCOL, CONTROL_PROTOCOL_VERSION,
     ControlPlaneReplayCache, ControlPlaneRequestEnvelope, ControlPlaneTransportPolicy,

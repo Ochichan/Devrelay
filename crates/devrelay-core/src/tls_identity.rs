@@ -118,7 +118,11 @@ pub fn extract_single_ed25519_spki(certificate_der: &[u8]) -> Result<[u8; 32]> {
     })
 }
 
-pub(crate) fn ed25519_seed_to_pkcs8_der(seed: &[u8; 32]) -> Vec<u8> {
+/// Wraps a raw ed25519 seed in a PKCS#8 v1 document for rustls and rcgen.
+///
+/// Peer devices use this to assemble their TLS identity from a locally held
+/// seed plus a fabric-issued leaf certificate.
+pub fn ed25519_seed_to_pkcs8_der(seed: &[u8; 32]) -> Vec<u8> {
     let mut der = Vec::with_capacity(ED25519_PKCS8_V1_PREFIX.len() + seed.len());
     der.extend_from_slice(&ED25519_PKCS8_V1_PREFIX);
     der.extend_from_slice(seed);

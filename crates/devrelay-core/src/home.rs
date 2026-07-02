@@ -137,6 +137,12 @@ impl DevRelayHome {
         self.root.join("agent.sock")
     }
 
+    /// File holding the bound remote control listen address, written by the
+    /// agent after the remote mTLS server starts.
+    pub fn agent_remote_address_path(&self) -> PathBuf {
+        self.root.join("agent-remote.addr")
+    }
+
     pub fn create_base_dirs(&self) -> Result<()> {
         for dir in [
             self.root.clone(),

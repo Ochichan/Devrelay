@@ -41,6 +41,21 @@ use devrelay_core::{
     METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST,
     METHOD_STATUS_GET, MetadataDb, StructuredLogLevel, current_platform_key,
 };
+#[cfg(unix)]
+use devrelay_core::{
+    ControlPlaneReplayCache, ControlPlaneTransportPolicy, FabricIdentityStore, FabricRootIdentity,
+    METHOD_REMOTE_RECOVERY_LIST, METHOD_REMOTE_RECOVERY_OPEN,
+    METHOD_REMOTE_SESSIONS_SNAPSHOTS_LIST, METHOD_REMOTE_WORKSPACES_LIST, RemoteRecoveryListParams,
+    RemoteRecoveryOpenParams, RemoteRecoveryOpenResult, RemoteRpcRequestContext,
+    RemoteSessionsSnapshotsListParams, RemoteWorkspacesListParams,
+    authenticate_remote_control_frame, build_rustls_server_config, read_framed_message,
+    remote_devices_list, remote_handoff_abort, remote_handoff_begin, remote_handoff_commit,
+    remote_handoff_recover, remote_handoff_source_ready, remote_handoff_target_verify,
+    remote_handoffs_list, remote_projects_list, remote_recovered_snapshot_from,
+    remote_recovery_list, remote_rpc_error_from_devrelay, remote_rpc_negotiate,
+    remote_sessions_snapshots_list, remote_workspace_summary_from, remote_workspaces_list,
+    write_framed_message,
+};
 use serde::Serialize;
 #[cfg(unix)]
 use std::collections::BTreeMap;
@@ -68,6 +83,11 @@ struct Cli {
     config: Option<PathBuf>,
     #[arg(long)]
     socket_path: Option<PathBuf>,
+    /// TCP address for the remote Control RPC server over mTLS.
+    /// Port 0 binds an ephemeral port; the bound address is written to the
+    /// agent-remote.addr file inside DEVRELAY_HOME.
+    #[arg(long)]
+    remote_listen: Option<std::net::SocketAddr>,
     #[arg(long, value_enum, default_value = "info")]
     log_level: LogLevel,
     #[arg(long)]
@@ -124,6 +144,7 @@ struct AgentHealth {
     foreground: bool,
     config_path: PathBuf,
     socket_path: PathBuf,
+    remote_listen_address: Option<String>,
     anchor: Option<AnchorLayout>,
     project_count: usize,
     database_path: PathBuf,
@@ -138,6 +159,7 @@ struct AgentState {
     anchor_layout: Option<AnchorLayout>,
     config_path: PathBuf,
     socket_path: PathBuf,
+    remote_listen_address: Arc<Mutex<Option<std::net::SocketAddr>>>,
     config: Arc<Mutex<LocalConfig>>,
     database_path: PathBuf,
     shutdown: Arc<AtomicBool>,
@@ -196,6 +218,11 @@ impl AgentState {
             foreground: self.foreground,
             config_path: self.config_path.clone(),
             socket_path: self.socket_path.clone(),
+            remote_listen_address: self
+                .remote_listen_address
+                .lock()
+                .ok()
+                .and_then(|address| address.map(|address| address.to_string())),
             anchor: self.anchor_layout.clone(),
             project_count: self.project_count(),
             database_path: self.database_path.clone(),
@@ -393,6 +420,7 @@ fn main() -> anyhow::Result<()> {
         anchor_layout,
         config_path,
         socket_path,
+        remote_listen_address: Arc::new(Mutex::new(None)),
         config: Arc::new(Mutex::new(config)),
         database_path,
         shutdown: Arc::clone(&shutdown),
@@ -414,6 +442,19 @@ fn main() -> anyhow::Result<()> {
     #[cfg(unix)]
     let _ipc_thread = if cli.foreground {
         Some(spawn_ipc_server(state.clone())?)
+    } else {
+        None
+    };
+
+    #[cfg(unix)]
+    let _remote_thread = if cli.foreground {
+        match cli.remote_listen {
+            Some(listen_address) => Some(spawn_remote_server(state.clone(), listen_address)?),
+            None => {
+                let _ = std::fs::remove_file(state.home.agent_remote_address_path());
+                None
+            }
+        }
     } else {
         None
     };
@@ -464,6 +505,688 @@ fn run_ipc_server(listener: UnixIpcListener, state: AgentState) {
                     .with_field("error", err.to_string()),
             ),
         }
+    }
+}
+
+#[cfg(unix)]
+struct RemoteServerContext {
+    state: AgentState,
+    pinned_root: FabricRootIdentity,
+    tls_config: Arc<rustls::ServerConfig>,
+    policy: ControlPlaneTransportPolicy,
+    replay_cache: Mutex<ControlPlaneReplayCache>,
+    limits: devrelay_core::IpcLimits,
+}
+
+#[cfg(unix)]
+fn spawn_remote_server(
+    state: AgentState,
+    listen_address: std::net::SocketAddr,
+) -> anyhow::Result<thread::JoinHandle<()>> {
+    let local_config = state
+        .config
+        .lock()
+        .map_err(|err| anyhow::anyhow!("config lock poisoned: {err}"))?
+        .clone();
+    let identity_store = FabricIdentityStore::new(state.home.clone());
+    let bundle = identity_store
+        .open_or_create(&local_config)
+        .context("failed to open fabric identity for the remote control server")?;
+    let tls_identity = identity_store
+        .device_tls_identity(&local_config.device_id)
+        .context("failed to build the device TLS identity")?;
+    let fabric_ca_der = identity_store
+        .fabric_tls_ca_der()
+        .context("failed to build the fabric TLS CA")?;
+    let tls_config = build_rustls_server_config(tls_identity, vec![fabric_ca_der])
+        .context("failed to build the remote control TLS server config")?;
+
+    let listener = std::net::TcpListener::bind(listen_address)
+        .with_context(|| format!("failed to bind remote control listener on {listen_address}"))?;
+    let bound_address = listener.local_addr()?;
+    std::fs::write(
+        state.home.agent_remote_address_path(),
+        format!("{bound_address}\n"),
+    )
+    .context("failed to record the remote control listen address")?;
+    if let Ok(mut address) = state.remote_listen_address.lock() {
+        *address = Some(bound_address);
+    }
+    state.logger.log(
+        StructuredLogRecord::new(
+            StructuredLogLevel::Info,
+            "agent.remote",
+            "remote control server listening",
+        )
+        .with_field("address", bound_address.to_string()),
+    );
+
+    let context = Arc::new(RemoteServerContext {
+        state,
+        pinned_root: bundle.root,
+        tls_config,
+        policy: ControlPlaneTransportPolicy::default(),
+        replay_cache: Mutex::new(ControlPlaneReplayCache::new()),
+        limits: devrelay_core::IpcLimits::default(),
+    });
+    thread::Builder::new()
+        .name("devrelay-agent-remote".to_string())
+        .spawn(move || run_remote_server(listener, context))
+        .context("failed to spawn remote control server thread")
+}
+
+#[cfg(unix)]
+fn run_remote_server(listener: std::net::TcpListener, context: Arc<RemoteServerContext>) {
+    while !context.state.shutdown.load(Ordering::SeqCst) {
+        match listener.accept() {
+            Ok((stream, peer_address)) => {
+                let connection_context = Arc::clone(&context);
+                let _ = thread::Builder::new()
+                    .name("devrelay-agent-remote-rpc".to_string())
+                    .spawn(move || {
+                        if let Err(err) = serve_remote_connection(stream, &connection_context) {
+                            connection_context.state.logger.log(
+                                StructuredLogRecord::new(
+                                    StructuredLogLevel::Debug,
+                                    "agent.remote",
+                                    "remote control connection closed",
+                                )
+                                .with_field("peer", peer_address.to_string())
+                                .with_field("reason", err.to_string()),
+                            );
+                        }
+                    });
+            }
+            Err(err) => context.state.logger.log(
+                StructuredLogRecord::new(
+                    StructuredLogLevel::Warn,
+                    "agent.remote",
+                    "remote control accept error",
+                )
+                .with_field("error", err.to_string()),
+            ),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn serve_remote_connection(
+    tcp: std::net::TcpStream,
+    context: &RemoteServerContext,
+) -> anyhow::Result<()> {
+    tcp.set_nodelay(true)?;
+    tcp.set_read_timeout(Some(Duration::from_millis(
+        context.policy.connection_timeout_millis,
+    )))?;
+    tcp.set_write_timeout(Some(Duration::from_millis(
+        context.policy.request_timeout_millis,
+    )))?;
+    let connection = rustls::ServerConnection::new(Arc::clone(&context.tls_config))
+        .context("failed to start TLS server connection")?;
+    let mut stream = rustls::StreamOwned::new(connection, tcp);
+    while stream.conn.is_handshaking() {
+        stream
+            .conn
+            .complete_io(&mut stream.sock)
+            .context("remote control TLS handshake failed")?;
+    }
+    let peer_leaf_der = stream
+        .conn
+        .peer_certificates()
+        .and_then(|certificates| certificates.first())
+        .map(|certificate| certificate.as_ref().to_vec())
+        .ok_or_else(|| anyhow::anyhow!("remote peer presented no client certificate"))?;
+    stream.sock.set_read_timeout(Some(Duration::from_millis(
+        context.policy.request_timeout_millis,
+    )))?;
+
+    loop {
+        let frame = match read_framed_message(&mut stream, context.limits) {
+            Ok(frame) => frame,
+            // EOF and idle timeouts both end the connection without noise;
+            // authentication failures are answered inside the loop instead.
+            Err(_) => break,
+        };
+        let response = process_remote_frame(&frame, &peer_leaf_der, context);
+        let response_bytes = serde_json::to_vec(&response)?;
+        write_framed_message(&mut stream, &response_bytes, context.limits)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn process_remote_frame(
+    frame: &[u8],
+    peer_leaf_der: &[u8],
+    context: &RemoteServerContext,
+) -> RpcResponse {
+    let revocations = match MetadataDb::open(&context.state.database_path)
+        .and_then(|db| db.list_device_revocations())
+    {
+        Ok(revocations) => revocations,
+        // Fail closed: without revocation state no remote request may
+        // proceed.
+        Err(err) => {
+            return RpcResponse::error(
+                None,
+                RpcError::internal(format!("failed to load revocation state: {err}")),
+            );
+        }
+    };
+    let authenticated = {
+        let mut replay_cache = match context.replay_cache.lock() {
+            Ok(replay_cache) => replay_cache,
+            Err(err) => {
+                return RpcResponse::error(
+                    None,
+                    RpcError::internal(format!("replay cache lock poisoned: {err}")),
+                );
+            }
+        };
+        authenticate_remote_control_frame(
+            frame,
+            peer_leaf_der,
+            &context.pinned_root,
+            &revocations,
+            &context.policy,
+            unix_seconds(),
+            &mut replay_cache,
+        )
+    };
+    match authenticated {
+        Ok(request_context) => dispatch_remote_request(request_context, &context.state),
+        Err(response) => {
+            record_remote_security_block(&context.state, &response);
+            *response
+        }
+    }
+}
+
+#[cfg(unix)]
+fn record_remote_security_block(state: &AgentState, response: &RpcResponse) {
+    let error_detail = response
+        .error
+        .as_ref()
+        .map(|error| serde_json::json!({"code": error.code, "message": error.message, "data": error.data}))
+        .unwrap_or(serde_json::Value::Null);
+    let result = MetadataDb::open(&state.database_path).and_then(|db| {
+        db.record_audit_event(
+            AuditEventInput::new(
+                AuditEventType::SecurityBlocked,
+                AuditOutcome::Blocked,
+                "remote control request rejected before dispatch",
+            )
+            .with_detail(serde_json::json!({
+                "boundary": "remote-control-rpc",
+                "error": error_detail,
+            })),
+        )
+    });
+    if let Err(err) = result {
+        state.logger.log(
+            StructuredLogRecord::new(
+                StructuredLogLevel::Warn,
+                "agent.remote",
+                "failed to record remote security block audit",
+            )
+            .with_field("error", err.to_string()),
+        );
+    }
+}
+
+#[cfg(unix)]
+fn dispatch_remote_request(
+    request_context: RemoteRpcRequestContext,
+    state: &AgentState,
+) -> RpcResponse {
+    let RemoteRpcRequestContext { peer, request } = request_context;
+    let id = match request.required_id() {
+        Ok(id) => id,
+        Err(error) => return RpcResponse::error(None, error),
+    };
+    let actor_device_id = peer.device.device_id.clone();
+    match request.method.as_str() {
+        METHOD_RPC_NEGOTIATE => handle_remote_negotiate(id, request.params),
+        METHOD_DEVICES_LIST => handle_remote_devices_list(id, state),
+        METHOD_PROJECTS_LIST => handle_remote_projects_list(id, state),
+        METHOD_REMOTE_WORKSPACES_LIST => handle_remote_workspaces_list(id, request.params, state),
+        METHOD_REMOTE_SESSIONS_SNAPSHOTS_LIST => {
+            handle_remote_sessions_snapshots_list(id, request.params, state)
+        }
+        METHOD_HANDOFFS_LIST => handle_remote_handoffs_list(id, request.params, state),
+        METHOD_HANDOFF_BEGIN => {
+            handle_remote_handoff_begin(id, request.params, state, &actor_device_id)
+        }
+        METHOD_HANDOFF_TARGET_VERIFY => handle_remote_handoff_id_mutation(
+            id,
+            request.params,
+            state,
+            &actor_device_id,
+            remote_handoff_target_verify,
+        ),
+        METHOD_HANDOFF_SOURCE_READY => handle_remote_handoff_id_mutation(
+            id,
+            request.params,
+            state,
+            &actor_device_id,
+            remote_handoff_source_ready,
+        ),
+        METHOD_HANDOFF_ABORT => handle_remote_handoff_id_mutation(
+            id,
+            request.params,
+            state,
+            &actor_device_id,
+            remote_handoff_abort,
+        ),
+        METHOD_HANDOFF_COMMIT => {
+            handle_remote_handoff_commit(id, request.params, state, &actor_device_id)
+        }
+        METHOD_HANDOFF_RECOVER => {
+            handle_remote_handoff_recover(id, request.params, state, &actor_device_id)
+        }
+        METHOD_REMOTE_RECOVERY_LIST => handle_remote_recovery_list(id, request.params, state),
+        METHOD_REMOTE_RECOVERY_OPEN => handle_remote_recovery_open(id, request.params, state),
+        method => RpcResponse::error(Some(id), RpcError::method_not_found(method)),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_negotiate(id: devrelay_core::RpcId, params: serde_json::Value) -> RpcResponse {
+    let params: RpcVersionNegotiationParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    match remote_rpc_negotiate(params) {
+        Ok(result) => match serde_json::to_value(result) {
+            Ok(result) => RpcResponse::success(id, result),
+            Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        },
+        Err(error) => RpcResponse::error(Some(id), error),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_devices_list(id: devrelay_core::RpcId, state: &AgentState) -> RpcResponse {
+    let db = match MetadataDb::open(&state.database_path) {
+        Ok(db) => db,
+        Err(err) => {
+            return RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err));
+        }
+    };
+    match remote_devices_list(&db).map(serde_json::to_value) {
+        Ok(Ok(result)) => RpcResponse::success(id, result),
+        Ok(Err(err)) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        Err(err) => RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_projects_list(id: devrelay_core::RpcId, state: &AgentState) -> RpcResponse {
+    let result = match state.config.lock() {
+        Ok(config) => remote_projects_list(&config.project_registry),
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_workspaces_list(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: RemoteWorkspacesListParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let result = match state.config.lock() {
+        Ok(config) => remote_workspaces_list(&config.project_registry, params),
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    match result.map(serde_json::to_value) {
+        Ok(Ok(result)) => RpcResponse::success(id, result),
+        Ok(Err(err)) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        Err(err) => RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_sessions_snapshots_list(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: RemoteSessionsSnapshotsListParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let db = match open_registered_project_db(state, &params.project) {
+        Ok(db) => db,
+        Err(err) => {
+            return RpcResponse::error(Some(id), RpcError::invalid_request(err.to_string()));
+        }
+    };
+    match remote_sessions_snapshots_list(&db, params).map(serde_json::to_value) {
+        Ok(Ok(result)) => RpcResponse::success(id, result),
+        Ok(Err(err)) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        Err(err) => RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_handoffs_list(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: HandoffsListParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let project_ids = match registered_project_ids_for_query(state, params.project.as_deref()) {
+        Ok(project_ids) => project_ids,
+        Err(err) => {
+            return RpcResponse::error(Some(id), RpcError::invalid_request(err.to_string()));
+        }
+    };
+    let mut handoffs = Vec::new();
+    for project_id in project_ids {
+        let db = match open_registered_project_db(state, &project_id) {
+            Ok(db) => db,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+        let listed = remote_handoffs_list(
+            &db,
+            HandoffsListParams {
+                project: Some(project_id),
+                include_journal: params.include_journal,
+            },
+        );
+        match listed {
+            Ok(mut result) => handoffs.append(&mut result.handoffs),
+            Err(err) => return RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+        }
+    }
+    match serde_json::to_value(HandoffsListResult { handoffs }) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_handoff_begin(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+    actor_device_id: &str,
+) -> RpcResponse {
+    let params: HandoffBeginParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    if let Err(err) = ensure_known_target_device(state, &params.target_device_id) {
+        return RpcResponse::error(Some(id), RpcError::invalid_request(err.to_string()));
+    }
+    let mut db = match open_registered_project_db(state, &params.project) {
+        Ok(db) => db,
+        Err(err) => {
+            return RpcResponse::error(Some(id), RpcError::invalid_request(err.to_string()));
+        }
+    };
+    let result = match remote_handoff_begin(&mut db, actor_device_id, params) {
+        Ok(result) => result,
+        Err(err) => return RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    };
+    if let Err(err) = publish_handoff_state_changed(state, &result.handoff, None) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_handoff_id_mutation<F>(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+    actor_device_id: &str,
+    mutate: F,
+) -> RpcResponse
+where
+    F: FnOnce(
+        &mut MetadataDb,
+        &str,
+        HandoffIdParams,
+    ) -> devrelay_core::Result<HandoffMutationResult>,
+{
+    let params: HandoffIdParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let mut db = match open_registered_project_db(state, &params.project) {
+        Ok(db) => db,
+        Err(err) => {
+            return RpcResponse::error(Some(id), RpcError::invalid_request(err.to_string()));
+        }
+    };
+    let previous_state = match db.get_handoff(&params.handoff_id) {
+        Ok(handoff) => handoff.map(|handoff| handoff.state),
+        Err(err) => return RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    };
+    let result = match mutate(&mut db, actor_device_id, params) {
+        Ok(result) => result,
+        Err(err) => return RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    };
+    if let Err(err) = publish_handoff_state_changed(state, &result.handoff, previous_state) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_handoff_commit(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+    actor_device_id: &str,
+) -> RpcResponse {
+    let params: HandoffCommitParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let mut db = match open_registered_project_db(state, &params.project) {
+        Ok(db) => db,
+        Err(err) => {
+            return RpcResponse::error(Some(id), RpcError::invalid_request(err.to_string()));
+        }
+    };
+    let previous_state = match db.get_handoff(&params.handoff_id) {
+        Ok(handoff) => handoff.map(|handoff| handoff.state),
+        Err(err) => return RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    };
+    let result = match remote_handoff_commit(&mut db, actor_device_id, params, unix_seconds()) {
+        Ok(result) => result,
+        Err(err) => return RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    };
+    if let Err(err) = publish_handoff_state_changed(state, &result.handoff, previous_state) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_handoff_recover(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+    actor_device_id: &str,
+) -> RpcResponse {
+    let params: HandoffRecoverParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let mut db = match open_registered_project_db(state, &params.project) {
+        Ok(db) => db,
+        Err(err) => {
+            return RpcResponse::error(Some(id), RpcError::invalid_request(err.to_string()));
+        }
+    };
+    let previous_state = match db.get_handoff(&params.handoff_id) {
+        Ok(handoff) => handoff.map(|handoff| handoff.state),
+        Err(err) => return RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    };
+    let result = match remote_handoff_recover(&mut db, actor_device_id, params, unix_seconds()) {
+        Ok(result) => result,
+        Err(err) => return RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    };
+    if let Err(err) = publish_handoff_state_changed(state, &result.handoff, previous_state) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_recovery_list(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: RemoteRecoveryListParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let db = match open_registered_project_db(state, &params.project) {
+        Ok(db) => db,
+        Err(err) => {
+            return RpcResponse::error(Some(id), RpcError::invalid_request(err.to_string()));
+        }
+    };
+    match remote_recovery_list(&db, params).map(serde_json::to_value) {
+        Ok(Ok(result)) => RpcResponse::success(id, result),
+        Ok(Err(err)) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        Err(err) => RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err)),
+    }
+}
+
+#[cfg(unix)]
+fn handle_remote_recovery_open(
+    id: devrelay_core::RpcId,
+    params: serde_json::Value,
+    state: &AgentState,
+) -> RpcResponse {
+    let params: RemoteRecoveryOpenParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::invalid_params(err.to_string())),
+    };
+    let (project_entry, store, snapshot) = {
+        let config = match state.config.lock() {
+            Ok(config) => config,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+        match find_recovery_snapshot(
+            &state.home,
+            &config,
+            Some(&params.project),
+            &params.snapshot_id,
+        ) {
+            Ok(found) => found,
+            Err(err) => {
+                return RpcResponse::error(Some(id), RpcError::invalid_request(err.to_string()));
+            }
+        }
+    };
+    let source_path = match recovery_source_path(&project_entry) {
+        Ok(path) => path,
+        Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+    };
+    let target = match prepare_recovery_workspace(&params.path, &source_path, &state.logger) {
+        Ok(target) => target,
+        Err(err) => {
+            return RpcResponse::error(Some(id), RpcError::invalid_request(err.to_string()));
+        }
+    };
+    let snapshot_source = GitRepo::new(store.snapshot_repo_path());
+    let verification = match apply_snapshot(&target, &snapshot_source, &snapshot.metadata) {
+        Ok(verification) => verification,
+        Err(err) => {
+            let detail = err.to_string();
+            if let Err(audit_err) = record_agent_snapshot_apply_failure_audit(
+                state,
+                &snapshot,
+                target.path(),
+                None,
+                "recovery.open",
+                &err,
+            ) {
+                return RpcResponse::error(
+                    Some(id),
+                    RpcError::internal(format!(
+                        "{detail}; additionally failed to record apply failure audit: {audit_err}"
+                    )),
+                );
+            }
+            return RpcResponse::error(Some(id), remote_rpc_error_from_devrelay(err));
+        }
+    };
+    if let Err(err) = record_agent_snapshot_apply_audit(
+        state,
+        &snapshot,
+        target.path(),
+        None,
+        "recovery.open",
+        &verification,
+    ) {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    let registered = if params.register {
+        let mut config = match state.config.lock() {
+            Ok(config) => config,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+        let workspace = match register_recovery_workspace(
+            &mut config,
+            &project_entry.project_id,
+            target.path(),
+        ) {
+            Ok(workspace) => workspace,
+            Err(err) => return RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
+        };
+        if let Err(err) = config.save(&state.config_path) {
+            return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+        }
+        Some(workspace)
+    } else {
+        None
+    };
+    if let Some(workspace) = &registered
+        && let Err(err) = publish_workspace_state_changed(state, workspace, None)
+    {
+        return RpcResponse::error(Some(id), RpcError::internal(err.to_string()));
+    }
+    let result = RemoteRecoveryOpenResult {
+        recovered: remote_recovered_snapshot_from(&snapshot),
+        path: target.path().to_path_buf(),
+        name: params.name,
+        registered: registered.as_ref().map(remote_workspace_summary_from),
+        verification,
+    };
+    match serde_json::to_value(result) {
+        Ok(result) => RpcResponse::success(id, result),
+        Err(err) => RpcResponse::error(Some(id), RpcError::internal(err.to_string())),
     }
 }
 

@@ -805,6 +805,8 @@ dependencies = [
  "clap",
  "ctrlc",
  "devrelay-core",
+ "ed25519-dalek",
+ "rustls",
  "serde",
  "serde_json",
 ]
