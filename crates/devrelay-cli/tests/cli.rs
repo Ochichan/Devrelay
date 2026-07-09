@@ -31,8 +31,26 @@ fn git(root: &Path, args: &[&str]) {
     );
 }
 
+fn read_text_lf(path: impl AsRef<Path>) -> String {
+    std::fs::read_to_string(path).unwrap().replace("\r\n", "\n")
+}
+
+fn comparable_path(path: impl AsRef<Path>) -> String {
+    let raw = path.as_ref().to_string_lossy().replace('\\', "/");
+    raw.strip_prefix("//?/").unwrap_or(&raw).to_string()
+}
+
+fn assert_path_value(actual: Option<&str>, expected: &Path) {
+    assert_eq!(
+        actual.map(|value| comparable_path(Path::new(value))),
+        Some(comparable_path(expected))
+    );
+}
+
 fn init_git_repo(root: &Path) {
     git(root, &["init", "-b", "main"]);
+    git(root, &["config", "core.autocrlf", "false"]);
+    git(root, &["config", "core.eol", "lf"]);
     git(root, &["config", "user.name", "DevRelay Test"]);
     git(
         root,
@@ -43,6 +61,7 @@ fn init_git_repo(root: &Path) {
     git(root, &["commit", "-m", "base"]);
 }
 
+#[cfg(unix)]
 #[test]
 fn agent_install_dry_run_renders_service_template() {
     let root = std::env::temp_dir().join(format!(
@@ -94,6 +113,7 @@ fn agent_install_dry_run_renders_service_template() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
 #[test]
 fn agent_install_status_and_uninstall_round_trip() {
     let root = std::env::temp_dir().join(format!(
@@ -329,6 +349,7 @@ fn doctor_git_performance_reports_and_preserves_user_config() {
     let _ = std::fs::remove_dir_all(repo);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn doctor_paths_reports_tracked_and_untracked_portability_issues() {
     let repo =
@@ -3139,10 +3160,7 @@ fn project_add_uses_manifest_and_records_fingerprints() {
     assert_eq!(added["project_id"].as_str(), Some("manifest-project"));
     assert_eq!(added["display_name"].as_str(), Some("Manifest Project"));
     let canonical_manifest = root.canonicalize().unwrap().join("devrelay.toml");
-    assert_eq!(
-        added["manifest_path"].as_str(),
-        Some(canonical_manifest.to_str().unwrap())
-    );
+    assert_path_value(added["manifest_path"].as_str(), &canonical_manifest);
     assert!(
         added["remote_url_fingerprint"]
             .as_str()
@@ -3167,9 +3185,9 @@ fn project_add_uses_manifest_and_records_fingerprints() {
             .as_str()
             .is_some_and(|value| value.starts_with("d_"))
     );
-    assert_eq!(
+    assert_path_value(
         workspace["local_path"].as_str(),
-        Some(root.canonicalize().unwrap().to_str().unwrap())
+        &root.canonicalize().unwrap(),
     );
     assert!(workspace["platform_profile"].as_str().is_some());
     assert_eq!(workspace["state"].as_str(), Some("active"));
@@ -3309,9 +3327,9 @@ fn project_add_appends_workspaces_and_workspace_remove_handles_stale_paths() {
     let workspaces = show_json["workspaces"].as_object().unwrap();
     assert_eq!(workspaces.len(), 1);
     assert!(!workspaces.contains_key(&workspace_id_a));
-    assert_eq!(
+    assert_path_value(
         show_json["local_path"].as_str(),
-        Some(root_b.canonicalize().unwrap().to_str().unwrap())
+        &root_b.canonicalize().unwrap(),
     );
 
     let _ = std::fs::remove_dir_all(root_b);
@@ -3523,7 +3541,7 @@ fn safety_recovery_defaults_new_workspace_for_cli_recover_open() {
     let snapshot_id = checkpoint_json["checkpoint"]["snapshot_id"]
         .as_str()
         .unwrap();
-    let source_readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let source_readme = read_text_lf(root.join("README.md"));
 
     let list_all = devrelay()
         .env("DEVRELAY_HOME", &home)
@@ -3598,18 +3616,9 @@ fn safety_recovery_defaults_new_workspace_for_cli_recover_open() {
             .as_str()
             .is_some_and(|value| value.starts_with("w_"))
     );
-    assert_eq!(
-        std::fs::read_to_string(target.join("README.md")).unwrap(),
-        "source changed\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(target.join("notes.md")).unwrap(),
-        "recover me\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(root.join("README.md")).unwrap(),
-        source_readme
-    );
+    assert_eq!(read_text_lf(target.join("README.md")), "source changed\n");
+    assert_eq!(read_text_lf(target.join("notes.md")), "recover me\n");
+    assert_eq!(read_text_lf(root.join("README.md")), source_readme);
 
     let project = devrelay()
         .args([
@@ -3913,10 +3922,7 @@ fn apply_dirty_policy_snapshots_backup_and_can_use_new_workspace() {
                 .is_some_and(|text| text.contains("separate work")))
     );
     let backup_snapshot_id = apply_json["backup"]["snapshot_id"].as_str().unwrap();
-    assert_eq!(
-        std::fs::read_to_string(target.join("README.md")).unwrap(),
-        "source snapshot\n"
-    );
+    assert_eq!(read_text_lf(target.join("README.md")), "source snapshot\n");
 
     let recover_backup = devrelay()
         .env("DEVRELAY_HOME", &home)
@@ -3936,7 +3942,7 @@ fn apply_dirty_policy_snapshots_backup_and_can_use_new_workspace() {
         .unwrap();
     assert!(recover_backup.status.success());
     assert_eq!(
-        std::fs::read_to_string(backup_recover.join("target-only.txt")).unwrap(),
+        read_text_lf(backup_recover.join("target-only.txt")),
         "preserve me\n"
     );
 
@@ -3962,7 +3968,7 @@ fn apply_dirty_policy_snapshots_backup_and_can_use_new_workspace() {
     let applied_repo = std::path::PathBuf::from(apply_new_json["applied_repo"].as_str().unwrap());
     assert!(target_new.join("new-workspace-only.txt").exists());
     assert_eq!(
-        std::fs::read_to_string(applied_repo.join("README.md")).unwrap(),
+        read_text_lf(applied_repo.join("README.md")),
         "source snapshot\n"
     );
 
@@ -4049,10 +4055,7 @@ fn continue_dry_run_and_clean_target_handoff_updates_workspace_states() {
     assert!(dry_run.status.success());
     let dry_json: serde_json::Value = serde_json::from_slice(&dry_run.stdout).unwrap();
     assert_eq!(dry_json["dry_run"].as_bool(), Some(true));
-    assert_eq!(
-        std::fs::read_to_string(target.join("README.md")).unwrap(),
-        "demo\n"
-    );
+    assert_eq!(read_text_lf(target.join("README.md")), "demo\n");
 
     let continued = devrelay()
         .env("DEVRELAY_HOME", &home)
@@ -4071,10 +4074,7 @@ fn continue_dry_run_and_clean_target_handoff_updates_workspace_states() {
         .output()
         .unwrap();
     assert!(continued.status.success());
-    assert_eq!(
-        std::fs::read_to_string(target.join("README.md")).unwrap(),
-        "handoff clean\n"
-    );
+    assert_eq!(read_text_lf(target.join("README.md")), "handoff clean\n");
 
     let project = devrelay()
         .args([
@@ -4190,10 +4190,7 @@ fn continue_dirty_target_uses_backup_policy() {
         Some(true)
     );
     let backup_snapshot_id = continued_json["backup"]["snapshot_id"].as_str().unwrap();
-    assert_eq!(
-        std::fs::read_to_string(target.join("README.md")).unwrap(),
-        "handoff dirty\n"
-    );
+    assert_eq!(read_text_lf(target.join("README.md")), "handoff dirty\n");
 
     let backup = devrelay()
         .env("DEVRELAY_HOME", &home)
@@ -4213,7 +4210,7 @@ fn continue_dirty_target_uses_backup_policy() {
         .unwrap();
     assert!(backup.status.success());
     assert_eq!(
-        std::fs::read_to_string(backup_recover.join("target-only.txt")).unwrap(),
+        read_text_lf(backup_recover.join("target-only.txt")),
         "dirty target\n"
     );
 
