@@ -70,7 +70,8 @@ Run before any manual product claim:
 git status --short
 git rev-parse HEAD
 RUSTC_WRAPPER= cargo test -p devrelay-core remote_rpc --lib
-RUSTC_WRAPPER= cargo test -p devrelay-agent -p devrelay-desktop
+RUSTC_WRAPPER= cargo test -p devrelay-agent
+RUSTC_WRAPPER= cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 npm run check:ui --prefix apps/desktop
 git diff --check
 ```

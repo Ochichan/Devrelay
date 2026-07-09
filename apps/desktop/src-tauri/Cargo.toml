@@ -1,16 +1,16 @@
 [package]
 name = "devrelay-desktop"
 version = "0.1.0"
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-authors.workspace = true
+edition = "2024"
+rust-version = "1.96"
+license = "UNLICENSED"
+authors = ["DevRelay contributors"]
 
 [build-dependencies]
-tauri-build.workspace = true
+tauri-build = "2"
 
 [dependencies]
 devrelay-core = { path = "../../../crates/devrelay-core" }
-serde.workspace = true
-serde_json.workspace = true
-tauri = { workspace = true, features = ["tray-icon"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
+tauri = { version = "2", features = ["tray-icon"] }

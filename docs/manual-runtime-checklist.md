@@ -74,7 +74,8 @@ Expected: no matches.
 ### manual/runtime/build-002 - Rust Check
 
 ```bash
-RUSTC_WRAPPER= cargo check -p devrelay-core -p devrelay-agent -p devrelay-desktop
+RUSTC_WRAPPER= cargo check -p devrelay-core -p devrelay-agent
+RUSTC_WRAPPER= cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
 Pass:
@@ -85,7 +86,8 @@ Pass:
 ### manual/runtime/build-003 - Agent And Desktop Tests
 
 ```bash
-RUSTC_WRAPPER= cargo test -p devrelay-agent -p devrelay-desktop
+RUSTC_WRAPPER= cargo test -p devrelay-agent
+RUSTC_WRAPPER= cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
 Pass:
@@ -97,7 +99,8 @@ Pass:
 
 Known caveat:
 
-- Full `cargo test -p devrelay-core -p devrelay-agent -p devrelay-desktop`
+- Full `cargo test -p devrelay-core -p devrelay-agent` plus
+  `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`
   currently depends on pre-existing core test fixture state in
   `crates/devrelay-core/src/environment.rs`. If it fails there, record the exact
   failure separately from desktop runtime results.
