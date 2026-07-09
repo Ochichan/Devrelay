@@ -28,33 +28,31 @@ use devrelay_core::{
     classify_untracked_paths, collect_local_metrics_report, load_hydration_state,
     plan_apply_snapshot, workspace_id_for,
 };
-use devrelay_core::{
-    AgentRole, AnchorLayout, AnchorMode, DevRelayError, DevRelayHome, LocalConfig, LogRedactor,
-    METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE,
-    METHOD_DEVICES_LIST, METHOD_DIAGNOSTICS_EXPORT, METHOD_EDITOR_CONTEXT_LATEST,
-    METHOD_EDITOR_CONTEXT_UPDATE, METHOD_EDITOR_EVENT_RECORD, METHOD_EDITOR_RESTORE_ACK,
-    METHOD_ENVIRONMENT_STATUS, METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN,
-    METHOD_HANDOFF_COMMIT, METHOD_HANDOFF_RECOVER, METHOD_HANDOFF_SOURCE_READY,
-    METHOD_HANDOFF_TARGET_VERIFY, METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_METRICS_EXPORT,
-    METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW,
-    METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_RPC_NEGOTIATE,
-    METHOD_RUNS_LIST, METHOD_SETTINGS_GET, METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST,
-    METHOD_STATUS_GET, MetadataDb, StructuredLogLevel, current_platform_key,
-};
+use devrelay_core::{AgentRole, AnchorLayout, AnchorMode, DevRelayHome, LocalConfig, MetadataDb};
 #[cfg(unix)]
 use devrelay_core::{
-    ControlPlaneReplayCache, ControlPlaneTransportPolicy, FabricIdentityStore, FabricRootIdentity,
-    METHOD_REMOTE_RECOVERY_LIST, METHOD_REMOTE_RECOVERY_OPEN,
-    METHOD_REMOTE_SESSIONS_SNAPSHOTS_LIST, METHOD_REMOTE_WORKSPACES_LIST, RemoteRecoveryListParams,
+    ControlPlaneReplayCache, ControlPlaneTransportPolicy, DevRelayError, FabricIdentityStore,
+    FabricRootIdentity, LogRedactor, METHOD_ACTIVITY_LIST, METHOD_AGENT_HEALTH,
+    METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DEVICES_LIST,
+    METHOD_DIAGNOSTICS_EXPORT, METHOD_EDITOR_CONTEXT_LATEST, METHOD_EDITOR_CONTEXT_UPDATE,
+    METHOD_EDITOR_EVENT_RECORD, METHOD_EDITOR_RESTORE_ACK, METHOD_ENVIRONMENT_STATUS,
+    METHOD_EVENTS_SUBSCRIBE, METHOD_HANDOFF_ABORT, METHOD_HANDOFF_BEGIN, METHOD_HANDOFF_COMMIT,
+    METHOD_HANDOFF_RECOVER, METHOD_HANDOFF_SOURCE_READY, METHOD_HANDOFF_TARGET_VERIFY,
+    METHOD_HANDOFFS_LIST, METHOD_LEASES_LIST, METHOD_METRICS_EXPORT, METHOD_PROJECTS_ADD,
+    METHOD_PROJECTS_LIST, METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST,
+    METHOD_RECOVER_OPEN, METHOD_RECOVER_SHOW, METHOD_REMOTE_RECOVERY_LIST,
+    METHOD_REMOTE_RECOVERY_OPEN, METHOD_REMOTE_SESSIONS_SNAPSHOTS_LIST,
+    METHOD_REMOTE_WORKSPACES_LIST, METHOD_RPC_NEGOTIATE, METHOD_RUNS_LIST, METHOD_SETTINGS_GET,
+    METHOD_SETTINGS_UPDATE, METHOD_SNAPSHOTS_LIST, METHOD_STATUS_GET, RemoteRecoveryListParams,
     RemoteRecoveryOpenParams, RemoteRecoveryOpenResult, RemoteRpcRequestContext,
-    RemoteSessionsSnapshotsListParams, RemoteWorkspacesListParams,
-    authenticate_remote_control_frame, build_rustls_server_config, read_framed_message,
-    remote_devices_list, remote_handoff_abort, remote_handoff_begin, remote_handoff_commit,
-    remote_handoff_recover, remote_handoff_source_ready, remote_handoff_target_verify,
-    remote_handoffs_list, remote_projects_list, remote_recovered_snapshot_from,
-    remote_recovery_list, remote_rpc_error_from_devrelay, remote_rpc_negotiate,
-    remote_sessions_snapshots_list, remote_workspace_summary_from, remote_workspaces_list,
-    write_framed_message,
+    RemoteSessionsSnapshotsListParams, RemoteWorkspacesListParams, StructuredLogLevel,
+    authenticate_remote_control_frame, build_rustls_server_config, current_platform_key,
+    read_framed_message, remote_devices_list, remote_handoff_abort, remote_handoff_begin,
+    remote_handoff_commit, remote_handoff_recover, remote_handoff_source_ready,
+    remote_handoff_target_verify, remote_handoffs_list, remote_projects_list,
+    remote_recovered_snapshot_from, remote_recovery_list, remote_rpc_error_from_devrelay,
+    remote_rpc_negotiate, remote_sessions_snapshots_list, remote_workspace_summary_from,
+    remote_workspaces_list, write_framed_message,
 };
 use serde::Serialize;
 #[cfg(unix)]
@@ -64,9 +62,10 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
-    mpsc,
+    atomic::{AtomicBool, Ordering},
 };
+#[cfg(unix)]
+use std::sync::{atomic::AtomicU64, mpsc};
 use std::thread;
 use std::time::Duration;
 #[cfg(unix)]
@@ -110,6 +109,7 @@ const MAX_HANDOFF_TTL_SECONDS: u64 = 24 * 60 * 60;
 #[cfg(unix)]
 const MAX_EDITOR_CONTEXT_CAPSULE_BYTES: usize = 128 * 1024;
 
+#[cfg(unix)]
 impl LogLevel {
     fn structured(self) -> StructuredLogLevel {
         match self {
@@ -154,6 +154,7 @@ struct AgentHealth {
 #[derive(Clone)]
 struct AgentState {
     foreground: bool,
+    #[cfg(unix)]
     home: DevRelayHome,
     role: AgentRole,
     anchor_layout: Option<AnchorLayout>,
@@ -244,6 +245,7 @@ impl AgentState {
             .unwrap_or(AnchorMode::LocalOnly)
     }
 
+    #[cfg(unix)]
     fn supported_methods() -> Vec<String> {
         vec![
             METHOD_RPC_NEGOTIATE.to_string(),
@@ -415,6 +417,7 @@ fn main() -> anyhow::Result<()> {
 
     let state = AgentState {
         foreground: cli.foreground,
+        #[cfg(unix)]
         home,
         role,
         anchor_layout,

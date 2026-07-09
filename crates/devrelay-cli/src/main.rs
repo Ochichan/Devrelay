@@ -6,8 +6,6 @@
 
 use anyhow::{Context, Error};
 use clap::{Parser, Subcommand, ValueEnum};
-#[cfg(unix)]
-use devrelay_core::AgentRpcClient;
 use devrelay_core::{
     AgentRole, AnchorLayout, AnchorMode, AnchorSnapshotMaintenanceReport, AnchorSnapshotRepo,
     ApplySnapshotParams, ApplySnapshotResult, AuditEventInput, AuditEventRecord, AuditEventType,
@@ -20,26 +18,28 @@ use devrelay_core::{
     LogRedactor, METHOD_APPLY_SNAPSHOT, METHOD_CHECKPOINT_CREATE, METHOD_DIAGNOSTICS_EXPORT,
     METHOD_ENVIRONMENT_STATUS, METHOD_METRICS_EXPORT, METHOD_PROJECTS_ADD, METHOD_PROJECTS_LIST,
     METHOD_PROJECTS_REMOVE, METHOD_PROJECTS_SHOW, METHOD_RECOVER_LIST, METHOD_RECOVER_OPEN,
-    METHOD_RECOVER_SHOW, METHOD_STATUS_GET, Manifest, MetadataDb, MetricsExportParams,
-    MetricsExportResult, PairingSession, PairingStartRequest, PathDecision,
-    PathPortabilityDoctorReport, PatternConfig, PortablePathsPolicy, ProjectRegistryEntry,
-    ProjectResult, ProjectsAddParams, ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams,
-    RecoverListParams, RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams,
-    RecoverShowResult, RemoteAccessCredentialBundle, RemoteControlClient,
-    SecretMappingDoctorReport, SecretProviderLocalConfig, SecretScannerConfig, ServiceTemplate,
-    ServiceTemplateInput, ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetParams,
-    StatusGetResult, StatusSummary, StoredSession, StoredSnapshot, SystemEnvironmentCommandRunner,
-    UntrackedPolicy, WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState,
-    WslFilesystemDoctorReport, apply_snapshot, assemble_remote_access_credentials,
-    build_discovery_advertisement, classify_untracked_paths, collect_local_metrics_report,
-    create_snapshot, current_platform_key, detect_resource_policy_context,
-    linux_systemd_user_template, load_hydration_state, load_remote_access_credentials,
-    macos_launch_agent_template, plan_apply_snapshot, read_snapshot_file,
-    remote_access_credentials_path, run_environment_doctor, run_git_performance_doctor,
-    run_line_ending_doctor, run_path_portability_doctor, run_resource_policy_doctor,
-    run_secret_mapping_doctor, run_wsl_filesystem_doctor, save_remote_access_credentials,
-    validate_remote_access_credentials, workspace_id_for, write_snapshot_file,
+    METHOD_RECOVER_SHOW, Manifest, MetadataDb, MetricsExportParams, MetricsExportResult,
+    PairingSession, PairingStartRequest, PathDecision, PathPortabilityDoctorReport, PatternConfig,
+    PortablePathsPolicy, ProjectRegistryEntry, ProjectResult, ProjectsAddParams,
+    ProjectsListResult, ProjectsRemoveParams, ProjectsShowParams, RecoverListParams,
+    RecoverListResult, RecoverOpenParams, RecoverOpenResult, RecoverShowParams, RecoverShowResult,
+    RemoteAccessCredentialBundle, RemoteControlClient, SecretMappingDoctorReport,
+    SecretProviderLocalConfig, SecretScannerConfig, ServiceTemplate, ServiceTemplateInput,
+    ServiceTemplateKind, SnapshotMetadata, SnapshotStore, StatusGetResult, StatusSummary,
+    StoredSession, StoredSnapshot, SystemEnvironmentCommandRunner, UntrackedPolicy,
+    WorkspaceConfig, WorkspaceRegistryEntry, WorkspaceState, WslFilesystemDoctorReport,
+    apply_snapshot, assemble_remote_access_credentials, build_discovery_advertisement,
+    classify_untracked_paths, collect_local_metrics_report, create_snapshot, current_platform_key,
+    detect_resource_policy_context, linux_systemd_user_template, load_hydration_state,
+    load_remote_access_credentials, macos_launch_agent_template, plan_apply_snapshot,
+    read_snapshot_file, remote_access_credentials_path, run_environment_doctor,
+    run_git_performance_doctor, run_line_ending_doctor, run_path_portability_doctor,
+    run_resource_policy_doctor, run_secret_mapping_doctor, run_wsl_filesystem_doctor,
+    save_remote_access_credentials, validate_remote_access_credentials, workspace_id_for,
+    write_snapshot_file,
 };
+#[cfg(unix)]
+use devrelay_core::{AgentRpcClient, METHOD_STATUS_GET, StatusGetParams};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -664,6 +664,7 @@ impl DirtyPolicy {
 #[derive(Debug, Clone)]
 struct AgentOptions {
     direct: bool,
+    #[cfg(unix)]
     socket_path: Option<PathBuf>,
 }
 
@@ -823,8 +824,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         agent_socket,
         command,
     } = cli;
+    #[cfg(not(unix))]
+    let _ = agent_socket;
     let agent_options = AgentOptions {
         direct,
+        #[cfg(unix)]
         socket_path: agent_socket,
     };
 

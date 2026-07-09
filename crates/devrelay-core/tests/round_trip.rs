@@ -1,6 +1,8 @@
+#[cfg(unix)]
+use devrelay_core::classification_reason;
 use devrelay_core::{
     DevRelayError, GitRepo, Manifest, SnapshotMetadata, VerificationDetails, apply_snapshot,
-    classification_reason, create_snapshot, verify_snapshot,
+    create_snapshot, verify_snapshot,
 };
 use std::ffi::OsString;
 use std::fs;
