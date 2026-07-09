@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::Path;
 
+#[cfg(target_family = "unix")]
 const MIB: u128 = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -296,6 +297,7 @@ fn push_feature(features: &mut Vec<String>, enabled: bool, feature: &str) {
     }
 }
 
+#[cfg(target_family = "unix")]
 fn bytes_to_mib(bytes: u128) -> Option<u64> {
     u64::try_from(bytes / MIB).ok()
 }
