@@ -480,6 +480,8 @@ large_file_threshold_mib = 1
         fs::create_dir(path).unwrap();
         let repo = GitRepo::new(path);
         repo.run(&["init", "-b", "main"]).unwrap();
+        repo.run(&["config", "core.autocrlf", "false"]).unwrap();
+        repo.run(&["config", "core.eol", "lf"]).unwrap();
         repo.run(&["config", "user.name", "DevRelay Test"]).unwrap();
         repo.run(&["config", "user.email", "devrelay-test@example.local"])
             .unwrap();

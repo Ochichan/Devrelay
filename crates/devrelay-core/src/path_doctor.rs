@@ -366,6 +366,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn path_doctor_walks_tracked_and_accepted_untracked_paths() {
         let temp = tempfile::tempdir().unwrap();
@@ -422,6 +423,8 @@ portable_paths = "strict"
 
     fn init_git_repo(root: &Path) {
         git(root, &["init", "-b", "main"]);
+        git(root, &["config", "core.autocrlf", "false"]);
+        git(root, &["config", "core.eol", "lf"]);
         std::fs::write(root.join("README.md"), "demo\n").unwrap();
         git(root, &["add", "."]);
         git(root, &["commit", "-m", "base"]);

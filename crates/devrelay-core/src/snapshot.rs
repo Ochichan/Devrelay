@@ -867,6 +867,8 @@ portable_paths = "strict"
         fs::create_dir(path).unwrap();
         let repo = GitRepo::new(path);
         repo.run(&["init", "-b", "main"]).unwrap();
+        repo.run(&["config", "core.autocrlf", "false"]).unwrap();
+        repo.run(&["config", "core.eol", "lf"]).unwrap();
         repo.run(&["config", "user.name", "DevRelay Test"]).unwrap();
         repo.run(&["config", "user.email", "devrelay-test@example.local"])
             .unwrap();
@@ -883,6 +885,8 @@ portable_paths = "strict"
         GitRepo::new(source_path)
             .run_with_env(
                 [
+                    OsString::from("-c"),
+                    OsString::from("core.autocrlf=false"),
                     OsString::from("clone"),
                     source_path.as_os_str().to_os_string(),
                     target_path.as_os_str().to_os_string(),
@@ -890,6 +894,10 @@ portable_paths = "strict"
                 &[],
             )
             .unwrap();
+    }
+
+    fn read_text_lf(path: impl AsRef<Path>) -> String {
+        fs::read_to_string(path).unwrap().replace("\r\n", "\n")
     }
 
     fn large_sidecar_manifest() -> Manifest {
@@ -1117,10 +1125,7 @@ large_file_threshold_mib = 1
         let target = GitRepo::new(&target_path);
         apply_snapshot(&target, &source, &snapshot).unwrap();
 
-        assert_eq!(
-            fs::read_to_string(target_path.join("safe.txt")).unwrap(),
-            "carry me\n"
-        );
+        assert_eq!(read_text_lf(target_path.join("safe.txt")), "carry me\n");
         for path in [".env", ".ssh/id_ed25519", "private-note.txt", "token.txt"] {
             assert!(
                 !target_path.join(path).exists(),
@@ -1293,10 +1298,7 @@ large_file_threshold_mib = 1
         let err = apply_snapshot_with_sidecars(&target, &source, &snapshot, &cas).unwrap_err();
 
         assert!(err.to_string().contains("missing"));
-        assert_eq!(
-            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
-            "base\n"
-        );
+        assert_eq!(read_text_lf(target_path.join("tracked.txt")), "base\n");
         assert!(!target_path.join("large.bin").exists());
     }
 
@@ -1319,10 +1321,7 @@ large_file_threshold_mib = 1
         let err = apply_snapshot_with_sidecars(&target, &source, &snapshot, &cas).unwrap_err();
 
         assert!(err.to_string().contains("missing"));
-        assert_eq!(
-            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
-            "base\n"
-        );
+        assert_eq!(read_text_lf(target_path.join("tracked.txt")), "base\n");
         assert!(!target_path.join("large.bin").exists());
     }
 
@@ -1345,10 +1344,7 @@ large_file_threshold_mib = 1
         let err = apply_snapshot_with_sidecars(&target, &source, &snapshot, &cas).unwrap_err();
 
         assert!(err.to_string().contains("escape"));
-        assert_eq!(
-            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
-            "base\n"
-        );
+        assert_eq!(read_text_lf(target_path.join("tracked.txt")), "base\n");
         assert!(!temp.path().join("escape.bin").exists());
     }
 
@@ -1597,7 +1593,7 @@ large_file_threshold_mib = 1
             "true"
         );
         assert_eq!(
-            fs::read_to_string(target_path.join("src/main.rs")).unwrap(),
+            read_text_lf(target_path.join("src/main.rs")),
             "fn main() { println!(\"handoff\"); }\n"
         );
         assert!(!target_path.join("docs/readme.md").exists());
@@ -1637,13 +1633,10 @@ large_file_threshold_mib = 1
         apply_snapshot(&target, &source, &snapshot).unwrap();
 
         assert_eq!(
-            fs::read_to_string(target_path.join("src/main.rs")).unwrap(),
+            read_text_lf(target_path.join("src/main.rs")),
             "fn main() { println!(\"sparse\"); }\n"
         );
-        assert_eq!(
-            fs::read_to_string(target_path.join("docs/readme.md")).unwrap(),
-            "# Docs\n"
-        );
+        assert_eq!(read_text_lf(target_path.join("docs/readme.md")), "# Docs\n");
     }
 
     #[test]
@@ -1741,7 +1734,7 @@ large_file_threshold_mib = 1
         let target = GitRepo::new(&target_path);
         let before_head = target.run(&["rev-parse", "HEAD"]).unwrap();
         let before_status = target.status().unwrap();
-        let before_tracked = fs::read_to_string(target_path.join("tracked.txt")).unwrap();
+        let before_tracked = read_text_lf(target_path.join("tracked.txt"));
 
         let err = apply_snapshot_with_fault_injection(
             &target,
@@ -1762,21 +1755,15 @@ large_file_threshold_mib = 1
         assert_eq!(target.run(&["rev-parse", "HEAD"]).unwrap(), before_head);
         assert_eq!(target.status().unwrap(), before_status);
         assert_eq!(
-            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
+            read_text_lf(target_path.join("tracked.txt")),
             before_tracked
         );
         assert!(!target_path.join("notes.md").exists());
 
         apply_snapshot(&target, &source, &snapshot).unwrap();
         verify_snapshot(&target, &snapshot).unwrap();
-        assert_eq!(
-            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
-            "changed\n"
-        );
-        assert_eq!(
-            fs::read_to_string(target_path.join("notes.md")).unwrap(),
-            "carry me\n"
-        );
+        assert_eq!(read_text_lf(target_path.join("tracked.txt")), "changed\n");
+        assert_eq!(read_text_lf(target_path.join("notes.md")), "carry me\n");
     }
 
     #[test]
@@ -1841,10 +1828,7 @@ large_file_threshold_mib = 1
         assert_eq!(err.code(), "DR-APPLY-MISSING-SOURCE-OBJECT");
         assert!(err.to_string().contains("asset.bin"));
         assert!(err.to_string().contains(&oid));
-        assert_eq!(
-            fs::read_to_string(target_path.join("tracked.txt")).unwrap(),
-            "base\n"
-        );
+        assert_eq!(read_text_lf(target_path.join("tracked.txt")), "base\n");
     }
 
     #[test]
@@ -1878,6 +1862,7 @@ large_file_threshold_mib = 1
         assert_eq!(err.code(), "DR-APPLY-VERIFICATION-MISMATCH");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn blocks_windows_unsafe_snapshot_paths_before_materialization() {
         let temp = tempfile::tempdir().unwrap();
@@ -1899,6 +1884,7 @@ large_file_threshold_mib = 1
         assert!(err.to_string().contains("windows-invalid-character"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn allows_windows_specific_path_names_on_non_windows_targets() {
         let temp = tempfile::tempdir().unwrap();

@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(workspace.environment.profile_name, "dev");
         assert_eq!(workspace.sidecars, TaskRunnerSidecarState::NotRequired);
         assert_eq!(
-            fs::read_to_string(workspace.path.join("tracked.txt")).unwrap(),
+            read_text_lf(workspace.path.join("tracked.txt")),
             "runner content\n"
         );
         assert!(
@@ -517,14 +517,14 @@ portable_paths = "strict"
 
 [environment.profiles.dev]
 kind = "native"
-targets = ["darwin-*", "linux-*"]
+targets = ["*"]
 command = ["bash", "-lc", "true"]
 healthcheck = ["bash", "-lc", "true"]
 
 [tasks.test]
 profile = "dev"
 command = ["bash", "-lc", "cat tracked.txt"]
-platforms = ["darwin-*", "linux-*"]
+platforms = ["*"]
 cpu = 1
 memory_mib = 64
 disk_mib = 64
@@ -542,9 +542,15 @@ disk_mib = 64
         )
     }
 
+    fn read_text_lf(path: impl AsRef<Path>) -> String {
+        fs::read_to_string(path).unwrap().replace("\r\n", "\n")
+    }
+
     fn init_repo(path: &Path) -> GitRepo {
         fs::create_dir_all(path).unwrap();
         run_git(path, &["init", "-b", "main"]);
+        run_git(path, &["config", "core.autocrlf", "false"]);
+        run_git(path, &["config", "core.eol", "lf"]);
         run_git(path, &["config", "user.name", "DevRelay Test"]);
         run_git(
             path,
