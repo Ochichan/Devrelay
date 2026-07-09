@@ -802,9 +802,9 @@ fn validate_capabilities_json(value: &str) -> Result<()> {
 }
 
 pub fn detect_resource_policy_context() -> ResourcePolicyContext {
-    let mut context = ResourcePolicyContext::default();
     #[cfg(target_os = "macos")]
     {
+        let mut context = ResourcePolicyContext::default();
         if let Ok(output) = Command::new("pmset").args(["-g", "batt"]).output()
             && output.status.success()
         {
@@ -828,8 +828,12 @@ pub fn detect_resource_policy_context() -> ResourcePolicyContext {
             context.foreground_load =
                 ForegroundLoad::from_load_average(load_average_1m, context.parallelism);
         }
+        context
     }
-    context
+    #[cfg(not(target_os = "macos"))]
+    {
+        ResourcePolicyContext::default()
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]

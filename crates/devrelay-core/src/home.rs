@@ -225,10 +225,10 @@ fn default_root_from_env(
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        if let Some(path) = xdg_data_home {
-            if !path.is_empty() {
-                return Ok(PathBuf::from(path).join("devrelay"));
-            }
+        if let Some(path) = xdg_data_home
+            && !path.is_empty()
+        {
+            return Ok(PathBuf::from(path).join("devrelay"));
         }
         let home = require_env_path("HOME", home)?;
         return Ok(home.join(".local").join("share").join("devrelay"));
@@ -236,10 +236,10 @@ fn default_root_from_env(
 
     #[cfg(windows)]
     {
-        if let Some(path) = local_app_data {
-            if !path.is_empty() {
-                return Ok(PathBuf::from(path).join("DevRelay"));
-            }
+        if let Some(path) = local_app_data
+            && !path.is_empty()
+        {
+            return Ok(PathBuf::from(path).join("DevRelay"));
         }
         let profile = require_env_path("USERPROFILE", user_profile)?;
         return Ok(profile.join("AppData").join("Local").join("DevRelay"));
