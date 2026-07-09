@@ -1077,12 +1077,17 @@ portable_paths = "strict"
 }
 
 fn workspace_state_for(project: &serde_json::Value, path: &Path) -> Option<String> {
-    let canonical = path.canonicalize().unwrap();
+    let canonical = comparable_path(path.canonicalize().unwrap());
     project["workspaces"]
         .as_object()
         .unwrap()
         .values()
-        .find(|workspace| workspace["local_path"].as_str() == canonical.to_str())
+        .find(|workspace| {
+            workspace["local_path"]
+                .as_str()
+                .map(|value| comparable_path(Path::new(value)))
+                == Some(canonical.clone())
+        })
         .and_then(|workspace| workspace["state"].as_str())
         .map(str::to_string)
 }
